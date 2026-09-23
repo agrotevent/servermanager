@@ -1,0 +1,54 @@
+{% from "_macros.html" import action_form, empty with context %}
+{% include "modules/_panel_head.html" %}
+{% set m = MODULES['docker'] %}
+{% set upd = (system.upd.docker or {}).updates or [] %}
+{% set upd_names = upd|map(attribute='container')|list %}
+{% if data.usage %}
+<div class="stats">
+  {% for u in data.usage %}<div class="stat"><div class="label">{{ u.type }}</div><div class="value" style="font-size:18px">{{ u.count }}</div><div class="sub">{{ u.size }} · frei: {{ u.reclaimable }}</div></div>{% endfor %}
+</div>
+{% endif %}
+{% if upd %}<div class="alert warning"><strong>Neue Images verfügbar:</strong>{% for u in upd %}{{ u.container }} ({{ u.image }}){% if not loop.last %}, {% endif %}{% endfor %}
+  <small>- Stand {{ system.upd.docker.checked|ago }}. Compose-Projekte über "Aktualisieren" neu erstellen.</small></div>{% endif %}
+
+{% if data.projects %}
+<h3>Compose-Projekte</h3>
+<div class="table-wrap mb-2"><table class="table compact">
+  <thead><tr><th>Projekt</th><th>Container</th><th></th></tr></thead>
+  <tbody>{% for p in data.projects %}
+    <tr><td><strong>{{ p.name }}</strong></td><td>{{ p.running }}/{{ p.total }} laufen</td>
+      <td class="nowrap text-right">
+        {{ action_form(system, m, m.action('compose_update'), {'project': p.name}, label='Aktualisieren (pull + up)', cls='xs') }}
+        {{ action_form(system, m, m.action('compose_restart'), {'project': p.name}, stay=True, label='Neustart', cls='xs') }}
+      </td></tr>
+  {% endfor %}</tbody>
+</table></div>
+{% endif %}
+
+{% if data.containers %}
+<h3>Container</h3>
+<div class="filters mb-1"><input type="search" placeholder="Container suchen …" data-filter-list="#ct-table tbody tr"></div>
+<div class="table-wrap"><table class="table compact" id="ct-table">
+  <thead><tr><th>Name</th><th>Image</th><th>Status</th><th>Ports</th><th></th></tr></thead>
+  <tbody>{% for c in data.containers %}
+    <tr><td><strong>{{ c.name }}</strong>{% if c.project %}<span class="sub">{{ c.project }}</span>{% endif %}</td>
+      <td class="mono"><small>{{ c.image }}</small> {% if c.name in upd_names %}<span class="badge warning">Update</span>{% endif %}</td>
+      <td class="nowrap"><span class="badge {{ 'success' if c.state == 'running' else ('danger' if c.state in ('exited', 'dead') else 'warning') }}">{{ c.state }}</span><span class="sub">{{ c.status }}</span></td>
+      <td class="mono"><small>{{ c.ports|truncate(60) }}</small></td>
+      <td class="nowrap text-right">
+        {% if c.state == 'running' %}
+          {{ action_form(system, m, m.action('container_restart'), {'container': c.name}, stay=True, label='Neustart', cls='xs') }}
+          {{ action_form(system, m, m.action('container_stop'), {'container': c.name}, stay=True, label='Stop', cls='xs') }}
+        {% else %}
+          {{ action_form(system, m, m.action('container_start'), {'container': c.name}, stay=True, label='Start', cls='xs') }}
+          {% if can(system.id, 'full') %}
+          <form method="post" action="{{ url_for('systems.action', system_id=system.id) }}" class="inline" data-confirm="Container {{ c.name }} entfernen?">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="module" value="docker">
+            <input type="hidden" name="action" value="container_remove"><input type="hidden" name="container" value="{{ c.name }}"><input type="hidden" name="stay" value="1">
+            <button class="btn xs danger-outline">Entfernen</button></form>
+          {% endif %}
+        {% endif %}
+      </td></tr>
+  {% endfor %}</tbody>
+</table></div>
+{% elif not error %}{{ empty('Keine Container vorhanden.') }}{% endif %}

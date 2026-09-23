@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, field, checkbox, empty with context %}
+{% block title %}Backup & Restore{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>Backup &amp; Restore</h1>
+  <p>Sicherung des Servermanagers: Datenbank (Systeme, Benutzer, Zeitpläne, Zugangsdaten), Hauptschlüssel, Konfiguration, SSH-Schlüssel und WireGuard-Konfiguration.</p></div></div>
+<div class="alert warning"><strong>Wichtig:</strong>Backups enthalten den Hauptschlüssel und damit alle gespeicherten Zugangsdaten. Unverschlüsselte Backups nur sicher aufbewahren - besser eine Passphrase verwenden.</div>
+<div class="grid grid-2">
+  <div>
+    <div class="card">
+      <div class="card-head"><h2>Backup jetzt erstellen</h2></div>
+      <form method="post" action="{{ url_for('admin.backups_create') }}" class="card-body" autocomplete="off">{{ csrf() }}
+        <div class="form-grid">
+          {{ field('Notiz', 'note') }}
+          {{ field('Passphrase (optional)', 'passphrase', type='password', help=('Leer = gespeicherte Passphrase aus den Einstellungen' if has_passphrase else 'Leer = unverschlüsselt'), attrs='autocomplete="new-password"') }}
+          <div class="full">{{ checkbox('Konfig-Backups der Systeme einschließen', 'include_system_backups', v['backup.include_system_backups']) }}</div>
+        </div>
+        <button class="btn primary mt-1"><svg class="icon"><use href="#i-archive"/></svg>Backup erstellen</button>
+      </form>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Wiederherstellen</h2></div>
+      <form method="post" action="{{ url_for('admin.backups_restore_prepare') }}" enctype="multipart/form-data" class="card-body">{{ csrf() }}
+        <div class="form-grid">
+          <div class="field full"><label>Backup-Datei hochladen</label><input type="file" name="file" accept=".gz,.enc"></div>
+          {{ field('Passphrase (bei verschlüsselten Backups)', 'passphrase', type='password', cls='full') }}
+        </div>
+        <p class="help muted">Oder unten ein vorhandenes Backup wählen. Vor der Wiederherstellung wird automatisch eine Sicherung des aktuellen Stands erstellt.</p>
+        <button class="btn">Prüfen &amp; weiter</button>
+      </form>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head"><h2>Automatische Backups</h2></div>
+    <form method="post" action="{{ url_for('admin.backups_settings') }}" class="card-body" autocomplete="off">{{ csrf() }}
+      <div class="form-grid">
+        {{ field('Uhrzeit (Stunde)', 'backup__hour', v['backup.hour'], type='number', attrs='min="0" max="23"') }}
+        {{ field('Anzahl aufbewahren', 'backup__keep', v['backup.keep'], type='number') }}
+        {{ field('Passphrase für automatische Backups', 'backup__passphrase', type='password', cls='full', help=('Gespeichert - leer lassen zum Beibehalten' if has_passphrase else 'Leer = unverschlüsselt'), attrs='autocomplete="new-password"') }}
+        {{ field('Konfig-Backups je System aufbewahren', 'system_backup__keep', v['system_backup.keep'], type='number') }}
+        <div class="full">
+          {{ checkbox('Tägliches automatisches Backup', 'backup__auto_enabled', v['backup.auto_enabled']) }}
+          {{ checkbox('Konfig-Backups der Systeme einschließen', 'backup__include_system_backups', v['backup.include_system_backups']) }}
+          {{ checkbox('Vor jedem Update automatisch sichern', 'backup__before_update', v['backup.before_update']) }}
+          {% if has_passphrase %}{{ checkbox('Gespeicherte Passphrase entfernen', 'clear_passphrase') }}{% endif %}
+        </div>
+      </div>
+      <button class="btn primary mt-1">Speichern</button>
+    </form>
+  </div>
+</div>
+<div class="card">
+  <div class="card-head"><h2>Vorhandene Backups</h2></div>
+  <div class="card-body flush">
+    {% if backups %}
+    <table class="table">
+      <thead><tr><th>Datei</th><th>Datum</th><th>Größe</th><th></th></tr></thead>
+      <tbody>{% for b in backups %}
+        <tr><td class="mono">{{ b.name }} {% if b.encrypted %}<span class="badge success">verschlüsselt</span>{% endif %}{% if b.auto %}<span class="badge">automatisch</span>{% endif %}</td>
+          <td class="nowrap">{{ b.mtime.strftime('%d.%m.%Y %H:%M') }}</td><td class="nowrap">{{ b.size|bytes }}</td>
+          <td class="nowrap text-right">
+            <a class="btn xs" href="{{ url_for('admin.backups_download', name=b.name) }}"><svg class="icon"><use href="#i-download"/></svg> Download</a>
+            <form method="post" action="{{ url_for('admin.backups_restore_prepare') }}" class="inline">{{ csrf() }}<input type="hidden" name="name" value="{{ b.name }}">
+              {% if b.encrypted %}<input type="password" name="passphrase" placeholder="Passphrase" style="width:130px;padding:2px 6px">{% endif %}
+              <button class="btn xs">Wiederherstellen …</button></form>
+            <form method="post" action="{{ url_for('admin.backups_delete', name=b.name) }}" class="inline" data-confirm="Backup {{ b.name }} löschen?">{{ csrf() }}<button class="btn xs ghost"><svg class="icon"><use href="#i-trash"/></svg></button></form>
+          </td></tr>
+      {% endfor %}</tbody>
+    </table>
+    {% else %}{{ empty('Noch keine Backups vorhanden.', 'i-archive') }}{% endif %}
+  </div>
+</div>
+{% endblock %}

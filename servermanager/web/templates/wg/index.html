@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, field, checkbox, empty with context %}
+{% block title %}WireGuard{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>WireGuard-Management-Netz</h1>
+  <p>Der Servermanager verbindet sich per WireGuard mit dem MikroTik (RouterOS 7). Neue Systeme erhalten über das Enrollment-Skript automatisch einen Zugang in diesem Netz.</p></div></div>
+
+<div class="stats">
+  <div class="stat {{ 'success' if s['wg.enabled'] else 'warning' }}"><div class="label">Management-Netz</div><div class="value" style="font-size:18px">{{ 'aktiv' if s['wg.enabled'] else 'nicht aktiv' }}</div><div class="sub mono">{{ s['wg.network'] }}</div></div>
+  <div class="stat {{ 'success' if local and local.up else ('danger' if s['wg.enabled'] else '') }}"><div class="label">Lokaler Tunnel {{ s['wg.local_iface'] }}</div>
+    <div class="value" style="font-size:18px">{% if local and local.up %}verbunden{% elif local %}getrennt{% else %}–{% endif %}</div>
+    <div class="sub">{% if local and local.up and local.peers %}{% set hs = local.peers[0].handshake %}Handshake: {{ hs|ago if hs else 'noch keiner' }}{% elif local and local.error %}{{ local.error|truncate(60) }}{% endif %}</div></div>
+  <div class="stat"><div class="label">Servermanager-IP</div><div class="value mono" style="font-size:18px">{{ s['wg.sm_ip'] }}</div><div class="sub">MikroTik: {{ s['wg.router_ip'] }}</div></div>
+  <div class="stat"><div class="label">Peers</div><div class="value">{{ peers|rejectattr('missing')|list|length }}</div><div class="sub">{{ peers|selectattr('missing')|list|length }} fehlen auf dem MikroTik</div></div>
+</div>
+
+<div class="grid grid-2">
+  <div class="card">
+    <div class="card-head"><h2>Einstellungen</h2></div>
+    <form method="post" action="{{ url_for('wg.save') }}" class="card-body" autocomplete="off">
+      {{ csrf() }}
+      <fieldset class="mb-2"><legend>MikroTik REST-API</legend><div class="form-grid">
+        {{ field('API-URL', 'mikrotik_url', s['wg.mikrotik_url'], placeholder='https://10.66.0.1', help='www-ssl-Dienst des MikroTik; nach Tunnelaufbau am besten über die Management-IP.') }}
+        {{ field('WireGuard-Interface', 'mikrotik_interface', s['wg.mikrotik_interface']) }}
+        {{ field('API-Benutzer', 'mikrotik_user', s['wg.mikrotik_user']) }}
+        {{ field('API-Passwort', 'mikrotik_password', type='password', help=('gespeichert - leer lassen zum Beibehalten' if s['wg.mikrotik_password'] else ''), attrs='autocomplete="new-password"') }}
+        <div class="full">{{ checkbox('TLS-Zertifikat prüfen', 'mikrotik_verify_tls', s['wg.mikrotik_verify_tls'], 'Bei selbstsigniertem Zertifikat deaktiviert lassen (Zugriff nur über den Tunnel empfohlen).') }}</div>
+      </div></fieldset>
+      <fieldset class="mb-2"><legend>Netz</legend><div class="form-grid">
+        {{ field('Management-Netz', 'network', s['wg.network'], help='z. B. 10.66.0.0/24') }}
+        {{ field('Adresse MikroTik', 'router_ip', s['wg.router_ip']) }}
+        {{ field('Adresse Servermanager', 'sm_ip', s['wg.sm_ip']) }}
+        {{ field('Clients ab Host-Nr.', 'pool_start', s['wg.pool_start'], type='number') }}
+        {{ field('Öffentlicher Endpoint', 'endpoint', s['wg.endpoint'], placeholder='vpn.example.com:13231', help='Wird den Clients übermittelt (host:port).') }}
+        {{ field('Endpoint für den Servermanager', 'sm_endpoint', s['wg.sm_endpoint'], help='Optional, falls abweichend (z. B. interne IP).') }}
+        {{ field('Listen-Port (MikroTik)', 'listen_port', s['wg.listen_port'], type='number') }}
+        {{ field('MTU', 'mtu', s['wg.mtu'], type='number') }}
+        {{ field('Keepalive (s)', 'keepalive', s['wg.keepalive'], type='number') }}
+        {{ field('Adressliste (MikroTik)', 'address_list', s['wg.address_list']) }}
+        {{ field('Interface lokal', 'local_iface', s['wg.local_iface']) }}
+        {{ field('Interface auf Clients', 'client_iface', s['wg.client_iface']) }}
+        {{ field('Public Key des MikroTik', 'router_public_key', s['wg.router_public_key'], cls='full', help='Wird über "API testen" automatisch übernommen oder manuell eingetragen.') }}
+      </div></fieldset>
+      {{ checkbox('Management-Netz aktiv (Enrollment per WireGuard erlauben)', 'enabled', s['wg.enabled']) }}
+      <button class="btn primary mt-1">Speichern</button>
+    </form>
+  </div>
+
+  <div>
+    <div class="card">
+      <div class="card-head"><h2>Einrichtung</h2></div>
+      <div class="card-body">
+        <ol class="mt-0">
+          <li>Einstellungen links ausfüllen und speichern.</li>
+          <li>RouterOS-Befehle (unten) im MikroTik-Terminal ausführen - sie legen Interface, Firewall, API-Benutzer und den Peer des Servermanagers an.</li>
+          <li>Public Key des MikroTik eintragen (oder nach Schritt 4 per API übernehmen).</li>
+          <li>Tunnel aktivieren und API testen.</li>
+        </ol>
+        <p class="label">Public Key des Servermanagers</p>
+        <div class="codebox" id="smpub">{{ sm_pub }}</div>
+        <div class="actions mt-1">
+          <button type="button" class="btn xs" data-copy="#smpub">Kopieren</button>
+          <form method="post" action="{{ url_for('wg.regenerate_key') }}" class="inline" data-confirm="Neues Schlüsselpaar erzeugen? Der Tunnel muss danach auf dem MikroTik aktualisiert werden.">{{ csrf() }}<button class="btn xs ghost">Neu erzeugen</button></form>
+        </div>
+        <hr>
+        <div class="actions">
+          <form method="post" action="{{ url_for('wg.apply') }}" class="inline">{{ csrf() }}<button class="btn primary"><svg class="icon"><use href="#i-shield"/></svg>Tunnel aktivieren / aktualisieren</button></form>
+          <form method="post" action="{{ url_for('wg.test_api') }}" class="inline">{{ csrf() }}<button class="btn">API testen</button></form>
+          <form method="post" action="{{ url_for('wg.self_peer') }}" class="inline" data-confirm="Peer für den Servermanager per API auf dem MikroTik anlegen?">{{ csrf() }}<button class="btn">Eigenen Peer per API anlegen</button></form>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>RouterOS-Befehle</h2><button type="button" class="btn xs" data-copy="#ros">Kopieren</button></div>
+      <div class="card-body"><pre class="codebox" id="ros">{{ script }}</pre></div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head"><h2>Peers auf dem MikroTik</h2><a class="btn sm" href="{{ url_for('wg.index') }}"><svg class="icon"><use href="#i-refresh"/></svg>Aktualisieren</a></div>
+  <div class="card-body flush">
+    {% if peer_error %}<div class="alert danger" style="margin:14px">{{ peer_error }}</div>{% endif %}
+    {% if peers %}
+    <div class="table-wrap"><table class="table compact">
+      <thead><tr><th>System</th><th>Erlaubte Adressen</th><th>Endpoint</th><th>Letzter Handshake</th><th>RX/TX</th><th></th></tr></thead>
+      <tbody>{% for p in peers %}
+        {% if p.missing %}
+        <tr><td><a href="{{ url_for('systems.detail', system_id=p.system.id) }}">{{ p.system.name }}</a> <span class="badge danger">fehlt auf MikroTik</span></td><td class="mono">{{ p.allowed }}</td><td>–</td><td>–</td><td>–</td>
+          <td class="text-right"><form method="post" action="{{ url_for('wg.recreate_peer', system_id=p.system.id) }}" class="inline">{{ csrf() }}<button class="btn xs">Neu anlegen</button></form></td></tr>
+        {% else %}
+        <tr><td>{% if p.system %}<a href="{{ url_for('systems.detail', system_id=p.system.id) }}">{{ p.system.name }}</a>{% elif p.is_sm %}<strong>Servermanager</strong>{% else %}<span class="muted">{{ p.comment or 'unbekannt' }}</span>{% endif %}
+            {% if p.disabled %}<span class="badge">deaktiviert</span>{% endif %}<span class="sub mono">{{ p.public_key|shortkey }}</span></td>
+          <td class="mono"><small>{{ p.allowed }}</small></td><td class="mono"><small>{{ p.endpoint or '–' }}</small></td>
+          <td>{{ p.handshake or 'nie' }}</td><td class="nowrap"><small>{{ p.rx|bytes }} / {{ p.tx|bytes }}</small></td>
+          <td class="text-right">{% if p.ours and not p.system and not p.is_sm %}<form method="post" action="{{ url_for('wg.remove_peer') }}" class="inline" data-confirm="Verwaisten Peer entfernen?">{{ csrf() }}<input type="hidden" name="peer_id" value="{{ p.id }}"><button class="btn xs danger-outline">Entfernen</button></form>{% endif %}</td></tr>
+        {% endif %}
+      {% endfor %}</tbody>
+    </table></div>
+    {% elif not peer_error %}{{ empty('Keine Peers (oder API noch nicht konfiguriert).', 'i-shield') }}{% endif %}
+  </div>
+</div>
+{% endblock %}

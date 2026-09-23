@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, empty with context %}
+{% block title %}Benutzer{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>Benutzer</h1><p>Administratoren sehen alle Systeme. Manager und Benutzer sehen nur die ihnen zugewiesenen Systeme - mit der jeweils vergebenen Berechtigung.</p></div>
+  <div class="actions"><a class="btn primary" href="{{ url_for('users.new') }}"><svg class="icon"><use href="#i-user"/></svg>Neuer Benutzer</a></div></div>
+<div class="card"><div class="card-body flush">
+  <table class="table">
+    <thead><tr><th>Benutzer</th><th>Rolle</th><th>Systeme</th><th>2FA</th><th>Letzte Anmeldung</th><th>Status</th><th></th></tr></thead>
+    <tbody>{% for u in users %}
+      <tr><td><a href="{{ url_for('users.edit', user_id=u.id) }}"><strong>{{ u.label }}</strong></a><span class="sub">{{ u.username }}{% if u.email %} · {{ u.email }}{% endif %}</span></td>
+        <td><span class="badge {{ 'danger' if u.role == 'admin' else ('primary' if u.role == 'manager' else '') }}">{{ ROLES[u.role] }}</span></td>
+        <td>{{ 'alle' if u.is_admin else counts.get(u.id, 0) }}</td>
+        <td>{% if u.totp_enabled %}<span class="badge success">aktiv</span>{% else %}<span class="badge">–</span>{% endif %}</td>
+        <td class="nowrap">{{ u.last_login|dt }}</td>
+        <td>{% if not u.active %}<span class="badge">deaktiviert</span>{% elif u.locked_until and u.locked_until > now %}<span class="badge danger">gesperrt</span>{% else %}<span class="badge success">aktiv</span>{% endif %}</td>
+        <td class="text-right">{% if u.id != user.id %}<form method="post" action="{{ url_for('users.delete', user_id=u.id) }}" class="inline" data-confirm="Benutzer {{ u.username }} löschen?">{{ csrf() }}<button class="btn xs ghost" title="Löschen"><svg class="icon"><use href="#i-trash"/></svg></button></form>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table>
+</div></div>
+<div class="card"><div class="card-head"><h2>Rollen &amp; Berechtigungen</h2></div><div class="card-body">
+  <dl class="kv">
+    <dt>Administrator</dt><dd>Vollzugriff auf alle Systeme, Benutzer, Einstellungen, WireGuard, Backups und Updates.</dd>
+    <dt>Manager</dt><dd>Kann Systeme hinzufügen und Enrollment-Tokens erstellen; eigene neue Systeme erhalten automatisch Vollzugriff.</dd>
+    <dt>Benutzer</dt><dd>Nur zugewiesene Systeme.</dd>
+    <dt>– Lesen</dt><dd>Status, Update-Übersicht, Logs ansehen.</dd>
+    <dt>– Bedienen</dt><dd>Zusätzlich Updates installieren, Dienste/Container/VMs steuern, Neustart, Wartung planen, Konfig-Backups erstellen.</dd>
+    <dt>– Vollzugriff</dt><dd>Zusätzlich beliebige Befehle, Release-Upgrade, Core-Updates, Zugangsdaten ändern, Backups wiederherstellen, System entfernen.</dd>
+  </dl>
+</div></div>
+{% endblock %}

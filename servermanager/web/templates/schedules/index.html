@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, job_badge, empty with context %}
+{% block title %}Wartungsplaner{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>Wartungsplaner</h1><p>Updates und Wartungsarbeiten zeitgesteuert ausführen - z. B. nachts im Wartungsfenster, mit optionalem Neustart und E-Mail-Bericht.</p></div>
+  <div class="actions"><a class="btn primary" href="{{ url_for('schedules.new') }}"><svg class="icon"><use href="#i-plus"/></svg>Neuer Wartungsplan</a></div>
+</div>
+<div class="card">
+  <div class="card-body flush">
+  {% if items %}
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Name</th><th>Zeitplan</th><th>Ziele</th><th>Nächste Ausführung</th><th>Letzte</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+    {% for s in items %}
+      <tr>
+        <td><a href="{{ url_for('schedules.detail', schedule_id=s.id) }}"><strong>{{ s.name }}</strong></a><span class="sub">{{ s.description|truncate(80) }}</span></td>
+        <td>{{ describe(s) }}</td>
+        <td>{{ (s.system_ids or [])|length }} System(e){% if s.tag %} + #{{ s.tag }}{% endif %}</td>
+        <td class="nowrap">{% if s.enabled and s.next_run_at %}{{ s.next_run_at|dt }}<span class="sub">{{ s.next_run_at|ago }}</span>{% else %}<span class="muted">–</span>{% endif %}</td>
+        <td class="nowrap">{% if s.last_run_at %}{{ s.last_run_at|dt }} {% if s.last_status %}{{ job_badge(s.last_status) }}{% endif %}{% else %}<span class="muted">nie</span>{% endif %}</td>
+        <td>{% if s.enabled %}<span class="badge success">aktiv</span>{% else %}<span class="badge">pausiert</span>{% endif %}</td>
+        <td class="nowrap text-right">
+          <form method="post" action="{{ url_for('schedules.toggle', schedule_id=s.id) }}" class="inline">{{ csrf() }}<button class="btn xs">{{ 'Pausieren' if s.enabled else 'Aktivieren' }}</button></form>
+          <a class="btn xs" href="{{ url_for('schedules.edit', schedule_id=s.id) }}">Bearbeiten</a>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}{{ empty('Noch keine Wartungspläne. Legen Sie z. B. einen Plan "Updates jeden Sonntag 03:00" an.', 'i-calendar') }}{% endif %}
+  </div>
+</div>
+{% if runs %}
+<div class="card">
+  <div class="card-head"><h2>Letzte Ausführungen</h2></div>
+  <div class="card-body flush"><table class="table compact">
+    <thead><tr><th>Plan</th><th>Start</th><th>Ende</th><th>Ergebnis</th><th>Status</th></tr></thead>
+    <tbody>{% for r in runs %}
+      <tr><td>{% if r.schedule %}<a href="{{ url_for('schedules.detail', schedule_id=r.schedule_id) }}">{{ r.schedule.name }}</a>{% else %}<span class="muted">gelöscht</span>{% endif %}</td>
+        <td class="nowrap">{{ r.started_at|dt }}</td><td class="nowrap">{{ r.finished_at|dt }}</td>
+        <td><small>{{ r.summary.splitlines()[0] if r.summary }}</small></td><td>{{ job_badge(r.status) }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</div>
+{% endif %}
+{% endblock %}

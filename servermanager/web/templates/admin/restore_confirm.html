@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf with context %}
+{% block title %}Wiederherstellung bestätigen{% endblock %}
+{% block content %}
+<div class="card danger-zone">
+  <div class="card-head"><h2>Wiederherstellung bestätigen</h2></div>
+  <div class="card-body">
+    <dl class="kv mb-2">
+      <dt>Datei</dt><dd class="mono">{{ name }}</dd>
+      <dt>Erstellt</dt><dd>{{ manifest.created }}</dd>
+      <dt>Version</dt><dd>{{ manifest.version }} {% if manifest.commit %}({{ manifest.commit }}){% endif %}</dd>
+      <dt>Host</dt><dd>{{ manifest.hostname }}</dd>
+      <dt>Schema</dt><dd>{{ manifest.schema_version }}</dd>
+      <dt>Notiz</dt><dd>{{ manifest.note or '–' }}</dd>
+    </dl>
+    <div class="alert warning">Der aktuelle Stand (Datenbank, Schlüssel, Konfiguration) wird durch die Sicherung ersetzt. Vorher wird automatisch ein Backup des aktuellen Stands erstellt. Die Dienste werden neu gestartet, alle Benutzer müssen sich neu anmelden.</div>
+    <form method="post" action="{{ url_for('admin.backups_restore_confirm') }}" class="inline-form">{{ csrf() }}
+      <input type="hidden" name="name" value="{{ name }}"><input type="hidden" name="passphrase" value="{{ passphrase }}">
+      <div class="field"><label>Zur Bestätigung WIEDERHERSTELLEN eingeben</label><input type="text" name="confirm" required></div>
+      <button class="btn danger">Jetzt wiederherstellen</button>
+      <a class="btn" href="{{ url_for('admin.backups') }}">Abbrechen</a>
+    </form>
+  </div>
+</div>
+{% endblock %}

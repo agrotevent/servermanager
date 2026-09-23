@@ -1,0 +1,48 @@
+{% from "_macros.html" import pct_bar, empty with context %}
+{% include "modules/_panel_head.html" %}
+{% if data.guests is defined %}
+<p class="muted mono">{{ data.version }}</p>
+{% if data.nodes %}
+<div class="stats">
+  {% for n in data.nodes %}
+  <div class="stat {{ 'success' if n.status == 'online' else 'danger' }}"><div class="label">Node {{ n.node }}</div><div class="value" style="font-size:18px">{{ n.status }}</div>
+    <div class="sub">CPU {{ n.cpu }} % · RAM {{ n.mem|bytes }} / {{ n.maxmem|bytes }}</div></div>
+  {% endfor %}
+</div>
+{% endif %}
+<h3>Gäste</h3>
+<div class="filters mb-1"><input type="search" placeholder="VM/Container suchen …" data-filter-list="#pve-table tbody tr"></div>
+<div class="table-wrap"><table class="table compact" id="pve-table">
+  <thead><tr><th>ID</th><th>Name</th><th>Typ</th><th>Node</th><th>Status</th><th>CPU</th><th>RAM</th><th></th></tr></thead>
+  <tbody>{% for gst in data.guests if not gst.template %}
+    <tr><td>{{ gst.vmid }}</td><td><strong>{{ gst.name }}</strong></td><td>{{ 'VM' if gst.type == 'qemu' else 'LXC' }}</td><td>{{ gst.node }}</td>
+      <td><span class="badge {{ 'success' if gst.status == 'running' else '' }}">{{ gst.status }}</span>{% if gst.uptime %}<span class="sub">{{ gst.uptime|duration }}</span>{% endif %}</td>
+      <td class="num">{{ gst.cpu }} %</td><td class="nowrap"><small>{{ gst.mem|bytes }} / {{ gst.maxmem|bytes }}</small></td>
+      <td class="nowrap text-right">
+      {% if can(system.id, 'operate') %}
+        {% set base = {'node': gst.node, 'type': gst.type, 'vmid': gst.vmid} %}
+        {% for act, label, conf in ([('shutdown', 'Herunterfahren', 'herunterfahren'), ('reboot', 'Neustart', 'neu starten')] if gst.status == 'running' else [('start', 'Start', '')]) %}
+        <form method="post" action="{{ url_for('systems.action', system_id=system.id) }}" class="inline" {% if conf %}data-confirm="{{ gst.name }} ({{ gst.vmid }}) {{ conf }}?"{% endif %}>
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="module" value="proxmox"><input type="hidden" name="action" value="guest_action">
+          {% for k, v in base.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+          <input type="hidden" name="op" value="{{ act }}"><input type="hidden" name="stay" value="1">
+          <button class="btn xs">{{ label }}</button></form>
+        {% endfor %}
+        <form method="post" action="{{ url_for('systems.action', system_id=system.id) }}" class="inline" data-confirm="Sicherung (vzdump, Snapshot) von {{ gst.name }} starten?">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="module" value="proxmox"><input type="hidden" name="action" value="vzdump">
+          {% for k, v in base.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+          <input type="hidden" name="mode" value="snapshot">
+          <button class="btn xs">Backup</button></form>
+      {% endif %}
+      </td></tr>
+  {% endfor %}</tbody>
+</table></div>
+{% if data.storage %}
+<h3 class="mt-2">Storage</h3>
+<table class="table compact"><thead><tr><th>Storage</th><th>Node</th><th>Belegung</th><th></th></tr></thead><tbody>
+  {% for st in data.storage %}{% set pct = ((st.disk * 100 / st.maxdisk) if st.maxdisk else 0)|round|int %}
+  <tr><td>{{ st.storage }}<span class="sub">{{ st.content }}</span></td><td>{{ st.node }}</td><td style="width:40%">{{ pct_bar(pct) }}</td><td class="nowrap"><small>{{ st.disk|bytes }} / {{ st.maxdisk|bytes }}</small></td></tr>
+  {% endfor %}
+</tbody></table>
+{% endif %}
+{% elif not error %}{{ empty('Keine Daten.') }}{% endif %}

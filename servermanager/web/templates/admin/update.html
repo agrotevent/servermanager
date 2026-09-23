@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, job_badge with context %}
+{% block title %}Update{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>Servermanager aktualisieren</h1><p>Aktualisierung per Klick aus dem Git-Repository.</p></div></div>
+<div class="grid grid-2">
+  <div class="card">
+    <div class="card-head"><h2>Installierte Version</h2></div>
+    <div class="card-body">
+      <dl class="kv">
+        <dt>Version</dt><dd>{{ info.version }}</dd>
+        <dt>Commit</dt><dd class="mono">{{ info.commit or '–' }}</dd>
+        <dt>Stand</dt><dd>{{ info.date }}<br><small>{{ info.subject }}</small></dd>
+        <dt>Branch</dt><dd class="mono">{{ info.branch }}</dd>
+        <dt>Repository</dt><dd class="mono break">{{ info.remote }}</dd>
+        <dt>Zuletzt geprüft</dt><dd>{{ last_check or 'nie' }}</dd>
+      </dl>
+      {% if info.error %}<div class="alert danger mt-1">{{ info.error }}</div>{% endif %}
+      <form method="post" action="{{ url_for('admin.update_check') }}" class="mt-2">{{ csrf() }}<button class="btn"><svg class="icon"><use href="#i-refresh"/></svg>Nach Updates suchen</button></form>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head"><h2>Verfügbare Änderungen</h2></div>
+    <div class="card-body">
+      {% if check and check.available %}
+        <p><strong>{{ check.commits|length }} neue Änderung(en)</strong> ({{ check.head }} → {{ check.remote }}):</p>
+        <ul class="list-plain mb-2">{% for c in check.commits[:30] %}<li><code>{{ c.sha }}</code><span class="grow">{{ c.subject }}</span><small class="muted">{{ c.date[:10] }}</small></li>{% endfor %}</ul>
+        {% if running %}<div class="alert warning">Es laufen {{ running|length }} Job(s). Hintergrund-Prozesse (z. B. Paket-Upgrades) laufen auf den Systemen weiter und werden nach dem Update wieder aufgenommen; kurze Jobs werden abgebrochen.</div>{% endif %}
+        <form method="post" action="{{ url_for('admin.update_start') }}" data-confirm="Update jetzt installieren? Die Dienste werden neu gestartet.">{{ csrf() }}
+          <button class="btn primary"><svg class="icon"><use href="#i-cloud"/></svg>Update installieren</button></form>
+      {% elif check %}
+        <p class="muted">Keine neuen Änderungen.</p>
+      {% else %}
+        <p class="muted">Klicken Sie auf "Nach Updates suchen".</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% if log %}
+<div class="card"><div class="card-head"><h2>Letztes Update-Protokoll</h2></div><div class="card-body"><pre class="log">{{ log }}</pre></div></div>
+{% endif %}
+{% endblock %}

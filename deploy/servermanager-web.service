@@ -1,0 +1,22 @@
+[Unit]
+Description=Servermanager - Weboberfläche
+Documentation=https://github.com/agrotevent/servermanager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=servermanager
+Group=servermanager
+EnvironmentFile=/etc/servermanager/environment
+WorkingDirectory=/opt/servermanager
+ExecStart=/opt/servermanager/.venv/bin/gunicorn --workers 1 --threads 16 --bind ${SM_LISTEN} \
+    --timeout 180 --graceful-timeout 20 --access-logfile - --error-logfile - servermanager.web.wsgi:app
+Restart=on-failure
+RestartSec=3
+UMask=0077
+PrivateTmp=yes
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target

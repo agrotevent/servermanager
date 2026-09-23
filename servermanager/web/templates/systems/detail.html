@@ -1,0 +1,280 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, status_badge, conn_badge, type_badges, job_badge, level_badge, pct_bar, action_form, action_groups, empty with context %}
+{% block title %}{{ system.name }}{% endblock %}
+{% block content %}
+{% set f = system.fact %}
+<div class="page-head">
+  <div class="grow">
+    <h1>{{ system.name }} {{ status_badge(system) }} {{ conn_badge(system) }}</h1>
+    <p>{{ system.username }}@{{ system.host }}{% if system.port != 22 %}:{{ system.port }}{% endif %}
+      {% if system.hostname %} · {{ system.hostname }}{% endif %} · {{ type_badges(system) }}
+      {% if system.tag_list %}· {% for t in system.tag_list %}<span class="badge outline">#{{ t }}</span> {% endfor %}{% endif %}</p>
+  </div>
+  <div class="actions">
+    {% if can(system.id, 'operate') %}
+    <form method="post" action="{{ url_for('systems.check', system_id=system.id) }}" class="inline">{{ csrf() }}
+      <button class="btn"><svg class="icon"><use href="#i-refresh"/></svg>Update-Prüfung</button></form>
+    <a class="btn" href="{{ url_for('schedules.new', systems=system.id) }}"><svg class="icon"><use href="#i-calendar"/></svg>Wartung planen</a>
+    {% endif %}
+    {% if can(system.id, 'full') %}
+    <a class="btn" href="{{ url_for('systems.edit', system_id=system.id) }}"><svg class="icon"><use href="#i-edit"/></svg>Bearbeiten</a>
+    {% endif %}
+  </div>
+</div>
+
+{% if system.status in ('offline', 'error') and system.status_message %}<div class="alert danger"><strong>{{ STATUSES[system.status] }}:</strong>{{ system.status_message }}</div>{% endif %}
+{% if system.status == 'pending' %}<div class="alert warning"><strong>Enrollment ausstehend:</strong>{{ system.status_message }}</div>{% endif %}
+{% set active_jobs = jobs|selectattr('status', 'in', ['queued', 'running'])|list %}
+{% if active_jobs %}
+<div class="alert info">
+  <strong>Laufende Jobs:</strong>
+  {% for j in active_jobs %}<a href="{{ url_for('jobs.detail', job_id=j.id) }}">#{{ j.id }} {{ j.title }}</a> {{ job_badge(j.status, j.id) }}{% if not loop.last %} · {% endif %}{% endfor %}
+</div>
+{% endif %}
+
+<nav class="tabs">
+  <a href="?tab=overview" class="{{ 'active' if tab == 'overview' }}">Übersicht</a>
+  <a href="?tab=updates" class="{{ 'active' if tab == 'updates' }}">Updates{% if summary.total %} <span class="badge {{ 'danger' if summary.security else 'warning' }}">{{ summary.total }}</span>{% endif %}</a>
+  {% for m in mods %}<a href="?tab={{ m.key }}" class="{{ 'active' if tab == m.key }}">{{ 'Dienste' if m.key == 'debian' else m.label }}</a>{% endfor %}
+  {% if can(system.id, 'full') %}<a href="?tab=command" class="{{ 'active' if tab == 'command' }}">Befehl</a>{% endif %}
+  <a href="?tab=backups" class="{{ 'active' if tab == 'backups' }}">Konfig-Backups</a>
+  <a href="?tab=jobs" class="{{ 'active' if tab == 'jobs' }}">Jobs</a>
+  {% if user.is_admin %}<a href="?tab=access" class="{{ 'active' if tab == 'access' }}">Zugriff</a>{% endif %}
+  {% if can(system.id, 'full') %}<a href="?tab=settings" class="{{ 'active' if tab == 'settings' }}">Verwaltung</a>{% endif %}
+</nav>
+
+{# ------------------------------------------------------------------ overview #}
+{% if tab == 'overview' %}
+<div class="grid grid-2">
+  <div class="card">
+    <div class="card-head"><h2>System</h2><small>Stand: {{ system.last_check|ago }}</small></div>
+    <div class="card-body">
+      {% if f.os_name %}
+      <dl class="kv">
+        <dt>Betriebssystem</dt><dd>{{ f.os_name }}{% if f.debian_version %} ({{ f.debian_version }}){% endif %}</dd>
+        <dt>Kernel</dt><dd>{{ f.kernel }} ({{ f.arch }})</dd>
+        <dt>Virtualisierung</dt><dd>{{ f.virt }}</dd>
+        <dt>Laufzeit</dt><dd>{{ f.uptime|duration }}</dd>
+        <dt>Last</dt><dd>{{ f.load }} <small>({{ f.cpus }} CPU)</small></dd>
+        {% if f.mem_total %}{% set mem_pct = ((f.mem_total - f.mem_avail) * 100 / f.mem_total)|round|int %}
+        <dt>Arbeitsspeicher</dt><dd class="flex">{{ pct_bar(mem_pct) }} <small class="nowrap">{{ (f.mem_total - f.mem_avail)|bytes('KB') }} / {{ f.mem_total|bytes('KB') }}</small></dd>{% endif %}
+        <dt>IP-Adressen</dt><dd class="mono">{{ f.ip }}</dd>
+        {% if f.docker_version %}<dt>Docker</dt><dd>{{ f.docker_version }} · {{ f.docker_running }}/{{ f.docker_total }} Container laufen</dd>{% endif %}
+        {% if f.pve_version %}<dt>Proxmox VE</dt><dd>{{ f.pve_version }} · {{ f.pve_guests }} Gäste</dd>{% endif %}
+        {% if f.ispconfig_version %}<dt>ISPConfig</dt><dd>{{ f.ispconfig_version }}</dd>{% endif %}
+        {% for nc in f.nextcloud or [] %}<dt>Nextcloud</dt><dd>{{ nc.version }} <small class="mono">{{ nc.path }}</small></dd>{% endfor %}
+      </dl>
+      {% else %}{{ empty('Noch keine Daten - bitte eine Update-Prüfung ausführen.', 'i-refresh') }}{% endif %}
+    </div>
+  </div>
+  <div>
+    {% if summary.reboot or f.failed_units or summary.release %}
+    <div class="card"><div class="card-head"><h2>Hinweise</h2></div><div class="card-body">
+      {% if summary.reboot %}<div class="alert warning"><strong>Neustart erforderlich</strong>{{ system.upd.reboot.reason }}
+        <div class="mt-1">{{ action_form(system, MODULES['debian'], MODULES['debian'].action('reboot'), cls='sm') }}</div></div>{% endif %}
+      {% if f.failed_units %}<div class="alert danger"><strong>Fehlgeschlagene Dienste:</strong><span class="mono">{{ f.failed_units }}</span></div>{% endif %}
+      {% if summary.release %}<div class="alert info"><strong>{{ summary.release.label }} verfügbar.</strong> Release-Upgrade im Tab <a href="?tab=updates">Updates</a>.</div>{% endif %}
+    </div></div>
+    {% endif %}
+    <div class="card">
+      <div class="card-head"><h2>Speicherplatz</h2></div>
+      <div class="card-body {{ 'flush' if f.disks }}">
+        {% if f.disks %}
+        <table class="table compact"><tbody>
+          {% for d in f.disks %}<tr><td class="mono">{{ d.mount }}</td><td style="width:40%">{{ pct_bar(d.pct) }}</td>
+            <td class="nowrap num"><small>{{ d.used|bytes('KB') }} / {{ d.total|bytes('KB') }} ({{ d.pct }} %)</small></td></tr>{% endfor %}
+        </tbody></table>
+        {% else %}<p class="muted">Keine Daten.</p>{% endif %}
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Verbindung</h2></div>
+      <div class="card-body"><dl class="kv">
+        <dt>Art</dt><dd>{{ CONNECTIONS[system.connection] }}</dd>
+        {% if system.wg_ip %}<dt>WireGuard-IP</dt><dd class="mono">{{ system.wg_ip }}</dd>
+        <dt>WG-Public-Key</dt><dd class="mono">{{ system.wg_public_key|shortkey }}</dd>{% endif %}
+        {% if system.routed_subnets %}<dt>Geroutete Netze</dt><dd class="mono">{{ system.routed_subnets }}</dd>{% endif %}
+        <dt>Anmeldung</dt><dd>{{ system.username }} · {{ 'Passwort' if system.auth_method == 'password' else ('eigener Schlüssel' if system.private_key_enc else 'Servermanager-Schlüssel') }}{% if system.username != 'root' %} · {{ {'nopasswd': 'sudo', 'password': 'sudo mit Passwort'}.get(system.sudo_mode, 'kein sudo') }}{% endif %}</dd>
+        <dt>Zuletzt gesehen</dt><dd>{{ system.last_seen|dt }} ({{ system.last_seen|ago }})</dd>
+        <dt>Ihre Berechtigung</dt><dd>{{ level_badge(level) }}</dd>
+      </dl>
+      {% if system.notes %}<hr><div>{{ system.notes|nl2br }}</div>{% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ------------------------------------------------------------------ updates #}
+{% elif tab == 'updates' %}
+{% set apt = system.upd.apt or {} %}
+<div class="stats">
+  <div class="stat {{ 'warning' if apt.count else 'success' }}"><div class="label">Paketupdates</div><div class="value">{{ apt.count or 0 }}</div><div class="sub">Listen: {{ apt.lists_updated|ago if apt.lists_updated else 'unbekannt' }}</div></div>
+  <div class="stat {{ 'danger' if apt.security else 'success' }}"><div class="label">Sicherheit</div><div class="value">{{ apt.security or 0 }}</div></div>
+  <div class="stat {{ 'warning' if summary.reboot else '' }}"><div class="label">Neustart</div><div class="value">{{ 'ja' if summary.reboot else 'nein' }}</div></div>
+  <div class="stat"><div class="label">Geprüft</div><div class="value" style="font-size:16px">{{ system.last_deep_check|ago }}</div><div class="sub">{{ system.last_deep_check|dt }}</div></div>
+</div>
+{% for item in summary['items'] if item.module != 'debian' %}
+  <div class="alert {{ 'warning' if item.severity == 'warn' else item.severity }}"><strong>{{ item.label }}:</strong>{{ item.text }} <a href="?tab={{ item.module }}">→ {{ item.label }}</a></div>
+{% endfor %}
+{% if summary.release %}<div class="alert info"><strong>{{ summary.release.label }} verfügbar.</strong> Bitte zuerst die Vorprüfung ausführen. Das Upgrade läuft im Hintergrund weiter, auch wenn die Verbindung abbricht; /etc wird vorher gesichert.</div>{% endif %}
+
+<div class="card">
+  <div class="card-head"><h2>Aktionen</h2></div>
+  <div class="card-body">{{ action_groups(system, MODULES['debian']) }}</div>
+</div>
+
+<div class="card">
+  <div class="card-head"><h2>Ausstehende Pakete</h2></div>
+  <div class="card-body flush">
+    {% if apt.packages %}
+    <div class="table-wrap pkg-list"><table class="table compact">
+      <thead><tr><th>Paket</th><th>Installiert</th><th>Neu</th><th>Quelle</th></tr></thead>
+      <tbody>{% for p in apt.packages|sort(attribute='security', reverse=True) %}
+        <tr><td>{{ p.name }} {% if p.security %}<span class="badge danger">Sicherheit</span>{% endif %}</td>
+            <td class="mono"><small>{{ p.current or 'neu' }}</small></td><td class="mono"><small>{{ p.new }}</small></td><td><small>{{ p.origin }}</small></td></tr>
+      {% endfor %}</tbody></table></div>
+    {% else %}{{ empty('Keine ausstehenden Paketupdates.') }}{% endif %}
+  </div>
+</div>
+
+{# ------------------------------------------------------------------ module tabs #}
+{% elif tab in MODULES and MODULES[tab] in mods %}
+{% set m = MODULES[tab] %}
+{% if m.key != 'debian' and m.visible_actions() %}
+<div class="card"><div class="card-head"><h2>{{ m.label }} - Aktionen</h2></div><div class="card-body">{{ action_groups(system, m) }}</div></div>
+{% endif %}
+<div class="card">
+  <div class="card-head"><h2>{{ 'Dienste' if m.key == 'debian' else m.label }}</h2><button class="btn sm" data-reload type="button"><svg class="icon"><use href="#i-refresh"/></svg>Neu laden</button></div>
+  <div class="card-body" data-load="{{ url_for('systems.panel', system_id=system.id, module_key=m.key) }}"></div>
+</div>
+
+{# ------------------------------------------------------------------ command #}
+{% elif tab == 'command' and can(system.id, 'full') %}
+<div class="card">
+  <div class="card-head"><h2>Befehl ausführen</h2></div>
+  <form method="post" action="{{ url_for('systems.command', system_id=system.id) }}" class="card-body" data-confirm="Befehl auf {{ system.name }} als root ausführen?">
+    {{ csrf() }}
+    <div class="field"><label>Shell-Befehl / Skript (bash, wird als root ausgeführt)</label>
+      <textarea name="command" rows="8" placeholder="df -h&#10;systemctl status nginx" required></textarea></div>
+    <p class="help muted">Die Ausgabe wird live im Job-Log angezeigt. Interaktive Programme werden nicht unterstützt.</p>
+    <button class="btn primary"><svg class="icon"><use href="#i-play"/></svg>Ausführen</button>
+  </form>
+</div>
+
+{# ------------------------------------------------------------------ backups #}
+{% elif tab == 'backups' %}
+{% if can(system.id, 'operate') %}
+<div class="card">
+  <div class="card-head"><h2>Konfigurations-Backup erstellen</h2></div>
+  <form method="post" action="{{ url_for('systems.backup_create', system_id=system.id) }}" class="card-body inline-form">
+    {{ csrf() }}
+    <div class="field grow"><label>Pfade</label><input type="text" name="paths" value="{{ system.backup_paths }}"></div>
+    <div class="field"><label>Notiz</label><input type="text" name="note" placeholder="optional"></div>
+    <button class="btn primary">Backup erstellen</button>
+  </form>
+</div>
+{% endif %}
+<div class="card">
+  <div class="card-head"><h2>Vorhandene Backups</h2></div>
+  <div class="card-body flush">
+    {% if backups %}
+    <table class="table">
+      <thead><tr><th>Datei</th><th>Erstellt</th><th>Größe</th><th>Pfade</th><th></th></tr></thead>
+      <tbody>{% for b in backups %}
+        <tr><td class="mono">{{ b.filename }}{% if b.note %}<span class="sub">{{ b.note }}</span>{% endif %}</td><td class="nowrap">{{ b.created_at|dt }}</td>
+          <td class="nowrap">{{ b.size|bytes }}</td><td class="mono"><small>{{ b.paths }}</small></td>
+          <td class="nowrap text-right">
+            {% if can(system.id, 'full') %}
+            <a class="btn xs" href="{{ url_for('systems.backup_download', system_id=system.id, backup_id=b.id) }}"><svg class="icon"><use href="#i-download"/></svg></a>
+            <form method="post" action="{{ url_for('systems.backup_restore', system_id=system.id, backup_id=b.id) }}" class="inline" data-confirm="Backup nach /root/servermanager-restore-… auf dem System entpacken?">{{ csrf() }}
+              <button class="btn xs" name="mode" value="extract" title="Auf dem System in ein separates Verzeichnis entpacken">Entpacken</button></form>
+            <form method="post" action="{{ url_for('systems.backup_restore', system_id=system.id, backup_id=b.id) }}" class="inline" data-confirm="ACHTUNG: Dateien am Originalort überschreiben? Dies kann das System beschädigen.">{{ csrf() }}
+              <button class="btn xs danger-outline" name="mode" value="inplace">Wiederherstellen</button></form>
+            <form method="post" action="{{ url_for('systems.backup_delete', system_id=system.id, backup_id=b.id) }}" class="inline" data-confirm="Backup löschen?">{{ csrf() }}
+              <button class="btn xs ghost" title="Löschen"><svg class="icon"><use href="#i-trash"/></svg></button></form>
+            {% endif %}
+          </td></tr>
+      {% endfor %}</tbody>
+    </table>
+    {% else %}{{ empty('Noch keine Backups vorhanden.', 'i-archive') }}{% endif %}
+  </div>
+</div>
+
+{# ------------------------------------------------------------------ jobs #}
+{% elif tab == 'jobs' %}
+<div class="card"><div class="card-body flush">
+  {% if jobs %}
+  <table class="table"><thead><tr><th>#</th><th>Job</th><th>Benutzer</th><th>Erstellt</th><th>Dauer</th><th>Status</th></tr></thead><tbody>
+  {% for j in jobs %}
+    <tr><td>{{ j.id }}</td><td><a href="{{ url_for('jobs.detail', job_id=j.id) }}">{{ j.title }}</a><span class="sub">{{ j.summary|truncate(120) }}</span></td>
+      <td>{{ j.user.label if j.user else 'System' }}</td><td class="nowrap">{{ j.created_at|dt }}</td><td class="nowrap">{{ j.duration|duration }}</td><td>{{ job_badge(j.status, j.id) }}</td></tr>
+  {% endfor %}</tbody></table>
+  {% else %}{{ empty('Keine Jobs.', 'i-jobs') }}{% endif %}
+</div></div>
+
+{# ------------------------------------------------------------------ access #}
+{% elif tab == 'access' and user.is_admin %}
+<div class="card">
+  <div class="card-head"><h2>Zugriffsrechte</h2></div>
+  <form method="post" action="{{ url_for('systems.access_update', system_id=system.id) }}">
+    {{ csrf() }}
+    <div class="card-body flush">
+    <table class="table">
+      <thead><tr><th>Benutzer</th><th>Rolle</th><th>Berechtigung für dieses System</th></tr></thead>
+      <tbody>
+      {% set current = {} %}{% for a in access_rows %}{% set _ = current.update({a.user_id: a.level}) %}{% endfor %}
+      {% for u in users %}
+        <tr><td>{{ u.label }} <small class="muted">{{ u.username }}</small></td><td>{{ ROLES[u.role] }}</td>
+          <td>{% if u.is_admin %}<span class="badge danger">Administrator (alle Systeme)</span>
+              {% else %}<select name="level_{{ u.id }}"><option value="">kein Zugriff</option>
+                {% for k, v in LEVELS.items() %}<option value="{{ k }}" {% if current.get(u.id) == k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select>{% endif %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <div class="card-foot"><button class="btn primary">Speichern</button>
+      <small class="muted">Lesen: Status &amp; Logs · Bedienen: Updates, Dienste, Container, VMs · Vollzugriff: zusätzlich Befehle, Release-Upgrade, Zugangsdaten, Löschen</small></div>
+  </form>
+</div>
+
+{# ------------------------------------------------------------------ settings #}
+{% elif tab == 'settings' and can(system.id, 'full') %}
+<div class="grid grid-2">
+  <div class="card">
+    <div class="card-head"><h2>SSH-Hostkey</h2></div>
+    <div class="card-body">
+      {% if system.host_keys %}
+        <p>Gespeicherte Hostkeys (Schutz vor Man-in-the-Middle):</p>
+        <ul class="list-plain">{% for line in system.host_keys.splitlines() %}<li class="mono break"><small>{{ line|fingerprint }}</small></li>{% endfor %}</ul>
+        <form method="post" action="{{ url_for('systems.hostkey_reset', system_id=system.id) }}" data-confirm="Hostkey zurücksetzen? Nur nach Neuinstallation des Systems oder geänderten SSH-Schlüsseln!">
+          {{ csrf() }}<button class="btn danger-outline sm mt-1">Hostkey zurücksetzen</button></form>
+      {% else %}<p class="muted">Noch kein Hostkey gespeichert - er wird bei der nächsten Verbindung übernommen (Trust on first use).</p>{% endif %}
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head"><h2>Zugang</h2></div>
+    <div class="card-body">
+      <form method="post" action="{{ url_for('systems.pause', system_id=system.id) }}" class="mb-2">{{ csrf() }}
+        <button class="btn sm">{{ 'Automatische Prüfungen fortsetzen' if system.maintenance_mode else 'Automatische Prüfungen pausieren' }}</button></form>
+      {% if system.password_enc %}
+      <form method="post" action="{{ url_for('systems.deploy_key', system_id=system.id) }}" data-confirm="SSH-Schlüssel des Servermanagers auf dem System installieren und auf Schlüssel-Anmeldung umstellen?">
+        {{ csrf() }}
+        <label class="check"><input type="checkbox" name="remove_password" value="1"> Passwort danach entfernen</label>
+        <button class="btn sm mt-1">SSH-Schlüssel installieren</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
+<div class="card danger-zone">
+  <div class="card-head"><h2>System entfernen</h2></div>
+  <form method="post" action="{{ url_for('systems.delete', system_id=system.id) }}" class="card-body inline-form" data-confirm="System endgültig aus dem Servermanager entfernen?">
+    {{ csrf() }}
+    <div class="field"><label>Zur Bestätigung Namen eingeben: <code>{{ system.name }}</code></label><input type="text" name="confirm_name" required></div>
+    {% if system.mt_refs %}<label class="check"><input type="checkbox" name="remove_peer" value="1" checked> WireGuard-Peer auf dem MikroTik entfernen</label>{% endif %}
+    <button class="btn danger">Entfernen</button>
+  </form>
+  <div class="card-foot"><small class="muted">Das Zielsystem selbst wird nicht verändert (WireGuard-Konfiguration und SSH-Schlüssel bleiben dort bestehen).</small></div>
+</div>
+{% endif %}
+{% endblock %}

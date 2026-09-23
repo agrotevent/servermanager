@@ -1,0 +1,23 @@
+# Servermanager - Grundkonfiguration (/etc/servermanager/servermanager.conf)
+# Weitere Einstellungen werden in der Weboberfläche vorgenommen.
+
+[server]
+base_url = "https://servermanager.example.com"
+listen = "127.0.0.1:8000"
+trusted_proxies = 1
+secure_cookies = true
+# Zertifikat für den TLS-Pin bei selbstsignierten Zertifikaten
+tls_cert_file = "/etc/servermanager/tls/fullchain.pem"
+
+[paths]
+data_dir = "/var/lib/servermanager"
+secret_key_file = "/etc/servermanager/secret.key"
+
+[database]
+url = "sqlite:////var/lib/servermanager/servermanager.db"
+
+[update]
+repo_dir = "/opt/servermanager"
+branch = "main"
+helper = "/opt/servermanager/bin/sm-helper"
+use_sudo = true

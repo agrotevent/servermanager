@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, job_badge, status_badge, empty with context %}
+{% block title %}{{ s.name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>{{ s.name }} {% if s.enabled %}<span class="badge success">aktiv</span>{% else %}<span class="badge">pausiert</span>{% endif %}</h1>
+    <p>{{ describe(s) }}{% if s.description %} · {{ s.description }}{% endif %}</p></div>
+  <div class="actions">
+    <form method="post" action="{{ url_for('schedules.run_now', schedule_id=s.id) }}" class="inline" data-confirm="Wartung jetzt sofort auf allen Zielsystemen ausführen?">{{ csrf() }}
+      <button class="btn"><svg class="icon"><use href="#i-play"/></svg>Jetzt ausführen</button></form>
+    <form method="post" action="{{ url_for('schedules.toggle', schedule_id=s.id) }}" class="inline">{{ csrf() }}<button class="btn">{{ 'Pausieren' if s.enabled else 'Aktivieren' }}</button></form>
+    <a class="btn primary" href="{{ url_for('schedules.edit', schedule_id=s.id) }}"><svg class="icon"><use href="#i-edit"/></svg>Bearbeiten</a>
+  </div>
+</div>
+<div class="grid grid-2">
+  <div class="card">
+    <div class="card-head"><h2>Ablauf</h2></div>
+    <div class="card-body">
+      <dl class="kv">
+        <dt>Zeitplan</dt><dd>{{ describe(s) }}</dd>
+        <dt>Nächste Termine</dt><dd>{% for t in upcoming %}{{ t|dt('%a %d.%m.%Y %H:%M') }}<br>{% else %}<span class="muted">keine</span>{% endfor %}</dd>
+        <dt>Aufgaben</dt><dd><ol class="mt-0 mb-0">{% for st in s.steps or [] %}<li>{{ step_label(st) }}</li>{% endfor %}
+          {% if s.reboot_policy != 'never' %}<li>{{ REBOOT_POLICIES[s.reboot_policy] }}</li>{% endif %}</ol></dd>
+        <dt>Optionen</dt><dd>{% if s.only_if_updates %}nur bei ausstehenden Updates · {% endif %}{% if s.pre_backup %}Backup vorher · {% endif %}{{ 'Abbruch bei Fehler' if s.stop_on_error else 'weiter bei Fehler' }}</dd>
+        <dt>Parallelität</dt><dd>max. {{ s.max_parallel }} System(e) gleichzeitig{% if s.window_minutes %}, Fenster {{ s.window_minutes }} min{% endif %}</dd>
+        <dt>E-Mail-Bericht</dt><dd>{{ s.notify_email or '–' }}</dd>
+        <dt>Erstellt von</dt><dd>{{ s.creator.label if s.creator else '–' }}</dd>
+      </dl>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head"><h2>Zielsysteme ({{ targets|length }})</h2></div>
+    <div class="card-body flush">
+      {% if targets %}<table class="table compact"><tbody>
+        {% for t in targets %}<tr><td><a href="{{ url_for('systems.detail', system_id=t.id) }}">{{ t.name }}</a></td><td>{{ status_badge(t) }}</td></tr>{% endfor %}
+      </tbody></table>{% else %}{{ empty('Keine Zielsysteme.', 'i-server') }}{% endif %}
+    </div>
+  </div>
+</div>
+<div class="card">
+  <div class="card-head"><h2>Verlauf</h2></div>
+  <div class="card-body flush">
+    {% if runs %}
+    <table class="table">
+      <thead><tr><th>Start</th><th>Ende</th><th>Ergebnis</th><th>Status</th></tr></thead>
+      <tbody>{% for r in runs %}
+        <tr><td class="nowrap">{{ r.started_at|dt }}</td><td class="nowrap">{{ r.finished_at|dt }}</td>
+          <td><small>{{ r.summary|nl2br }}</small>
+            {% if run_jobs.get(r.id) %}<div class="flex flex-wrap mt-1">{% for j in run_jobs[r.id] %}<a href="{{ url_for('jobs.detail', job_id=j.id) }}">{{ j.system.name if j.system else '#' ~ j.id }}</a> {{ job_badge(j.status, j.id) }}{% endfor %}</div>{% endif %}</td>
+          <td>{{ job_badge(r.status) }}</td></tr>
+      {% endfor %}</tbody>
+    </table>
+    {% else %}{{ empty('Noch nicht ausgeführt.', 'i-calendar') }}{% endif %}
+  </div>
+</div>
+<form method="post" action="{{ url_for('schedules.delete', schedule_id=s.id) }}" data-confirm="Wartungsplan '{{ s.name }}' löschen?">{{ csrf() }}
+  <button class="btn danger-outline sm"><svg class="icon"><use href="#i-trash"/></svg>Wartungsplan löschen</button></form>
+{% endblock %}

@@ -1,0 +1,57 @@
+"""Very small schema migration mechanism.
+
+A fresh database is created with ``create_all`` and stamped with the latest
+schema version. Existing databases get the ordered migration steps applied.
+New tables are always created by ``create_all``; migration steps only need
+to handle changes to existing tables (new columns, data fixes, ...).
+"""
+from __future__ import annotations
+
+import logging
+from typing import Callable
+
+from sqlalchemy import inspect, text
+from sqlalchemy.engine import Connection, Engine
+
+from . import models  # noqa: F401 - registers the ORM models
+from .db import Base
+
+log = logging.getLogger(__name__)
+
+
+def add_column_if_missing(conn: Connection, table: str, column: str, ddl: str) -> None:
+    cols = {c["name"] for c in inspect(conn).get_columns(table)}
+    if column not in cols:
+        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+
+
+# version -> migration function. Append new steps, never change old ones.
+MIGRATIONS: dict[int, Callable[[Connection], None]] = {
+    1: lambda conn: None,  # initial schema
+}
+SCHEMA_VERSION = max(MIGRATIONS)
+
+
+def current_version(engine: Engine) -> int | None:
+    insp = inspect(engine)
+    if "meta" not in insp.get_table_names():
+        return None
+    with engine.connect() as conn:
+        row = conn.execute(text("SELECT value FROM meta WHERE key='schema_version'")).fetchone()
+        return int(row[0]) if row else None
+
+
+def migrate(engine: Engine) -> int:
+    version = current_version(engine)
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        if version is None:
+            conn.execute(text("INSERT INTO meta(key, value) VALUES ('schema_version', :v)"),
+                         {"v": str(SCHEMA_VERSION)})
+            log.info("database created with schema version %s", SCHEMA_VERSION)
+            return SCHEMA_VERSION
+        for v in range(version + 1, SCHEMA_VERSION + 1):
+            log.info("applying migration %s", v)
+            MIGRATIONS[v](conn)
+            conn.execute(text("UPDATE meta SET value=:v WHERE key='schema_version'"), {"v": str(v)})
+    return SCHEMA_VERSION

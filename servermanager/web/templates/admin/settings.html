@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, field, select, checkbox with context %}
+{% block title %}Einstellungen{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>Einstellungen</h1></div></div>
+<div class="grid grid-2">
+  <div>
+    <div class="card" id="general">
+      <div class="card-head"><h2>Allgemein</h2></div>
+      <form method="post" action="{{ url_for('admin.settings_save', section='general') }}" class="card-body">{{ csrf() }}
+        <div class="form-grid">
+          {{ field('Name', 'general__site_name', v['general.site_name']) }}
+          {{ field('Öffentliche URL', 'general__base_url', v['general.base_url'], placeholder='https://servermanager.example.com', help='Von den Clients erreichbar; wird in die Enrollment-Befehle eingesetzt.') }}
+          <div class="field"><label>Zeitzone</label><select name="general__timezone">{% for t in timezones %}<option {% if t == v['general.timezone'] %}selected{% endif %}>{{ t }}</option>{% endfor %}</select>
+            <span class="help">Für Anzeige und Wartungszeiten.</span></div>
+          {{ field('Sitzungsdauer (Stunden)', 'general__session_hours', v['general.session_hours'], type='number', attrs='min="1" max="168"') }}
+          <div class="full">{{ checkbox('Zwei-Faktor-Anmeldung für Administratoren erzwingen', 'general__require_2fa_admin', v['general.require_2fa_admin']) }}</div>
+        </div>
+        <button class="btn primary mt-1">Speichern</button>
+      </form>
+    </div>
+
+    <div class="card" id="checks">
+      <div class="card-head"><h2>Prüfungen &amp; Jobs</h2></div>
+      <form method="post" action="{{ url_for('admin.settings_save', section='checks') }}" class="card-body">{{ csrf() }}
+        <div class="form-grid">
+          {{ field('Statusprüfung alle (Minuten)', 'checks__status_interval_min', v['checks.status_interval_min'], type='number', help='Erreichbarkeit, Ressourcen, Paketupdates aus dem Cache. 0 = aus') }}
+          {{ field('Update-Prüfung alle (Stunden)', 'checks__deep_interval_hours', v['checks.deep_interval_hours'], type='number', help='apt-get update + Nextcloud/ISPConfig/Docker-Prüfungen') }}
+          {{ field('Parallele Prüfungen', 'checks__parallel', v['checks.parallel'], type='number') }}
+          {{ field('SSH-Timeout (Sekunden)', 'ssh__connect_timeout', v['ssh.connect_timeout'], type='number') }}
+          {{ field('Max. parallele Jobs', 'jobs__max_parallel', v['jobs.max_parallel'], type='number', help='Wirksam nach Neustart des Workers') }}
+          {{ field('Job-Logs aufbewahren (Tage)', 'jobs__log_retention_days', v['jobs.log_retention_days'], type='number') }}
+          <div class="full">
+            {{ checkbox('Paketlisten automatisch aktualisieren (apt-get update)', 'checks__apt_refresh', v['checks.apt_refresh']) }}
+            {{ checkbox('Docker-Images regelmäßig auf neue Versionen prüfen (lädt Images per docker pull)', 'checks__docker_image_check', v['checks.docker_image_check']) }}
+          </div>
+        </div>
+        <button class="btn primary mt-1">Speichern</button>
+      </form>
+    </div>
+
+    <div class="card" id="ssh">
+      <div class="card-head"><h2>SSH-Schlüssel des Servermanagers</h2></div>
+      <div class="card-body">
+        <p>Dieser öffentliche Schlüssel wird auf den verwalteten Systemen hinterlegt:</p>
+        <div class="codebox" id="smkey">{{ sm_pubkey }}</div>
+        <button type="button" class="btn xs mt-1" data-copy="#smkey">Kopieren</button>
+        <hr>
+        <form method="post" action="{{ url_for('admin.regenerate_ssh_key') }}" class="inline-form" data-confirm="Wirklich ein neues Schlüsselpaar erzeugen? Alle Systeme verlieren den Zugang, bis der neue Schlüssel hinterlegt ist!">
+          {{ csrf() }}
+          <div class="field"><label>Zur Bestätigung NEU eingeben</label><input type="text" name="confirm"></div>
+          <button class="btn danger-outline">Neues Schlüsselpaar erzeugen</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card" id="enroll">
+      <div class="card-head"><h2>Enrollment</h2></div>
+      <form method="post" action="{{ url_for('admin.settings_save', section='enroll') }}" class="card-body">{{ csrf() }}
+        <div class="form-grid">
+          {{ field('TLS-Zertifikats-Pin (sha256)', 'enroll__tls_pin', v['enroll.tls_pin'], cls='full', help='Nur bei selbstsigniertem Zertifikat: curl prüft dann den öffentlichen Schlüssel statt der CA (--pinnedpubkey).') }}
+          {{ field('Öffentliche IP des Servermanagers', 'enroll__direct_source', v['enroll.direct_source'], help='Für direkte Verbindungen: SSH-Schlüssel nur von dieser Adresse erlauben (from=).') }}
+          {{ field('Token-Gültigkeit (Stunden)', 'enroll__default_valid_hours', v['enroll.default_valid_hours'], type='number') }}
+          <div class="full">
+            {{ checkbox('SSH-Schlüssel auf Clients auf die Adresse des Servermanagers beschränken (from=)', 'enroll__restrict_ssh_source', v['enroll.restrict_ssh_source']) }}
+            {{ checkbox('TLS-Prüfung im Skript deaktivieren (nicht empfohlen)', 'enroll__insecure_tls', v['enroll.insecure_tls']) }}
+          </div>
+        </div>
+        <div class="actions mt-1"><button class="btn primary">Speichern</button></div>
+      </form>
+      {% if cfg.tls_cert_file %}
+      <div class="card-foot"><form method="post" action="{{ url_for('admin.tls_pin_detect') }}" class="inline">{{ csrf() }}
+        <button class="btn sm">Pin aus lokalem Zertifikat übernehmen</button> <small class="muted mono">{{ cfg.tls_cert_file }}</small></form></div>
+      {% endif %}
+    </div>
+
+    <div class="card" id="mail">
+      <div class="card-head"><h2>E-Mail-Benachrichtigungen</h2>{% if mail_ok %}<span class="badge success">eingerichtet</span>{% endif %}</div>
+      <form method="post" action="{{ url_for('admin.settings_save', section='mail') }}" class="card-body" autocomplete="off">{{ csrf() }}
+        <div class="form-grid">
+          {{ field('SMTP-Server', 'mail__host', v['mail.host']) }}
+          {{ field('Port', 'mail__port', v['mail.port'], type='number') }}
+          {{ select('Verschlüsselung', 'mail__security', {'starttls': 'STARTTLS', 'ssl': 'SSL/TLS', 'none': 'keine'}, v['mail.security']) }}
+          {{ field('Absender', 'mail__sender', v['mail.sender'], placeholder='servermanager@example.com') }}
+          {{ field('Benutzer', 'mail__user', v['mail.user']) }}
+          {{ field('Passwort', 'mail__password', type='password', help='leer lassen zum Beibehalten', attrs='autocomplete="new-password"') }}
+          {{ field('Admin-Empfänger', 'mail__admin_recipients', v['mail.admin_recipients'], cls='full', help='Erhalten Berichte über fehlgeschlagene Wartungen') }}
+          <div class="full">
+            {{ checkbox('E-Mail-Versand aktiv', 'mail__enabled', v['mail.enabled']) }}
+            {{ checkbox('Admins bei fehlgeschlagenen Wartungen benachrichtigen', 'mail__notify_failures', v['mail.notify_failures']) }}
+          </div>
+        </div>
+        <button class="btn primary mt-1">Speichern</button>
+      </form>
+      <div class="card-foot"><form method="post" action="{{ url_for('admin.mail_test') }}" class="inline-form">{{ csrf() }}
+        <div class="field"><input type="email" name="to" placeholder="{{ user.email or 'empfaenger@example.com' }}"></div><button class="btn sm">Testmail senden</button></form></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Installation</h2></div>
+      <div class="card-body"><dl class="kv">
+        <dt>Konfiguration</dt><dd class="mono">{{ cfg.config_path }}</dd>
+        <dt>Datenverzeichnis</dt><dd class="mono">{{ cfg.data_dir }}</dd>
+        <dt>Programmverzeichnis</dt><dd class="mono">{{ cfg.repo_dir }}</dd>
+        <dt>Version</dt><dd>{{ version }}</dd>
+      </dl></div>
+    </div>
+  </div>
+</div>
+{% endblock %}

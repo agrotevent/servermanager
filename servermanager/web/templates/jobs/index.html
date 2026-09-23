@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% from "_macros.html" import job_badge, empty with context %}
+{% block title %}Jobs{% endblock %}
+{% block body_attrs %}{% if active %}data-autorefresh="10"{% endif %}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>Jobs</h1><p>Alle ausgeführten Aktionen mit vollständigem Protokoll.{% if batch %} Gefiltert nach Sammelauftrag {{ batch }}.{% endif %}</p></div>
+  <form class="filters">
+    <select name="status" data-autosubmit><option value="">Alle Status</option>
+      {% for k, v in JOB_STATUSES.items() %}<option value="{{ k }}" {% if status == k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select>
+    {% if batch %}<input type="hidden" name="batch" value="{{ batch }}"><a class="btn ghost" href="{{ url_for('jobs.index') }}">Filter entfernen</a>{% endif %}
+  </form>
+</div>
+<div class="card"><div class="card-body flush">
+  {% if jobs %}
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>#</th><th>Job</th><th>System</th><th>Art</th><th>Benutzer</th><th>Erstellt</th><th>Dauer</th><th>Status</th></tr></thead>
+    <tbody>{% for j in jobs %}
+      <tr><td>{{ j.id }}</td><td><a href="{{ url_for('jobs.detail', job_id=j.id) }}">{{ j.title }}</a><span class="sub">{{ j.summary|truncate(120) }}</span></td>
+        <td>{% if j.system %}<a href="{{ url_for('systems.detail', system_id=j.system_id) }}">{{ j.system.name }}</a>{% else %}–{% endif %}</td>
+        <td><small>{{ kinds.get(j.kind, j.kind) }}</small></td>
+        <td>{{ j.user.label if j.user else 'System' }}</td><td class="nowrap">{{ j.created_at|dt }}</td>
+        <td class="nowrap">{{ j.duration|duration }}</td><td>{{ job_badge(j.status, j.id) }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% else %}{{ empty('Keine Jobs gefunden.', 'i-jobs') }}{% endif %}
+</div>
+{% if page > 1 or has_more %}
+<div class="card-foot flex">
+  {% if page > 1 %}<a class="btn sm" href="{{ url_for('jobs.index', page=page - 1, status=status, batch=batch) }}">← Neuere</a>{% endif %}
+  <span class="grow"></span>
+  {% if has_more %}<a class="btn sm" href="{{ url_for('jobs.index', page=page + 1, status=status, batch=batch) }}">Ältere →</a>{% endif %}
+</div>
+{% endif %}
+</div>
+{% endblock %}

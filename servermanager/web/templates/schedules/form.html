@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, field, checkbox, select with context %}
+{% block title %}{{ 'Neuer Wartungsplan' if is_new else 'Wartungsplan bearbeiten' }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>{{ 'Neuer Wartungsplan' if is_new else s.name }}</h1>
+  <p>Legen Sie fest, wann welche Wartungsarbeiten auf welchen Systemen laufen sollen. Die Zeiten beziehen sich auf die eingestellte Zeitzone.</p></div></div>
+<form method="post">
+  {{ csrf() }}
+  <div class="grid grid-2">
+    <div>
+      <div class="card">
+        <div class="card-head"><h2>1. Allgemein &amp; Zeitpunkt</h2></div>
+        <div class="card-body form-grid">
+          {{ field('Name', 'name', s.name, required=True, cls='full', placeholder='z. B. Nächtliche Updates Produktion') }}
+          {{ field('Beschreibung', 'description', s.description, cls='full') }}
+          {{ select('Wiederholung', 'recurrence', recurrences, s.recurrence) }}
+          <div class="field" data-show-for="recurrence=once"><label>Datum &amp; Uhrzeit</label>
+            <input type="datetime-local" name="run_at" value="{{ s.run_at.strftime('%Y-%m-%dT%H:%M') if s.run_at else '' }}"></div>
+          <div class="field" data-show-for="recurrence=daily,weekly,monthly"><label>Uhrzeit</label>
+            <input type="time" name="time_of_day" value="{{ s.time_of_day }}"></div>
+          <div class="field full" data-show-for="recurrence=weekly"><label>Wochentage</label>
+            <div class="checks">{% for d in weekdays %}<label class="check"><input type="checkbox" name="weekdays" value="{{ loop.index0 }}" {% if loop.index0 in (s.weekdays or []) %}checked{% endif %}> {{ d }}</label>{% endfor %}</div></div>
+          <div class="field" data-show-for="recurrence=monthly"><label>Tag im Monat</label>
+            <input type="number" name="day_of_month" min="1" max="31" value="{{ s.day_of_month }}"><span class="help">Bei kürzeren Monaten: letzter Tag</span></div>
+          <div class="full">{{ checkbox('Plan aktiv', 'enabled', s.enabled) }}</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>2. Aufgaben</h2></div>
+        <div class="card-body">
+          <p class="help muted mt-0">Die Aufgaben werden je System in dieser Reihenfolge ausgeführt. Aufgaben für Module, die auf einem System nicht aktiv sind, werden dort übersprungen.</p>
+          {% for label, acts in groups.items() %}
+            <fieldset class="mb-1"><legend>{{ label }}</legend>
+              {% for key, a in acts %}
+              <label class="check"><input type="checkbox" name="steps" value="{{ key }}" {% if key in selected_steps %}checked{% endif %}>
+                <span>{{ a.label }}{% if a.level == 'full' %} <span class="badge danger">Vollzugriff</span>{% endif %}{% if a.description %}<br><small>{{ a.description }}</small>{% endif %}</span></label>
+              {% endfor %}
+            </fieldset>
+          {% endfor %}
+          {% if can_command %}
+          <div class="field mt-1"><label>Eigener Befehl (optional, zuletzt ausgeführt, als root)</label>
+            <textarea name="command" rows="3" placeholder="z. B. systemctl restart php8.2-fpm">{{ command }}</textarea></div>
+          {% endif %}
+          <hr>
+          <div class="form-grid">
+            {{ select('Neustart danach', 'reboot_policy', reboot_policies, s.reboot_policy, help='Der Servermanager wartet, bis das System wieder erreichbar ist.') }}
+            <div class="field"><label>&nbsp;</label>
+              {{ checkbox('Nur ausführen, wenn Updates anstehen', 'only_if_updates', s.only_if_updates) }}
+              {{ checkbox('Vorher Konfigurations-Backup erstellen', 'pre_backup', s.pre_backup) }}
+              {{ checkbox('Bei Fehler abbrechen', 'stop_on_error', s.stop_on_error) }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <div class="card-head"><h2>3. Systeme</h2></div>
+        <div class="card-body">
+          <div class="filters mb-1">
+            <input type="search" placeholder="Systeme filtern …" data-filter-list=".sys-item">
+            <label class="check"><input type="checkbox" data-check-all=".sys-item input"> alle</label>
+          </div>
+          <div class="check-list">
+            {% for x in systems %}
+              <label class="check sys-item"><input type="checkbox" name="systems" value="{{ x.id }}" {% if x.id in selected_ids %}checked{% endif %}>
+                <span>{{ x.name }} <small class="muted">{{ x.fact.os_name or x.host }}{% for t in x.tag_list %} #{{ t }}{% endfor %}</small></span></label>
+            {% else %}<p class="muted">Keine Systeme mit Bedien-Berechtigung.</p>{% endfor %}
+          </div>
+          {% if all_tags %}
+          <div class="field mt-2"><label>Zusätzlich alle Systeme mit Tag</label>
+            <select name="tag"><option value="">–</option>{% for t in all_tags %}<option value="{{ t }}" {% if s.tag == t %}selected{% endif %}>#{{ t }}</option>{% endfor %}</select>
+            <span class="help">Wird bei jeder Ausführung neu ausgewertet - neue Systeme mit diesem Tag werden automatisch einbezogen.</span></div>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>4. Ausführung</h2></div>
+        <div class="card-body form-grid">
+          {{ field('Max. parallele Systeme', 'max_parallel', s.max_parallel, type='number', attrs='min="1" max="50"', help='Weitere Systeme warten, bis ein Platz frei wird.') }}
+          {{ field('Wartungsfenster (Minuten)', 'window_minutes', s.window_minutes, type='number', attrs='min="0" max="1440"', help='Systeme, die bis dahin nicht gestartet wurden, werden übersprungen (0 = unbegrenzt).') }}
+          {{ field('Bericht per E-Mail an', 'notify_email', s.notify_email, cls='full', placeholder='admin@example.com, team@example.com', help=('' if mail_ok else 'Hinweis: E-Mail-Versand ist noch nicht eingerichtet (Einstellungen → E-Mail).')) }}
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="actions"><button class="btn primary">Speichern</button>
+    <a class="btn" href="{{ url_for('schedules.index') if is_new else url_for('schedules.detail', schedule_id=s.id) }}">Abbrechen</a></div>
+</form>
+{% endblock %}

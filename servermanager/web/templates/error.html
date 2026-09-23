@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Fehler {{ code }}{% endblock %}
+{% block content %}
+<div class="card"><div class="card-body">
+  <h1>{{ {403: 'Keine Berechtigung', 404: 'Nicht gefunden', 400: 'Ungültige Anfrage', 401: 'Nicht angemeldet', 413: 'Datei zu groß'}.get(code, 'Fehler') }}</h1>
+  <p>{{ message }}</p>
+  <a class="btn" href="{{ url_for('main.dashboard') }}">Zum Dashboard</a>
+</div></div>
+{% endblock %}
+{% block public %}
+<div class="login-wrap"><div class="login-card">
+  <h1>Fehler {{ code }}</h1><p>{{ message }}</p>
+  <a class="btn primary" href="{{ url_for('auth.login') }}">Zur Anmeldung</a>
+</div></div>
+{% endblock %}

@@ -1,0 +1,13 @@
+#!/bin/sh
+# Servermanager command line (runs as the service user)
+CONF="${SM_CONFIG:-/etc/servermanager/servermanager.conf}"
+APP_DIR=/opt/servermanager
+cd "$APP_DIR" || exit 1
+if [ "$(id -un)" = "servermanager" ]; then
+    exec env SM_CONFIG="$CONF" "$APP_DIR/.venv/bin/python" -m servermanager.cli "$@"
+fi
+if [ "$(id -u)" != "0" ]; then
+    echo "Bitte als root oder als Benutzer servermanager ausführen." >&2
+    exit 1
+fi
+exec runuser -u servermanager -- env SM_CONFIG="$CONF" "$APP_DIR/.venv/bin/python" -m servermanager.cli "$@"

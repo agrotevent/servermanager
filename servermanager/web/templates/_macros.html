@@ -1,0 +1,117 @@
+{% macro csrf() %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endmacro %}
+
+{% macro status_badge(system) -%}
+  {%- set cls = {'online': 'success', 'offline': 'danger', 'error': 'danger', 'pending': 'warning'}.get(system.status, '') -%}
+  <span class="badge {{ cls }}" title="{{ system.status_message }}"><span class="dot"></span>{{ STATUSES.get(system.status, system.status) }}</span>
+{%- endmacro %}
+
+{% macro job_badge(status, id=None) -%}
+  {%- set cls = {'running': 'info running', 'success': 'success', 'failed': 'danger', 'cancelled': 'warning'}.get(status, '') -%}
+  <span class="badge {{ cls }}" {% if id and status in ('queued', 'running') %}data-job-watch="{{ id }}"{% endif %}><span class="dot"></span>{{ JOB_STATUSES.get(status, status) }}</span>
+{%- endmacro %}
+
+{% macro conn_badge(system) -%}
+  {% if system.connection == 'wireguard' %}<span class="badge primary" title="WireGuard {{ system.wg_ip }}">WG</span>
+  {% else %}<span class="badge outline" title="Direkte SSH-Verbindung">SSH</span>{% endif %}
+{%- endmacro %}
+
+{% macro level_badge(level) -%}
+  {%- set cls = {'full': 'danger', 'operate': 'warning', 'view': 'info'}.get(level, '') -%}
+  <span class="badge {{ cls }}">{{ LEVELS.get(level, level) }}</span>
+{%- endmacro %}
+
+{% macro type_badges(system) -%}
+  <span class="tags">{% for t in system.type_list %}{% if t != 'debian' %}<span class="badge outline">{{ TYPE_LABELS.get(t, t) }}</span>{% endif %}{% endfor %}</span>
+{%- endmacro %}
+
+{% macro pct_bar(pct) -%}
+  <div class="progress {{ 'crit' if pct >= 90 else ('warn' if pct >= 75 else '') }}" title="{{ pct }} %"><span style="width: {{ pct }}%"></span></div>
+{%- endmacro %}
+
+{% macro field(label, name, value='', type='text', help='', required=False, placeholder='', cls='', attrs='') -%}
+  <div class="field {{ cls }}">
+    <label for="f-{{ name }}">{{ label }}{% if required %} *{% endif %}</label>
+    <input type="{{ type }}" id="f-{{ name }}" name="{{ name }}" value="{{ value if value is not none else '' }}" {% if required %}required{% endif %} placeholder="{{ placeholder }}" {{ attrs|safe }}>
+    {% if help %}<span class="help">{{ help }}</span>{% endif %}
+  </div>
+{%- endmacro %}
+
+{% macro textarea(label, name, value='', help='', rows=4, cls='', placeholder='') -%}
+  <div class="field {{ cls }}">
+    <label for="f-{{ name }}">{{ label }}</label>
+    <textarea id="f-{{ name }}" name="{{ name }}" rows="{{ rows }}" placeholder="{{ placeholder }}">{{ value or '' }}</textarea>
+    {% if help %}<span class="help">{{ help }}</span>{% endif %}
+  </div>
+{%- endmacro %}
+
+{% macro checkbox(label, name, checked=False, help='', value='1') -%}
+  <label class="check"><input type="checkbox" name="{{ name }}" value="{{ value }}" {% if checked %}checked{% endif %}>
+    <span>{{ label }}{% if help %}<br><small>{{ help }}</small>{% endif %}</span></label>
+{%- endmacro %}
+
+{% macro select(label, name, options, value='', help='', cls='') -%}
+  <div class="field {{ cls }}">
+    <label for="f-{{ name }}">{{ label }}</label>
+    <select id="f-{{ name }}" name="{{ name }}">
+      {% for k, v in options.items() %}<option value="{{ k }}" {% if k|string == value|string %}selected{% endif %}>{{ v }}</option>{% endfor %}
+    </select>
+    {% if help %}<span class="help">{{ help }}</span>{% endif %}
+  </div>
+{%- endmacro %}
+
+{# action button for a module action; actions with parameters are rendered as expandable form #}
+{% macro action_form(system, mod, act, extra=None, stay=False, label=None, cls='') -%}
+  {% if can(system.id, act.level) %}
+    {% set visible_params = act.params|rejectattr('name', 'in', (extra or {}).keys()|list)|list %}
+    {% if visible_params %}
+      <details class="action {{ 'danger' if act.danger }}">
+        <summary>{{ label or act.label }}</summary>
+        <form method="post" action="{{ url_for('systems.action', system_id=system.id) }}" class="action-body" {% if act.confirm %}data-confirm="{{ act.confirm }}"{% endif %}>
+          {{ csrf() }}
+          <input type="hidden" name="module" value="{{ mod.key }}"><input type="hidden" name="action" value="{{ act.key }}">
+          {% for k, v in (extra or {}).items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+          {% if stay %}<input type="hidden" name="stay" value="1">{% endif %}
+          {% if act.description %}<small>{{ act.description }}</small>{% endif %}
+          {% for p in visible_params %}
+            {% if p.kind == 'bool' %}
+              <label class="check"><input type="checkbox" name="{{ p.name }}" value="1" {% if p.default == '1' %}checked{% endif %}> {{ p.label }}</label>
+            {% elif p.kind == 'select' %}
+              <div class="field"><label>{{ p.label }}</label><select name="{{ p.name }}">{% for k, v in p.choices %}<option value="{{ k }}" {% if k == p.default %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></div>
+            {% else %}
+              <div class="field"><label>{{ p.label }}</label><input type="text" name="{{ p.name }}" value="{{ p.default }}" {% if p.required %}required{% endif %}></div>
+            {% endif %}
+          {% endfor %}
+          <button class="btn {{ 'danger' if act.danger else 'primary' }} sm">Ausführen</button>
+        </form>
+      </details>
+    {% else %}
+      <form method="post" action="{{ url_for('systems.action', system_id=system.id) }}" class="inline" {% if act.confirm %}data-confirm="{{ act.confirm }}"{% endif %}>
+        {{ csrf() }}
+        <input type="hidden" name="module" value="{{ mod.key }}"><input type="hidden" name="action" value="{{ act.key }}">
+        {% for k, v in (extra or {}).items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+        {% if stay %}<input type="hidden" name="stay" value="1">{% endif %}
+        <button class="btn {{ cls or ('danger-outline' if act.danger else '') }} {{ 'action-btn' if not cls }}" title="{{ act.description }}">{{ label or act.label }}</button>
+      </form>
+    {% endif %}
+  {% endif %}
+{%- endmacro %}
+
+{% macro action_groups(system, mod) -%}
+  {% set groups = {} %}
+  {% for a in mod.visible_actions() if can(system.id, a.level) %}
+    {% set _ = groups.setdefault(a.group or mod.label, []).append(a) %}
+  {% endfor %}
+  {% if groups %}
+  <div class="action-groups">
+    {% for g, acts in groups.items() %}
+      <div class="action-group"><h4>{{ g }}</h4><div class="action-list">
+        {% for a in acts %}{{ action_form(system, mod, a) }}{% endfor %}
+      </div></div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{%- endmacro %}
+
+{% macro empty(text, icon='i-check') -%}
+  <div class="empty"><svg class="icon"><use href="#{{ icon }}"/></svg><div>{{ text }}</div></div>
+{%- endmacro %}

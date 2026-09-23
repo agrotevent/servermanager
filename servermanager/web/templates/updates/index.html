@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, status_badge, conn_badge, empty with context %}
+{% block title %}Update-Übersicht{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>Update-Übersicht</h1>
+    <p>Auf welchen Geräten stehen Aktualisierungen an? Paketupdates, Sicherheitsupdates, Modul-Updates (Nextcloud, Docker, ISPConfig), Release-Upgrades und ausstehende Neustarts.</p></div>
+  <div class="actions"><a class="btn" href="{{ url_for('schedules.index') }}"><svg class="icon"><use href="#i-calendar"/></svg>Wartungsplaner</a></div>
+</div>
+
+<div class="stats">
+  <a class="stat {{ 'warning' if totals.pending else 'success' }}" href="?filter=pending"><div class="label">Systeme mit Updates</div><div class="value">{{ totals.pending }}</div><div class="sub">von {{ totals.systems }}</div></a>
+  <a class="stat {{ 'warning' if totals.packages else 'success' }}" href="?filter=pending"><div class="label">Paketupdates</div><div class="value">{{ totals.packages }}</div></a>
+  <a class="stat {{ 'danger' if totals.security else 'success' }}" href="?filter=security"><div class="label">Sicherheitsupdates</div><div class="value">{{ totals.security }}</div></a>
+  <a class="stat {{ 'info' if totals.modules else '' }}" href="?filter=pending"><div class="label">Anwendungs-Updates</div><div class="value">{{ totals.modules }}</div><div class="sub">Nextcloud, Docker, ISPConfig</div></a>
+  <a class="stat {{ 'warning' if totals.reboot else '' }}" href="?filter=reboot"><div class="label">Neustart nötig</div><div class="value">{{ totals.reboot }}</div></a>
+  <a class="stat {{ 'info' if totals.release else '' }}" href="?filter=release"><div class="label">Release-Upgrade</div><div class="value">{{ totals.release }}</div></a>
+</div>
+
+<nav class="pill-nav">
+  {% for k, v in filters.items() %}<a href="?filter={{ k }}" class="{{ 'active' if flt == k }}">{{ v }}</a>{% endfor %}
+</nav>
+
+<div class="card">
+  {% if rows %}
+  <form method="post" action="{{ url_for('systems.bulk') }}">
+    {{ csrf() }}
+    <div class="bulkbar">
+      <span class="count" data-bulk-count="input[name=ids]">Keine Auswahl</span>
+      <button class="btn sm" name="bulk_action" value="check">Erneut prüfen</button>
+      <button class="btn sm" name="bulk_action" value="security_upgrade" data-confirm="Nur Sicherheitsupdates auf den ausgewählten Systemen jetzt installieren?">Sicherheitsupdates jetzt</button>
+      <button class="btn sm" name="bulk_action" value="upgrade" data-confirm="Alle Paketupdates auf den ausgewählten Systemen JETZT installieren?">Alle Updates jetzt</button>
+      <button class="btn sm primary" name="bulk_action" value="plan"><svg class="icon"><use href="#i-calendar"/></svg>Für die Nacht planen …</button>
+    </div>
+    <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th class="cb"><input type="checkbox" data-check-all="input[name=ids]"></th><th>System</th><th>Pakete</th><th>Anwendungen</th>
+        <th>Release</th><th>Neustart</th><th>Geprüft</th><th></th></tr></thead>
+      <tbody>
+      {% for r in rows %}{% set s = r.system %}{% set sm = r.summary %}
+        <tr>
+          <td><input type="checkbox" name="ids" value="{{ s.id }}" {% if not can(s.id, 'operate') %}disabled{% endif %}></td>
+          <td><a href="{{ url_for('systems.detail', system_id=s.id, tab='updates') }}"><strong>{{ s.name }}</strong></a> {{ conn_badge(s) }}
+            <span class="sub">{{ s.fact.os_name or '–' }}</span>
+            {% if s.status != 'online' %}{{ status_badge(s) }}{% endif %}</td>
+          <td class="nowrap">
+            {% if r.apt.count %}
+              <details><summary><span class="badge {{ 'danger' if r.apt.security else 'warning' }}">{{ r.apt.count }} Paket{{ 'e' if r.apt.count != 1 }}</span>
+                {% if r.apt.security %}<span class="badge danger">{{ r.apt.security }} Sicherheit</span>{% endif %}</summary>
+                <div class="pkg-list mt-1"><table class="table compact"><tbody>
+                  {% for p in r.apt.packages|sort(attribute='security', reverse=True) %}<tr><td>{{ p.name }}{% if p.security %} <span class="badge danger">S</span>{% endif %}</td><td class="mono"><small>{{ p.new }}</small></td></tr>{% endfor %}
+                </tbody></table></div>
+              </details>
+            {% elif r.apt %}<span class="badge success">aktuell</span>{% else %}<span class="muted">–</span>{% endif %}
+          </td>
+          <td>{% for m in r.modules %}<a href="{{ url_for('systems.detail', system_id=s.id, tab=m.module) }}" class="badge {{ 'warning' if m.severity == 'warn' else m.severity }}" title="{{ m.label }}">{{ m.text }}</a> {% else %}<span class="muted">–</span>{% endfor %}</td>
+          <td class="nowrap">{% if sm.release %}<span class="badge info">{{ sm.release.label }}</span>{% else %}<span class="muted">–</span>{% endif %}</td>
+          <td>{% if sm.reboot %}<span class="badge warning" title="{{ s.upd.reboot.reason }}">erforderlich</span>{% else %}<span class="muted">–</span>{% endif %}</td>
+          <td class="nowrap"><small class="{{ 'badge warning' if r.stale }}">{{ s.last_deep_check|ago }}</small></td>
+          <td class="nowrap text-right">
+            {% if can(s.id, 'operate') %}
+              <a class="btn xs" href="{{ url_for('schedules.new', systems=s.id) }}" title="Wartung planen"><svg class="icon"><use href="#i-calendar"/></svg></a>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </form>
+  {% else %}
+    {{ empty('Keine Systeme für diesen Filter - alles aktuell.' if flt != 'all' else 'Keine Systeme vorhanden.') }}
+  {% endif %}
+</div>
+<p class="muted"><small>Paketlisten werden automatisch regelmäßig aktualisiert (Einstellungen → Prüfungen). "Erneut prüfen" führt sofort apt-get update und alle Modul-Prüfungen aus.</small></p>
+{% endblock %}

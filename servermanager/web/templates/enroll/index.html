@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, field, select, checkbox, empty with context %}
+{% block title %}Enrollment{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>Systeme per Skript hinzufügen</h1>
+  <p>Erzeugen Sie einen Einmal-Token. Das Skript wird auf dem neuen System als root ausgeführt: es fordert beim Servermanager einen WireGuard-Zugang an, richtet den Tunnel ein, hinterlegt den SSH-Schlüssel des Servermanagers und registriert das Gerät.</p></div></div>
+
+{% if created %}
+<div class="card" id="new" style="border-color: var(--success)">
+  <div class="card-head"><h2>Token erstellt{% if created.name %}: {{ created.name }}{% endif %}</h2><span class="badge warning">wird nur einmal angezeigt</span></div>
+  <div class="card-body">
+    <p>Auf dem neuen System als <strong>root</strong> ausführen:</p>
+    <div class="codebox" id="cmd-curl">{{ command.curl }}</div>
+    <button type="button" class="btn sm mt-1" data-copy="#cmd-curl">Kopieren</button>
+    <details class="mt-2"><summary class="muted">Alternativen (wget, Optionen)</summary>
+      <div class="codebox mt-1" id="cmd-wget">{{ command.wget }}</div>
+      <button type="button" class="btn xs mt-1" data-copy="#cmd-wget">Kopieren</button>
+      <p class="mt-2">Optionen: <code>curl … | bash -s -- --name "Webserver 1"</code>, <code>--direct</code> (ohne WireGuard), <code>--address host</code> (für direkte Verbindungen), <code>--force</code> (bestehende Konfiguration ersetzen).</p>
+    </details>
+  </div>
+</div>
+{% endif %}
+
+{% if not base_url or base_url.startswith('http://localhost') %}
+<div class="alert warning"><strong>Öffentliche URL fehlt:</strong>Bitte unter Einstellungen → Allgemein die von außen erreichbare URL des Servermanagers eintragen - sie wird in die Befehle eingesetzt.</div>
+{% endif %}
+{% if not wg_enabled %}
+<div class="alert info"><strong>WireGuard nicht eingerichtet:</strong>Bis zur Einrichtung des Management-Netzes können nur Tokens für direkte SSH-Verbindungen erstellt werden.{% if user.is_admin %} <a href="{{ url_for('wg.index') }}">Jetzt einrichten</a>{% endif %}</div>
+{% endif %}
+
+<div class="grid grid-2">
+  <div class="card">
+    <div class="card-head"><h2>Neuer Enrollment-Token</h2></div>
+    <form method="post" action="{{ url_for('enroll.create') }}" class="card-body">
+      {{ csrf() }}
+      <div class="form-grid">
+        {{ field('Name des Systems', 'name', help='Bei Einmal-Token der Anzeigename, sonst nur Notiz. Leer = Hostname.') }}
+        {{ field('Tags', 'tags', help='z. B. kunde-a, produktion') }}
+        {{ select('Verbindung', 'connection', {'wireguard': 'WireGuard-Tunnel (Management-Netz)', 'direct': 'Direkt per SSH (ohne Tunnel)'}, 'wireguard' if wg_enabled else 'direct') }}
+        {{ select('SSH-Benutzer', 'ssh_user_mode', {'root': 'root (nur Schlüssel, nur vom Servermanager)', 'dedicated': 'eigener Benutzer smadmin mit sudo'}, 'root') }}
+        {{ field('Gültig (Stunden)', 'valid_hours', default_hours, type='number', attrs='min="1" max="2160"') }}
+        {{ field('Max. Verwendungen', 'max_uses', 1, type='number', attrs='min="1" max="1000"', help='>1 für mehrere Systeme mit einem Befehl') }}
+        <div class="field full"><label>Systemtypen (zusätzlich zur automatischen Erkennung)</label>
+          <div class="checks">{% for k, m in MODULES.items() if k != 'debian' %}<label class="check"><input type="checkbox" name="types" value="{{ k }}"> {{ m.label }}</label>{% endfor %}</div></div>
+        {% if user.is_admin %}
+        {{ field('Geroutete Netze hinter dem System (optional)', 'routed_subnets', cls='full', placeholder='192.168.50.0/24', help='z. B. VM-Netz eines Proxmox-Hosts - wird über den Tunnel erreichbar gemacht (Routing auf MikroTik, NAT auf dem System).') }}
+        <div class="field full"><label>Erneutes Enrollment für bestehendes System (optional)</label>
+          <select name="bind_system_id"><option value="">– neues System anlegen –</option>{% for s in systems %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}</select>
+          <span class="help">Ersetzt Tunnel-Schlüssel und Hostkeys eines vorhandenen Systems (z. B. nach Neuinstallation).</span></div>
+        {% if users %}
+        <div class="field full"><label>Benutzern Zugriff geben</label>
+          <table class="table compact"><tbody>
+            {% for u in users if not u.is_admin %}<tr><td>{{ u.label }}</td><td><select name="level_{{ u.id }}"><option value="">–</option>{% for k, v in LEVELS.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select></td></tr>{% endfor %}
+          </tbody></table></div>
+        {% endif %}
+        {% endif %}
+      </div>
+      <button class="btn primary mt-1">Token erstellen</button>
+    </form>
+  </div>
+
+  <div>
+    {% if pending %}
+    <div class="card">
+      <div class="card-head"><h2>Ausstehende Enrollments</h2></div>
+      <div class="card-body flush"><table class="table compact"><tbody>
+        {% for s in pending %}<tr><td><a href="{{ url_for('systems.detail', system_id=s.id) }}">{{ s.name }}</a><span class="sub">{{ s.status_message }}</span></td><td class="nowrap"><small>{{ s.created_at|ago }}</small></td></tr>{% endfor %}
+      </tbody></table></div>
+    </div>
+    {% endif %}
+    <div class="card">
+      <div class="card-head"><h2>Tokens</h2></div>
+      <div class="card-body flush">
+        {% if tokens %}
+        <table class="table compact">
+          <thead><tr><th>Token</th><th>Art</th><th>Nutzung</th><th>Gültig bis</th><th></th></tr></thead>
+          <tbody>{% for t in tokens %}
+            <tr><td><code>{{ t.token_hint }}…</code> {{ t.name }}<span class="sub">{{ t.created_at|dt }}</span></td>
+              <td>{{ 'WG' if t.connection == 'wireguard' else 'SSH' }}</td>
+              <td>{{ t.uses }}/{{ t.max_uses }}</td>
+              <td class="nowrap">{% if t.revoked %}<span class="badge">widerrufen</span>{% elif not t.is_valid %}<span class="badge">abgelaufen</span>{% else %}{{ t.expires_at|dt }}{% endif %}</td>
+              <td class="text-right">{% if t.is_valid %}<form method="post" action="{{ url_for('enroll.revoke', token_id=t.id) }}" class="inline" data-confirm="Token widerrufen?">{{ csrf() }}<button class="btn xs">Widerrufen</button></form>{% endif %}</td></tr>
+          {% endfor %}</tbody>
+        </table>
+        {% else %}{{ empty('Noch keine Tokens erstellt.', 'i-plus') }}{% endif %}
+      </div>
+    </div>
+    <div class="card"><div class="card-head"><h2>Ablauf</h2></div><div class="card-body">
+      <ol class="mt-0">
+        <li>Token erstellen und Befehl auf dem Zielsystem als root ausführen.</li>
+        <li>Das Skript erzeugt lokal ein WireGuard-Schlüsselpaar (der private Schlüssel verlässt das System nie) und sendet den öffentlichen Schlüssel sowie die SSH-Hostkeys an den Servermanager.</li>
+        <li>Der Servermanager vergibt eine Management-IP, legt Peer, Route und Adresslisten-Eintrag auf dem MikroTik an und liefert die Tunnel-Konfiguration.</li>
+        <li>Das Skript startet <code>wg-quick@{{ 'wg-mgmt' }}</code> und hinterlegt den SSH-Schlüssel des Servermanagers (nur aus dem Management-Netz nutzbar).</li>
+        <li>Der Servermanager prüft die Verbindung, erkennt Docker, Nextcloud, ISPConfig und Proxmox automatisch und nimmt das System in die Verwaltung auf.</li>
+      </ol>
+    </div></div>
+  </div>
+</div>
+{% endblock %}

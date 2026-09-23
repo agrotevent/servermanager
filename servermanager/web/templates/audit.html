@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Audit-Log{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>Audit-Log</h1><p>Protokoll aller sicherheitsrelevanten Aktionen (letzte 500 Einträge).</p></div>
+  <form class="filters"><input type="search" name="q" value="{{ q }}" placeholder="Suchen …"><button class="btn">Filtern</button></form></div>
+<div class="card"><div class="card-body flush table-wrap">
+  <table class="table compact">
+    <thead><tr><th>Zeit</th><th>Benutzer</th><th>Aktion</th><th>Ziel</th><th>Details</th><th>IP</th></tr></thead>
+    <tbody>
+    {% for e in entries %}
+      <tr><td class="nowrap">{{ e.ts|dt('%d.%m.%Y %H:%M:%S') }}</td><td>{{ e.username }}</td><td><code>{{ e.action }}</code></td>
+          <td>{{ e.target }}</td><td class="break"><small>{{ e.details|truncate(200) }}</small></td><td class="nowrap"><small>{{ e.ip }}</small></td></tr>
+    {% else %}<tr><td colspan="6" class="empty">Keine Einträge.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div></div>
+{% endblock %}

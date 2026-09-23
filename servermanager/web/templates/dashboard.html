@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% from "_macros.html" import status_badge, job_badge, conn_badge, empty with context %}
+{% block title %}Dashboard{% endblock %}
+{% block body_attrs %}{% if running %}data-autorefresh="30"{% endif %}{% endblock %}
+{% block content %}
+{% for w in warnings %}<div class="alert warning"><strong>Hinweis:</strong>{{ w }}</div>{% endfor %}
+
+<div class="stats">
+  <a class="stat" href="{{ url_for('systems.index') }}"><div class="label">Systeme</div><div class="value">{{ stats.total }}</div>
+    <div class="sub">{{ stats.online }} online{% if stats.pending %}, {{ stats.pending }} ausstehend{% endif %}</div></a>
+  <a class="stat {{ 'danger' if stats.offline else 'success' }}" href="{{ url_for('systems.index', status='offline') }}"><div class="label">Nicht erreichbar</div><div class="value">{{ stats.offline }}</div><div class="sub">offline / Fehler</div></a>
+  <a class="stat {{ 'warning' if stats.updates else 'success' }}" href="{{ url_for('updates.index') }}"><div class="label">Mit Updates</div><div class="value">{{ stats.updates }}</div><div class="sub">{{ stats.packages }} Pakete gesamt</div></a>
+  <a class="stat {{ 'danger' if stats.security else 'success' }}" href="{{ url_for('updates.index', filter='security') }}"><div class="label">Sicherheitsupdates</div><div class="value">{{ stats.security }}</div><div class="sub">Pakete</div></a>
+  <a class="stat {{ 'warning' if stats.reboot else '' }}" href="{{ url_for('updates.index', filter='reboot') }}"><div class="label">Neustart nötig</div><div class="value">{{ stats.reboot }}</div><div class="sub">Systeme</div></a>
+  <a class="stat {{ 'info' if stats.release else '' }}" href="{{ url_for('updates.index', filter='release') }}"><div class="label">Release-Upgrade</div><div class="value">{{ stats.release }}</div><div class="sub">Debian 13 verfügbar</div></a>
+</div>
+
+<div class="grid grid-2">
+  <div>
+    <div class="card">
+      <div class="card-head"><h2>Probleme</h2></div>
+      <div class="card-body {{ 'flush' if problems or failed }}">
+        {% if problems or failed %}
+        <table class="table">
+          <tbody>
+          {% for s in problems %}
+            <tr><td><a href="{{ url_for('systems.detail', system_id=s.id) }}">{{ s.name }}</a> {{ conn_badge(s) }}<span class="sub">{{ s.status_message|truncate(140) }}</span></td>
+                <td class="nowrap">{{ status_badge(s) }}</td></tr>
+          {% endfor %}
+          {% for j in failed %}
+            <tr><td><a href="{{ url_for('jobs.detail', job_id=j.id) }}">#{{ j.id }} {{ j.title }}</a><span class="sub">{{ j.summary|truncate(140) }}</span></td>
+                <td class="nowrap">{{ job_badge(j.status) }}</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        {% else %}{{ empty('Alle Systeme erreichbar, keine fehlgeschlagenen Jobs in den letzten 24 Stunden.') }}{% endif %}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Geplante Wartungen</h2><a class="btn sm" href="{{ url_for('schedules.new') }}">Neu planen</a></div>
+      <div class="card-body {{ 'flush' if upcoming }}">
+        {% if upcoming %}
+        <table class="table"><tbody>
+          {% for s in upcoming %}
+          <tr><td><a href="{{ url_for('schedules.detail', schedule_id=s.id) }}">{{ s.name }}</a></td>
+              <td class="nowrap">{{ s.next_run_at|dt }}</td><td class="nowrap muted">{{ s.next_run_at|ago }}</td></tr>
+          {% endfor %}
+        </tbody></table>
+        {% else %}{{ empty('Keine Wartungen geplant.', 'i-calendar') }}{% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Letzte Jobs</h2><a class="btn sm" href="{{ url_for('jobs.index') }}">Alle Jobs</a></div>
+    <div class="card-body {{ 'flush' if jobs }}">
+      {% if jobs %}
+      <table class="table"><tbody>
+        {% for j in jobs %}
+        <tr>
+          <td><a href="{{ url_for('jobs.detail', job_id=j.id) }}">{{ j.title }}</a>
+              <span class="sub">{{ j.created_at|dt }}{% if j.user %} · {{ j.user.label }}{% endif %}</span></td>
+          <td class="nowrap text-right">{{ job_badge(j.status, j.id) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody></table>
+      {% else %}{{ empty('Noch keine Jobs ausgeführt.', 'i-jobs') }}{% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,267 @@
+/* Servermanager UI helpers (no external dependencies) */
+(function () {
+  "use strict";
+
+  const csrf = () => (document.querySelector('meta[name="csrf-token"]') || {}).content || "";
+
+  // ---------------------------------------------------------------- confirm
+  document.addEventListener("submit", (e) => {
+    const form = e.target;
+    const msg = (e.submitter && e.submitter.dataset.confirm) || form.dataset.confirm;
+    if (msg && !window.confirm(msg)) {
+      e.preventDefault();
+      return;
+    }
+    if (e.submitter && !e.submitter.dataset.noDisable) {
+      // prevent double submits
+      setTimeout(() => { e.submitter.disabled = true; }, 0);
+    }
+  });
+
+  // ---------------------------------------------------------------- copy to clipboard
+  function copyText(text, btn) {
+    const done = () => {
+      const old = btn.textContent;
+      btn.textContent = "Kopiert ✓";
+      setTimeout(() => { btn.textContent = old; }, 1500);
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(done);
+    } else {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); done(); } finally { ta.remove(); }
+    }
+  }
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-copy]");
+    if (!btn) return;
+    e.preventDefault();
+    const src = document.querySelector(btn.dataset.copy);
+    if (src) copyText(src.value !== undefined && src.tagName !== "PRE" && src.tagName !== "CODE" ? src.value : src.innerText, btn);
+  });
+
+  // ---------------------------------------------------------------- select all / bulk bar
+  function updateBulk(scope) {
+    document.querySelectorAll("[data-bulk-count]").forEach((el) => {
+      const sel = el.dataset.bulkCount;
+      const n = document.querySelectorAll(sel + ":checked").length;
+      el.textContent = n ? n + " ausgewählt" : "Keine Auswahl";
+      const bar = el.closest(".bulkbar");
+      if (bar) bar.querySelectorAll("button").forEach((b) => { b.disabled = n === 0; });
+    });
+  }
+  document.addEventListener("change", (e) => {
+    const all = e.target.closest("[data-check-all]");
+    if (all) {
+      document.querySelectorAll(all.dataset.checkAll).forEach((cb) => {
+        const row = cb.closest("tr, label");
+        if (!cb.disabled && (!row || row.offsetParent !== null)) cb.checked = all.checked;
+      });
+    }
+    updateBulk();
+  });
+  updateBulk();
+
+  // ---------------------------------------------------------------- auto submit selects
+  document.addEventListener("change", (e) => {
+    if (e.target.matches && e.target.matches("[data-autosubmit]") && e.target.form) e.target.form.submit();
+  });
+
+  // ---------------------------------------------------------------- list filter
+  document.querySelectorAll("[data-filter-list]").forEach((input) => {
+    input.addEventListener("input", () => {
+      const q = input.value.toLowerCase();
+      document.querySelectorAll(input.dataset.filterList).forEach((item) => {
+        item.classList.toggle("hidden", q && !item.textContent.toLowerCase().includes(q));
+      });
+    });
+  });
+
+  // ---------------------------------------------------------------- show/hide by select value
+  function applyShowFor() {
+    document.querySelectorAll("[data-show-for]").forEach((el) => {
+      const [name, values] = el.dataset.showFor.split("=");
+      const ctrl = document.querySelector('[name="' + name + '"]:checked') || document.querySelector('select[name="' + name + '"]');
+      const val = ctrl ? ctrl.value : "";
+      el.classList.toggle("hidden", !values.split(",").includes(val));
+    });
+  }
+  document.addEventListener("change", (e) => { if (e.target.name) applyShowFor(); });
+  applyShowFor();
+
+  // ---------------------------------------------------------------- async panels
+  function loadPanel(el) {
+    el.innerHTML = '<div class="empty"><span class="spinner"></span> Daten werden vom System geladen …</div>';
+    fetch(el.dataset.load, { headers: { "X-Requested-With": "fetch" }, credentials: "same-origin" })
+      .then((r) => r.text().then((t) => ({ ok: r.ok, status: r.status, text: t })))
+      .then((r) => {
+        el.innerHTML = r.ok ? r.text : '<div class="alert danger">Fehler beim Laden (HTTP ' + r.status + ")</div>";
+        el.querySelectorAll("[data-filter-list]").forEach((i) => i.dispatchEvent(new Event("input")));
+      })
+      .catch((err) => { el.innerHTML = '<div class="alert danger">Fehler: ' + err + "</div>"; });
+  }
+  document.querySelectorAll("[data-load]").forEach(loadPanel);
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-reload]");
+    if (!btn) return;
+    e.preventDefault();
+    const panel = btn.closest("[data-load]") || (btn.closest(".card") || document).querySelector("[data-load]");
+    if (panel) loadPanel(panel);
+  });
+  // panel-internal filters are bound lazily
+  document.addEventListener("input", (e) => {
+    const input = e.target.closest("[data-filter-list]");
+    if (!input || input.dataset.bound) return;
+    const q = input.value.toLowerCase();
+    document.querySelectorAll(input.dataset.filterList).forEach((item) => {
+      item.classList.toggle("hidden", q && !item.textContent.toLowerCase().includes(q));
+    });
+  });
+
+  // ---------------------------------------------------------------- job log
+  const ANSI = /\x1b\[[0-9;?]*[ -\/]*[@-~]|\x1b[()][A-Z0-9]|\x1b[=>]/g;
+  const log = document.getElementById("joblog");
+  if (log) {
+    const url = log.dataset.url;
+    let offset = 0;
+    let current = "";
+    let curNode = document.createTextNode("");
+    log.appendChild(curNode);
+    let follow = true;
+    log.addEventListener("scroll", () => {
+      follow = log.scrollTop + log.clientHeight >= log.scrollHeight - 30;
+    });
+    const classify = (line) => {
+      if (/^\[servermanager[^\]]*\] (✔|Job erfolgreich)/.test(line)) return "l-ok";
+      if (/^\[servermanager[^\]]*\] (✘|FEHLER|Interner Fehler)/.test(line) || /^\[FEHLER\]|^E: /.test(line)) return "l-err";
+      if (/^\[servermanager[^\]]*\] ── /.test(line) || /^==> /.test(line)) return "l-step";
+      if (/^\[servermanager/.test(line)) return "l-sm";
+      if (/^\[WARNUNG\]|^W: /.test(line)) return "l-warn";
+      return "";
+    };
+    const appendLines = (lines) => {
+      const frag = document.createDocumentFragment();
+      let plain = "";
+      lines.forEach((line) => {
+        const cls = classify(line);
+        if (cls) {
+          if (plain) { frag.appendChild(document.createTextNode(plain)); plain = ""; }
+          const span = document.createElement("span");
+          span.className = cls;
+          span.textContent = line + "\n";
+          frag.appendChild(span);
+        } else {
+          plain += line + "\n";
+        }
+      });
+      if (plain) frag.appendChild(document.createTextNode(plain));
+      log.insertBefore(frag, curNode);
+    };
+    const feed = (text) => {
+      text = text.replace(ANSI, "");
+      const parts = text.split("\n");
+      const done = [];
+      parts.forEach((seg, i) => {
+        if (seg.indexOf("\r") >= 0) {
+          const segs = seg.split("\r").filter((s) => s !== "");
+          current = segs.length ? segs[segs.length - 1] : current;
+        } else {
+          current += seg;
+        }
+        if (i < parts.length - 1) { done.push(current); current = ""; }
+      });
+      if (done.length) appendLines(done);
+      curNode.textContent = current;
+    };
+    const badge = document.getElementById("job-status");
+    const summary = document.getElementById("job-summary");
+    const duration = document.getElementById("job-duration");
+    const classes = { queued: "", running: "info running", success: "success", failed: "danger", cancelled: "warning", skipped: "" };
+    const poll = () => {
+      fetch(url + "?offset=" + offset, { credentials: "same-origin" })
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.text) feed(d.text);
+          offset = d.offset;
+          if (badge) {
+            badge.className = "badge " + (classes[d.status] || "");
+            badge.innerHTML = '<span class="dot"></span>' + d.status_label;
+          }
+          if (summary && d.summary) summary.textContent = d.summary;
+          if (duration) duration.textContent = d.duration + " s";
+          if (follow) log.scrollTop = log.scrollHeight;
+          if (d.final) {
+            document.querySelectorAll("[data-hide-when-final]").forEach((el) => el.classList.add("hidden"));
+            if (!log.dataset.wasFinal) {
+              log.dataset.wasFinal = "1";
+              if (d.text) setTimeout(poll, 500);
+            }
+          } else {
+            setTimeout(poll, d.text ? 600 : 1500);
+          }
+        })
+        .catch(() => setTimeout(poll, 4000));
+    };
+    poll();
+  }
+
+  // ---------------------------------------------------------------- job status badges (reload when done)
+  const watchers = document.querySelectorAll("[data-job-watch]");
+  if (watchers.length) {
+    const pending = new Set(Array.from(watchers).map((el) => el.dataset.jobWatch));
+    const tick = () => {
+      if (!pending.size) return;
+      Promise.all(Array.from(pending).map((id) =>
+        fetch("/jobs/" + id + "/log?offset=999999999999", { credentials: "same-origin" })
+          .then((r) => r.json())
+          .then((d) => {
+            document.querySelectorAll('[data-job-watch="' + id + '"]').forEach((el) => {
+              el.className = "badge " + ({ running: "info running", success: "success", failed: "danger", cancelled: "warning" }[d.status] || "");
+              el.innerHTML = '<span class="dot"></span>' + d.status_label;
+            });
+            if (d.final) pending.delete(id);
+          }).catch(() => {})
+      )).then(() => {
+        if (pending.size) setTimeout(tick, 3000);
+        else if (document.body.dataset.reloadOnJobs) setTimeout(() => window.location.reload(), 800);
+      });
+    };
+    setTimeout(tick, 1500);
+  }
+
+  // ---------------------------------------------------------------- auto refresh
+  const ar = document.body.dataset.autorefresh;
+  if (ar) {
+    setTimeout(() => {
+      if (!document.querySelector("input:focus, textarea:focus, select:focus")) window.location.reload();
+    }, parseInt(ar, 10) * 1000);
+  }
+
+  // ---------------------------------------------------------------- wait for restart (update/restore)
+  const waiter = document.getElementById("restart-wait");
+  if (waiter) {
+    const next = waiter.dataset.next || "/";
+    let seenDown = false;
+    const started = Date.now();
+    const check = () => {
+      fetch("/healthz", { cache: "no-store" })
+        .then((r) => {
+          if (r.ok && (seenDown || Date.now() - started > 20000)) window.location.href = next;
+          else setTimeout(check, 2000);
+        })
+        .catch(() => { seenDown = true; setTimeout(check, 2000); });
+      const logEl = document.getElementById("update-log");
+      if (logEl && waiter.dataset.log) {
+        fetch(waiter.dataset.log, { credentials: "same-origin" }).then((r) => r.json())
+          .then((d) => { logEl.textContent = d.log; logEl.scrollTop = logEl.scrollHeight; }).catch(() => {});
+      }
+    };
+    setTimeout(check, 3000);
+  }
+
+  // expose for inline use
+  window.SM = { csrf };
+})();

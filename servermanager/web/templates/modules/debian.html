@@ -1,0 +1,27 @@
+{% from "_macros.html" import action_form, empty with context %}
+{% include "modules/_panel_head.html" %}
+{% if data.services %}
+{% set failed = data.services|selectattr('active', 'equalto', 'failed')|list %}
+<div class="filters mb-1">
+  <input type="search" placeholder="Dienst suchen …" data-filter-list="#svc-table tbody tr">
+  <span class="muted">{{ data.services|length }} Dienste{% if failed %}, <span class="badge danger">{{ failed|length }} fehlgeschlagen</span>{% endif %}</span>
+</div>
+<div class="table-wrap pkg-list">
+<table class="table compact" id="svc-table">
+  <thead><tr><th>Dienst</th><th>Status</th><th>Beschreibung</th><th></th></tr></thead>
+  <tbody>
+  {% for s in data.services %}
+    <tr><td class="mono">{{ s.name }}</td>
+      <td class="nowrap"><span class="badge {{ {'active': 'success', 'failed': 'danger', 'activating': 'info'}.get(s.active, '') }}">{{ s.active }} / {{ s.sub }}</span></td>
+      <td><small>{{ s.description }}</small></td>
+      <td class="nowrap text-right">
+        {% set m = MODULES['debian'] %}
+        {{ action_form(system, m, m.action('restart_service'), {'service': s.name}, stay=True, label='Neustart', cls='xs') }}
+        {% if s.active != 'active' %}{{ action_form(system, m, m.action('start_service'), {'service': s.name}, stay=True, label='Start', cls='xs') }}
+        {% else %}{{ action_form(system, m, m.action('stop_service'), {'service': s.name}, stay=True, label='Stop', cls='xs') }}{% endif %}
+      </td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% elif not error %}{{ empty('Keine Dienste gefunden.') }}{% endif %}

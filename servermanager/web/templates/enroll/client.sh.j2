@@ -1,0 +1,273 @@
+#!/bin/bash
+# =====================================================================
+#  Servermanager - Enrollment-Skript
+#  Richtet den Management-Zugang ein und registriert dieses System im
+#  Servermanager ({{ base_url }}).
+#
+#  Aufruf:   curl -fsSL <URL> | bash
+#            curl -fsSL <URL> | bash -s -- [Optionen]
+#  Optionen: --name NAME     Anzeigename im Servermanager
+#            --direct        ohne WireGuard (direkte SSH-Verbindung)
+#            --address HOST  Adresse für direkte Verbindungen (Standard: öffentliche IP)
+#            --force         bestehende Konfiguration überschreiben
+#            --yes           keine Rückfragen
+# =====================================================================
+set -euo pipefail
+
+SM_URL='{{ base_url }}'
+SM_TOKEN='{{ token }}'
+SM_MODE='{{ connection }}'
+WG_IFACE='{{ wg_iface }}'
+CURL_OPTS=({{ curl_opts }})
+
+NAME=""
+ADDRESS=""
+FORCE=0
+
+usage() {
+    cat <<'USAGE'
+Servermanager-Enrollment
+Optionen: --name NAME     Anzeigename im Servermanager
+          --direct        ohne WireGuard (direkte SSH-Verbindung)
+          --address HOST  Adresse für direkte Verbindungen (Standard: öffentliche IP)
+          --force         bestehende Konfiguration überschreiben
+USAGE
+}
+red() { printf '\033[31m%s\033[0m\n' "$*"; }
+green() { printf '\033[32m%s\033[0m\n' "$*"; }
+info() { printf '\033[36m==>\033[0m %s\n' "$*"; }
+die() { red "FEHLER: $*" >&2; report_error "$*"; exit 1; }
+
+SYSTEM_ID=""
+CONFIRM_SECRET=""
+report_error() {
+    if [ -n "$SYSTEM_ID" ] && [ -n "$CONFIRM_SECRET" ]; then
+        curl -fsS "${CURL_OPTS[@]}" -X POST "$SM_URL/api/enroll/confirm" \
+            --data-urlencode "system_id=$SYSTEM_ID" --data-urlencode "secret=$CONFIRM_SECRET" \
+            --data-urlencode "status=error" --data-urlencode "message=$1" >/dev/null 2>&1 || true
+    fi
+}
+
+main() {
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --name) NAME="${2:-}"; shift ;;
+        --direct) SM_MODE="direct" ;;
+        --address) ADDRESS="${2:-}"; shift ;;
+        --force) FORCE=1 ;;
+        --yes|-y) ;;
+        -h|--help) usage; exit 0 ;;
+        *) die "Unbekannte Option: $1" ;;
+    esac
+    shift
+done
+
+[ "$(id -u)" = "0" ] || die "Das Skript muss als root ausgeführt werden."
+[ -r /etc/os-release ] && . /etc/os-release
+info "Servermanager-Enrollment für $(hostname -f 2>/dev/null || hostname) (${PRETTY_NAME:-unbekanntes System})"
+command -v apt-get >/dev/null 2>&1 || die "Nur Debian-basierte Systeme werden unterstützt."
+
+export DEBIAN_FRONTEND=noninteractive
+need_pkgs=()
+command -v curl >/dev/null 2>&1 || need_pkgs+=(curl ca-certificates)
+command -v sshd >/dev/null 2>&1 || [ -x /usr/sbin/sshd ] || need_pkgs+=(openssh-server)
+if [ "$SM_MODE" = "wireguard" ]; then
+    command -v wg >/dev/null 2>&1 || need_pkgs+=(wireguard-tools)
+    command -v wg-quick >/dev/null 2>&1 || need_pkgs+=(wireguard-tools)
+fi
+if [ "${#need_pkgs[@]}" -gt 0 ]; then
+    info "Installiere benötigte Pakete: ${need_pkgs[*]}"
+    apt-get update -q >/dev/null
+    apt-get install -y -q --no-install-recommends "${need_pkgs[@]}" >/dev/null
+fi
+
+if [ "$SM_MODE" = "wireguard" ]; then
+    if [ -f "/etc/wireguard/$WG_IFACE.conf" ] && [ "$FORCE" != "1" ]; then
+        die "/etc/wireguard/$WG_IFACE.conf existiert bereits. Zum Überschreiben mit --force ausführen."
+    fi
+    if ! ip link show "$WG_IFACE" >/dev/null 2>&1; then
+        if ! ip link add dev smwgtest type wireguard 2>/dev/null; then
+            die "WireGuard-Interface kann nicht angelegt werden. In einem LXC-Container muss das Kernelmodul auf dem Host geladen sein ('modprobe wireguard' auf dem Proxmox-Host) - alternativ mit --direct ausführen."
+        fi
+        ip link del dev smwgtest 2>/dev/null || true
+    fi
+fi
+
+# ---- collect information ------------------------------------------------
+HOSTNAME_FQDN="$(hostname -f 2>/dev/null || hostname)"
+mkdir -p /run/sshd 2>/dev/null || true
+SSH_PORT="$(sshd -T 2>/dev/null | awk '$1=="port"{print $2; exit}' || true)"
+SSH_PORT="${SSH_PORT:-22}"
+ROOT_LOGIN="$(sshd -T 2>/dev/null | awk '$1=="permitrootlogin"{print $2; exit}' || true)"
+HOST_KEYS="$(for f in /etc/ssh/ssh_host_ed25519_key.pub /etc/ssh/ssh_host_ecdsa_key.pub /etc/ssh/ssh_host_rsa_key.pub; do
+    if [ -f "$f" ]; then awk '{print $1" "$2}' "$f"; fi; done | paste -sd'|' - || true)"
+[ -n "$HOST_KEYS" ] || die "Keine SSH-Hostkeys gefunden (/etc/ssh/ssh_host_*_key.pub)."
+
+DETECTED=""
+command -v docker >/dev/null 2>&1 && DETECTED="$DETECTED,docker"
+command -v pveversion >/dev/null 2>&1 && DETECTED="$DETECTED,proxmox"
+[ -f /usr/local/ispconfig/server/lib/config.inc.php ] && DETECTED="$DETECTED,ispconfig"
+NC_PATH=""
+for occ in /var/www/nextcloud/occ /var/www/html/occ /var/www/*/occ /var/www/*/web/occ /srv/www/*/occ; do
+    if [ -f "$occ" ] && [ -f "$(dirname "$occ")/version.php" ]; then
+        NC_PATH="$(dirname "$(readlink -f "$occ")")"
+        DETECTED="$DETECTED,nextcloud"
+        break
+    fi
+done
+
+WG_PRIV=""
+WG_PUB=""
+if [ "$SM_MODE" = "wireguard" ]; then
+    umask 077
+    WG_PRIV="$(wg genkey)"
+    WG_PUB="$(printf '%s' "$WG_PRIV" | wg pubkey)"
+    umask 022
+fi
+
+# ---- register -------------------------------------------------------------
+info "Registriere System beim Servermanager ..."
+RESP="$(mktemp)"
+trap 'rm -f "$RESP"' EXIT
+HTTP_CODE="$(curl -sS "${CURL_OPTS[@]}" -o "$RESP" -w '%{http_code}' -X POST "$SM_URL/api/enroll" \
+    --data-urlencode "token=$SM_TOKEN" \
+    --data-urlencode "mode=$SM_MODE" \
+    --data-urlencode "name=$NAME" \
+    --data-urlencode "hostname=$HOSTNAME_FQDN" \
+    --data-urlencode "address=$ADDRESS" \
+    --data-urlencode "os_name=${PRETTY_NAME:-}" \
+    --data-urlencode "ssh_port=$SSH_PORT" \
+    --data-urlencode "root_login=$ROOT_LOGIN" \
+    --data-urlencode "host_keys=$HOST_KEYS" \
+    --data-urlencode "detected=${DETECTED#,}" \
+    --data-urlencode "nextcloud_path=$NC_PATH" \
+    --data-urlencode "wg_public_key=$WG_PUB")" || die "Servermanager unter $SM_URL nicht erreichbar."
+if [ "$HTTP_CODE" != "200" ]; then
+    die "Servermanager lehnt die Registrierung ab (HTTP $HTTP_CODE): $(head -c 500 "$RESP")"
+fi
+
+declare -A R=()
+while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+        SM_*=*) R["${line%%=*}"]="${line#*=}" ;;
+    esac
+done < "$RESP"
+[ "${R[SM_STATUS]:-}" = "ok" ] || die "Unerwartete Antwort des Servermanagers."
+SYSTEM_ID="${R[SM_SYSTEM_ID]:-}"
+CONFIRM_SECRET="${R[SM_CONFIRM_SECRET]:-}"
+SM_MODE="${R[SM_CONNECTION]:-$SM_MODE}"
+SSH_USER="${R[SM_SSH_USER]:-root}"
+SSH_PUBKEY="${R[SM_SSH_PUBKEY]:-}"
+SSH_FROM="${R[SM_SSH_FROM]:-}"
+
+[[ "$SYSTEM_ID" =~ ^[0-9]+$ ]] || die "Ungültige System-ID"
+[[ "$SSH_PUBKEY" =~ ^(ssh-ed25519|ecdsa-sha2-nistp[0-9]+|ssh-rsa)\ [A-Za-z0-9+/=]+(\ [^\"]*)?$ ]] || die "Ungültiger SSH-Schlüssel in der Antwort"
+[[ -z "$SSH_FROM" || "$SSH_FROM" =~ ^[0-9A-Fa-f.:/,*]+$ ]] || die "Ungültige Quelladresse in der Antwort"
+[[ "$SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || die "Ungültiger Benutzer in der Antwort"
+
+# ---- WireGuard ------------------------------------------------------------
+if [ "$SM_MODE" = "wireguard" ]; then
+    WG_IFACE="${R[SM_WG_IFACE]:-$WG_IFACE}"
+    ADDR="${R[SM_WG_ADDRESS]:-}"
+    PEER="${R[SM_WG_PEER_PUBKEY]:-}"
+    ENDPOINT="${R[SM_WG_ENDPOINT]:-}"
+    ALLOWED="${R[SM_WG_ALLOWED_IPS]:-}"
+    KEEPALIVE="${R[SM_WG_KEEPALIVE]:-25}"
+    MTU="${R[SM_WG_MTU]:-1420}"
+    ROUTED="${R[SM_ROUTED_SUBNETS]:-}"
+    MGMT_NET="${R[SM_MGMT_NET]:-$ALLOWED}"
+    [[ "$WG_IFACE" =~ ^[A-Za-z0-9_.-]{1,15}$ ]] || die "Ungültiger Interface-Name"
+    [[ "$ADDR" =~ ^[0-9.]+/[0-9]+$ ]] || die "Ungültige Tunnel-Adresse"
+    [[ "$PEER" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$ ]] || die "Ungültiger Peer-Schlüssel"
+    [[ "$ENDPOINT" =~ ^[A-Za-z0-9.:\[\]-]+:[0-9]+$ ]] || die "Ungültiger Endpoint '$ENDPOINT'"
+    [[ "$ALLOWED" =~ ^[0-9./,\ ]+$ ]] || die "Ungültige AllowedIPs"
+    [[ "$KEEPALIVE" =~ ^[0-9]+$ && "$MTU" =~ ^[0-9]+$ ]] || die "Ungültige Parameter"
+    [[ -z "$ROUTED" || "$ROUTED" =~ ^[0-9./\ ]+$ ]] || die "Ungültige Subnetze"
+
+    POSTUP=""
+    if [ -n "$ROUTED" ]; then
+        command -v nft >/dev/null 2>&1 || { apt-get install -y -q nftables >/dev/null; }
+        rules=""
+        for net in $ROUTED; do
+            rules="$rules; nft add rule ip servermanager post ip saddr $MGMT_NET ip daddr $net masquerade"
+        done
+        POSTUP="PostUp = sysctl -q -w net.ipv4.ip_forward=1; nft add table ip servermanager; nft add chain ip servermanager post '{ type nat hook postrouting priority 100 ; }'$rules
+PostDown = nft delete table ip servermanager 2>/dev/null || true"
+    fi
+
+    info "Richte WireGuard-Tunnel $WG_IFACE ein ($ADDR -> $ENDPOINT)"
+    install -d -m 700 /etc/wireguard
+    umask 077
+    cat > "/etc/wireguard/$WG_IFACE.conf" <<EOF
+# Servermanager Management-Tunnel - erstellt $(date '+%F %T')
+# System-ID $SYSTEM_ID, Servermanager: $SM_URL
+[Interface]
+PrivateKey = $WG_PRIV
+Address = $ADDR
+MTU = $MTU
+$POSTUP
+
+[Peer]
+PublicKey = $PEER
+Endpoint = $ENDPOINT
+AllowedIPs = $ALLOWED
+PersistentKeepalive = $KEEPALIVE
+EOF
+    umask 022
+    systemctl enable "wg-quick@$WG_IFACE" >/dev/null 2>&1 || true
+    systemctl restart "wg-quick@$WG_IFACE" || die "wg-quick@$WG_IFACE konnte nicht gestartet werden (journalctl -u wg-quick@$WG_IFACE)."
+    hs=""
+    for _ in $(seq 1 15); do
+        hs="$(wg show "$WG_IFACE" latest-handshakes 2>/dev/null | awk '{print $2}' | head -n 1 || true)"
+        [ -n "$hs" ] && [ "$hs" != "0" ] && break
+        sleep 1
+    done
+    if [ -n "$hs" ] && [ "$hs" != "0" ]; then
+        green "WireGuard-Tunnel steht (Handshake erfolgreich)."
+    else
+        red "Hinweis: noch kein WireGuard-Handshake - Endpoint/Firewall ($ENDPOINT, UDP) prüfen."
+    fi
+fi
+
+# ---- SSH access -----------------------------------------------------------
+if [ "$SSH_USER" = "root" ]; then
+    HOME_DIR="/root"
+else
+    info "Lege Benutzer $SSH_USER mit sudo-Rechten an"
+    command -v sudo >/dev/null 2>&1 || apt-get install -y -q sudo >/dev/null
+    id "$SSH_USER" >/dev/null 2>&1 || useradd -m -s /bin/bash -c "Servermanager" "$SSH_USER"
+    echo "$SSH_USER ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/servermanager"
+    chmod 440 /etc/sudoers.d/servermanager
+    visudo -cf /etc/sudoers.d/servermanager >/dev/null || die "sudoers-Datei ungültig"
+    HOME_DIR="$(getent passwd "$SSH_USER" | cut -d: -f6)"
+fi
+install -d -m 700 "$HOME_DIR/.ssh"
+AUTH="$HOME_DIR/.ssh/authorized_keys"
+[ -e "$AUTH" ] || { touch "$AUTH"; chmod 600 "$AUTH"; }
+AUTH_REAL="$(readlink -f "$AUTH")"   # Proxmox: symlink to /etc/pve/priv/authorized_keys
+KEY_BLOB="$(echo "$SSH_PUBKEY" | awk '{print $2}')"
+OPTS="no-agent-forwarding,no-X11-forwarding"
+[ -n "$SSH_FROM" ] && OPTS="from=\"$SSH_FROM\",$OPTS"
+TMP_KEYS="$(mktemp)"
+grep -vF "$KEY_BLOB" "$AUTH_REAL" > "$TMP_KEYS" || true
+echo "$OPTS $SSH_PUBKEY" >> "$TMP_KEYS"
+cat "$TMP_KEYS" > "$AUTH_REAL"
+rm -f "$TMP_KEYS"
+if [ "$SSH_USER" != "root" ]; then
+    chown -R "$SSH_USER:" "$HOME_DIR/.ssh"
+fi
+info "SSH-Schlüssel des Servermanagers für $SSH_USER hinterlegt${SSH_FROM:+ (nur von $SSH_FROM)}"
+
+# ---- confirm --------------------------------------------------------------
+curl -fsS "${CURL_OPTS[@]}" -X POST "$SM_URL/api/enroll/confirm" \
+    --data-urlencode "system_id=$SYSTEM_ID" --data-urlencode "secret=$CONFIRM_SECRET" \
+    --data-urlencode "status=ok" >/dev/null || die "Bestätigung an den Servermanager fehlgeschlagen."
+
+echo
+green "Fertig: System '${R[SM_SYSTEM_NAME]:-$HOSTNAME_FQDN}' (ID $SYSTEM_ID) wurde zum Servermanager hinzugefügt."
+echo "Der Servermanager prüft jetzt die Verbindung und erfasst das System."
+}
+
+# The whole script is read before anything runs (safe for "curl | bash");
+# stdin is detached so no command can swallow the rest of the piped script.
+main "$@" < /dev/null

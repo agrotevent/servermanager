@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, field, textarea, checkbox, select with context %}
+{% block title %}{{ 'System hinzufügen' if is_new else 'System bearbeiten' }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>{{ 'System manuell hinzufügen' if is_new else system.name + ' bearbeiten' }}</h1>
+  <p>{% if is_new %}Für bestehende Systeme ohne WireGuard: Verwaltung direkt per SSH mit Schlüssel und/oder Passwort.{% else %}Verbindung und Zugangsdaten.{% endif %}</p></div>
+  {% if not is_new %}<a class="btn" href="{{ url_for('systems.detail', system_id=system.id) }}">Abbrechen</a>{% endif %}
+</div>
+<form method="post" autocomplete="off">
+  {{ csrf() }}
+  <div class="card">
+    <div class="card-head"><h2>Allgemein</h2></div>
+    <div class="card-body form-grid">
+      {{ field('Name', 'name', system.name, required=True) }}
+      {{ field('Tags', 'tags', system.tags, help='Kommagetrennt, z. B. kunde-a, produktion') }}
+      {{ field('Beschreibung', 'description', system.description, cls='full') }}
+      <div class="field full"><label>Systemtypen</label>
+        <div class="checks">
+          <label class="check"><input type="checkbox" checked disabled> Debian / Linux (immer)</label>
+          {% for k, m in MODULES.items() if k != 'debian' %}
+            <label class="check"><input type="checkbox" name="types" value="{{ k }}" {% if system.has_type(k) %}checked{% endif %}> {{ m.label }}</label>
+          {% endfor %}
+        </div>
+        <span class="help">Bei der Erstprüfung werden installierte Komponenten automatisch erkannt und ergänzt.</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Verbindung</h2></div>
+    <div class="card-body form-grid">
+      {{ select('Verbindungsart', 'connection', CONNECTIONS, system.connection, help='WireGuard-Systeme werden normalerweise per Enrollment-Skript angelegt.') }}
+      {{ field('Host / IP-Adresse', 'host', system.host, required=True, placeholder='server.example.com oder 203.0.113.10') }}
+      {{ field('SSH-Port', 'port', system.port, type='number', attrs='min="1" max="65535"') }}
+      {{ field('Benutzer', 'username', system.username, help='root oder ein Benutzer mit sudo-Rechten') }}
+      {{ select('Anmeldung', 'auth_method', auth_methods, system.auth_method) }}
+      {{ select('Root-Rechte', 'sudo_mode', sudo_modes, system.sudo_mode, help='Nur relevant, wenn der Benutzer nicht root ist.') }}
+      {{ field('Passwort', 'password', type='password', help=('Gespeichert (verschlüsselt) - leer lassen, um es beizubehalten.' if system.password_enc else 'Wird verschlüsselt gespeichert.'), attrs='autocomplete="new-password"') }}
+      {{ field('sudo-Passwort (falls abweichend)', 'sudo_password', type='password', attrs='autocomplete="new-password"') }}
+      {% if not is_new and system.password_enc %}<div class="full">{{ checkbox('Gespeichertes Passwort entfernen', 'clear_password') }}</div>{% endif %}
+      <div class="full">
+        <div class="alert info mb-1"><strong>Schlüssel-Anmeldung:</strong> Standardmäßig wird der Schlüssel des Servermanagers verwendet. Dieser öffentliche Schlüssel muss in <code>~/.ssh/authorized_keys</code> des Zielsystems stehen:
+          <div class="codebox mt-1" id="smkey">{{ sm_pubkey }}</div>
+          <button type="button" class="btn xs mt-1" data-copy="#smkey">Kopieren</button>
+          {% if is_new %}Alternativ unten "Schlüssel automatisch installieren" wählen (Passwort erforderlich).{% endif %}
+        </div>
+      </div>
+      {{ textarea('Eigener privater Schlüssel (optional)', 'private_key', '', help=('Ein eigener Schlüssel ist hinterlegt - leer lassen, um ihn beizubehalten.' if system.private_key_enc else 'Nur falls statt des Servermanager-Schlüssels ein vorhandener Schlüssel genutzt werden soll (OpenSSH/PEM).'), rows=3, placeholder='-----BEGIN OPENSSH PRIVATE KEY-----') }}
+      {{ field('Passphrase des Schlüssels', 'key_passphrase', type='password', attrs='autocomplete="new-password"') }}
+      {% if not is_new and system.private_key_enc %}<div>{{ checkbox('Eigenen Schlüssel entfernen', 'clear_key') }}</div>{% endif %}
+      {% if not is_new and system.connection == 'wireguard' %}
+        <div class="field"><label>WireGuard-IP</label><input type="text" value="{{ system.wg_ip }}" disabled></div>
+        {{ field('Geroutete Netze hinter dem System', 'routed_subnets', system.routed_subnets, help='z. B. 192.168.50.0/24 - Routen und Peer werden auf dem MikroTik angepasst.') }}
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Modul-Einstellungen</h2></div>
+    <div class="card-body form-grid">
+      {{ field('Nextcloud-Pfad', 'nextcloud_path', system.nextcloud_path, placeholder='/var/www/nextcloud', help='Leer = automatische Erkennung') }}
+      {{ field('occ-Befehl (optional)', 'occ_command', system.occ_command, placeholder='docker exec -u www-data nextcloud php occ', help='Nur für Docker-/Snap-Installationen') }}
+      {{ field('Pfade für Konfig-Backups', 'backup_paths', system.backup_paths, cls='full', help='Leerzeichen-getrennt, z. B. /etc /root /usr/local/ispconfig /opt/docker') }}
+      {{ textarea('Notizen', 'notes', system.notes, rows=3, cls='full') }}
+    </div>
+  </div>
+
+  {% if is_new %}
+  <div class="card"><div class="card-body">
+    {{ checkbox('Nach dem Speichern Verbindung prüfen und Komponenten erkennen', 'check', True) }}
+    {{ checkbox('SSH-Schlüssel des Servermanagers automatisch installieren (per Passwort-Anmeldung)', 'deploy_key', False, 'Danach meldet sich der Servermanager per Schlüssel an.') }}
+    {{ checkbox('Passwort danach entfernen', 'remove_password', False) }}
+  </div></div>
+  {% endif %}
+  <div class="actions"><button class="btn primary">Speichern</button>
+    <a class="btn" href="{{ url_for('systems.index') if is_new else url_for('systems.detail', system_id=system.id) }}">Abbrechen</a></div>
+</form>
+{% endblock %}

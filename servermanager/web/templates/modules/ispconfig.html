@@ -1,0 +1,15 @@
+{% from "_macros.html" import empty with context %}
+{% include "modules/_panel_head.html" %}
+{% if data.version %}
+{% set u = data.upd or {} %}
+<div class="stats">
+  <div class="stat"><div class="label">Installiert</div><div class="value" style="font-size:20px">{{ data.version }}</div><div class="sub">Panel-Port {{ data.port }}</div></div>
+  <div class="stat {{ 'warning' if u.available else 'success' }}"><div class="label">Aktuell verfügbar</div><div class="value" style="font-size:20px">{{ u.latest or '?' }}</div><div class="sub">{{ 'Update verfügbar' if u.available else 'aktuell' }}</div></div>
+  <div class="stat {{ 'warning' if data.mailqueue|int > 20 else '' }}"><div class="label">Mail-Warteschlange</div><div class="value">{{ data.mailqueue }}</div></div>
+  <div class="stat {{ 'warning' if data.cron_errors|int else '' }}"><div class="label">Fehler cron.log</div><div class="value">{{ data.cron_errors }}</div><div class="sub">letzte 200 Zeilen</div></div>
+</div>
+<h3>Dienste</h3>
+<div class="flex flex-wrap">
+  {% for s in data.services %}<span class="badge {{ 'success' if s.state == 'active' else 'danger' }}">{{ s.name }}: {{ s.state }}</span>{% endfor %}
+</div>
+{% elif not error %}{{ empty('Keine Daten.') }}{% endif %}

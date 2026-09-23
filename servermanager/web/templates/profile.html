@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, field with context %}
+{% block title %}Profil{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>{{ user.label }}</h1><p>{{ user.username }} · {{ ROLES[user.role] }}{% if user.email %} · {{ user.email }}{% endif %}</p></div></div>
+<div class="grid grid-2">
+  <div class="card">
+    <div class="card-head"><h2>Passwort ändern</h2></div>
+    <form method="post" action="{{ url_for('main.change_password') }}" class="card-body">
+      {{ csrf() }}
+      {% if user.must_change_password %}<div class="alert warning">Bitte vergeben Sie ein neues, persönliches Passwort.</div>{% endif %}
+      <div class="form-grid">
+        {{ field('Aktuelles Passwort', 'current', type='password', required=True, cls='full', attrs='autocomplete="current-password"') }}
+        {{ field('Neues Passwort', 'new', type='password', required=True, attrs='autocomplete="new-password" minlength="10"') }}
+        {{ field('Wiederholen', 'confirm', type='password', required=True, attrs='autocomplete="new-password"') }}
+      </div>
+      <p class="help muted">Mindestens 10 Zeichen und drei Zeichenarten (Klein-/Großbuchstaben, Ziffern, Sonderzeichen).</p>
+      <button class="btn primary">Passwort ändern</button>
+    </form>
+  </div>
+
+  <div class="card" id="2fa">
+    <div class="card-head"><h2>Zwei-Faktor-Anmeldung (TOTP)</h2>
+      {% if user.totp_enabled %}<span class="badge success">aktiv</span>{% else %}<span class="badge warning">inaktiv</span>{% endif %}</div>
+    <div class="card-body">
+      {% if user.totp_enabled %}
+        <p>Die Anmeldung ist zusätzlich mit einem Einmalcode aus einer Authenticator-App geschützt.</p>
+        <form method="post" action="{{ url_for('main.totp_disable') }}" class="inline-form" data-confirm="Zwei-Faktor-Anmeldung wirklich deaktivieren?">
+          {{ csrf() }}
+          {{ field('Passwort zur Bestätigung', 'password', type='password', required=True) }}
+          <button class="btn danger-outline">Deaktivieren</button>
+        </form>
+      {% elif totp_svg %}
+        <p>1. QR-Code mit einer Authenticator-App (z. B. Aegis, Google Authenticator, 1Password) scannen:</p>
+        <div class="qr">{{ totp_svg|safe }}</div>
+        <p><small>Manuelle Eingabe: <code>{{ totp_secret }}</code></small></p>
+        <p>2. Angezeigten Code eingeben:</p>
+        <form method="post" action="{{ url_for('main.totp_enable') }}" class="inline-form">
+          {{ csrf() }}
+          <div class="field"><input type="text" name="code" inputmode="numeric" maxlength="7" placeholder="123456" required autofocus></div>
+          <button class="btn primary">Aktivieren</button>
+        </form>
+      {% else %}
+        <p>Schützen Sie Ihr Konto zusätzlich mit einem Einmalcode. Für Administratoren dringend empfohlen.</p>
+        <form method="post" action="{{ url_for('main.totp_setup') }}">{{ csrf() }}<button class="btn primary">Einrichten</button></form>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

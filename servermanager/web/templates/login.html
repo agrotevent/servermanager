@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Anmeldung{% endblock %}
+{% block public %}
+<div class="login-wrap">
+  <div class="login-card">
+    <div class="brand"><span class="logo"><svg class="icon"><use href="#i-server"/></svg></span>{{ site_name }}</div>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for cat, msg in messages %}<div class="alert {{ cat }}">{{ msg }}</div>{% endfor %}
+    {% endwith %}
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="field mb-2"><label for="u">Benutzername</label>
+        <input type="text" id="u" name="username" value="{{ username or '' }}" autocomplete="username" autofocus required></div>
+      <div class="field mb-2"><label for="p">Passwort</label>
+        <input type="password" id="p" name="password" autocomplete="current-password" required></div>
+      <button class="btn primary" style="width:100%">Anmelden</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

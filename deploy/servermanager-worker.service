@@ -1,0 +1,25 @@
+[Unit]
+Description=Servermanager - Hintergrund-Worker (Jobs, Prüfungen, Wartungsplaner)
+Documentation=https://github.com/agrotevent/servermanager
+After=network-online.target servermanager-web.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=servermanager
+Group=servermanager
+EnvironmentFile=/etc/servermanager/environment
+WorkingDirectory=/opt/servermanager
+ExecStart=/opt/servermanager/.venv/bin/python -m servermanager.worker
+Restart=always
+RestartSec=5
+# long running remote jobs run detached on the target systems and are
+# re-attached after a restart; short jobs may take a moment to finish
+TimeoutStopSec=120
+KillMode=mixed
+UMask=0077
+PrivateTmp=yes
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target

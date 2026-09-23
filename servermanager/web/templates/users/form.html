@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, field, select, checkbox with context %}
+{% block title %}{{ 'Neuer Benutzer' if is_new else u.username }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>{{ 'Neuer Benutzer' if is_new else u.label }}</h1>{% if not is_new %}<p>{{ u.username }} · angelegt {{ u.created_at|dt }}</p>{% endif %}</div>
+  {% if not is_new %}<div class="actions">
+    {% if u.totp_enabled %}<form method="post" action="{{ url_for('users.reset_2fa', user_id=u.id) }}" class="inline" data-confirm="2FA für diesen Benutzer zurücksetzen?">{{ csrf() }}<button class="btn sm">2FA zurücksetzen</button></form>{% endif %}
+    {% if u.locked_until %}<form method="post" action="{{ url_for('users.unlock', user_id=u.id) }}" class="inline">{{ csrf() }}<button class="btn sm">Entsperren</button></form>{% endif %}
+  </div>{% endif %}</div>
+<form method="post" autocomplete="off">
+  {{ csrf() }}
+  <div class="grid grid-2">
+    <div class="card">
+      <div class="card-head"><h2>Konto</h2></div>
+      <div class="card-body form-grid">
+        {% if is_new %}{{ field('Benutzername', 'username', u.username, required=True) }}{% else %}<div class="field"><label>Benutzername</label><input type="text" value="{{ u.username }}" disabled></div>{% endif %}
+        {{ field('Anzeigename', 'display_name', u.display_name) }}
+        {{ field('E-Mail', 'email', u.email, type='email') }}
+        {{ select('Rolle', 'role', ROLES, u.role) }}
+        {{ field('Passwort' if is_new else 'Neues Passwort', 'password', type='password', required=is_new, help=('' if is_new else 'leer lassen, um es nicht zu ändern'), attrs='autocomplete="new-password"') }}
+        <div class="field"><label>&nbsp;</label>{{ checkbox('Muss Passwort bei nächster Anmeldung ändern', 'must_change', u.must_change_password) }}</div>
+        <div class="full">{{ checkbox('Konto aktiv', 'active', u.active) }}</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>Zugewiesene Systeme</h2></div>
+      <div class="card-body">
+        {% if u.role == 'admin' %}<div class="alert info">Administratoren haben automatisch Vollzugriff auf alle Systeme.</div>{% endif %}
+        <div class="filters mb-1"><input type="search" placeholder="Systeme filtern …" data-filter-list=".acc-row"></div>
+        <div class="check-list" style="max-height:480px">
+          <table class="table compact"><tbody>
+          {% for s in systems %}
+            <tr class="acc-row"><td>{{ s.name }} <small class="muted">{{ s.hostname or s.host }}{% for t in s.tag_list %} #{{ t }}{% endfor %}</small></td>
+              <td><select name="sys_{{ s.id }}"><option value="">kein Zugriff</option>
+                {% for k, v in LEVELS.items() %}<option value="{{ k }}" {% if levels_by_system.get(s.id) == k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></td></tr>
+          {% else %}<tr><td class="muted">Noch keine Systeme vorhanden.</td></tr>{% endfor %}
+          </tbody></table>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="actions"><button class="btn primary">Speichern</button><a class="btn" href="{{ url_for('users.index') }}">Abbrechen</a></div>
+</form>
+{% endblock %}

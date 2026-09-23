@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, status_badge, conn_badge, type_badges, empty with context %}
+{% block title %}Systeme{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>Systeme</h1><p>{{ systems|length }} System(e){% if filters.q or filters.type or filters.status or filters.tag %} (gefiltert){% endif %}</p></div>
+  <div class="actions">
+    {% if user.can_add_systems %}
+    <a class="btn" href="{{ url_for('enroll.index') }}"><svg class="icon"><use href="#i-plus"/></svg>Per Skript hinzufügen</a>
+    <a class="btn primary" href="{{ url_for('systems.new') }}"><svg class="icon"><use href="#i-server"/></svg>Manuell hinzufügen</a>
+    {% endif %}
+  </div>
+</div>
+
+<form class="filters mb-2" method="get">
+  <input type="search" name="q" value="{{ filters.q }}" placeholder="Name, Host, Tag …">
+  <select name="type"><option value="">Alle Typen</option>{% for k, v in TYPE_LABELS.items() %}<option value="{{ k }}" {% if filters.type == k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select>
+  <select name="status"><option value="">Alle Status</option>{% for k, v in STATUSES.items() %}<option value="{{ k }}" {% if filters.status == k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select>
+  {% if all_tags %}<select name="tag"><option value="">Alle Tags</option>{% for t in all_tags %}<option value="{{ t }}" {% if filters.tag == t|lower %}selected{% endif %}>{{ t }}</option>{% endfor %}</select>{% endif %}
+  <button class="btn">Filtern</button>
+  {% if filters.q or filters.type or filters.status or filters.tag %}<a class="btn ghost" href="{{ url_for('systems.index') }}">Zurücksetzen</a>{% endif %}
+</form>
+
+<div class="card">
+  {% if systems %}
+  <form method="post" action="{{ url_for('systems.bulk') }}">
+    {{ csrf() }}
+    <div class="bulkbar">
+      <span class="count" data-bulk-count="input[name=ids]">Keine Auswahl</span>
+      <button class="btn sm" name="bulk_action" value="check">Update-Prüfung</button>
+      <button class="btn sm" name="bulk_action" value="security_upgrade" data-confirm="Sicherheitsupdates auf den ausgewählten Systemen installieren?">Sicherheitsupdates</button>
+      <button class="btn sm" name="bulk_action" value="upgrade" data-confirm="Alle Updates auf den ausgewählten Systemen jetzt installieren?">Updates installieren</button>
+      <button class="btn sm primary" name="bulk_action" value="plan">Wartung planen …</button>
+    </div>
+    <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th class="cb"><input type="checkbox" data-check-all="input[name=ids]"></th><th>System</th><th>Status</th><th>Adresse</th>
+        <th>Betriebssystem</th><th>Updates</th><th>Zuletzt gesehen</th></tr></thead>
+      <tbody>
+      {% for s in systems %}
+        {% set sm = summaries[s.id] %}
+        <tr>
+          <td><input type="checkbox" name="ids" value="{{ s.id }}"></td>
+          <td><a href="{{ url_for('systems.detail', system_id=s.id) }}"><strong>{{ s.name }}</strong></a> {{ type_badges(s) }}
+              <span class="sub">{{ s.hostname or s.description|truncate(60) }}{% if s.tag_list %} · {% for t in s.tag_list %}#{{ t }} {% endfor %}{% endif %}</span></td>
+          <td class="nowrap">{{ status_badge(s) }}{% if s.maintenance_mode %} <span class="badge" title="Automatische Prüfungen pausiert">⏸</span>{% endif %}</td>
+          <td class="nowrap">{{ conn_badge(s) }} <span class="mono">{{ s.host }}</span></td>
+          <td>{{ s.fact.os_name or '–' }}<span class="sub">{{ s.fact.kernel }}</span></td>
+          <td class="nowrap">
+            {% if sm.total %}<a href="{{ url_for('systems.detail', system_id=s.id, tab='updates') }}" class="badge {{ 'danger' if sm.security else 'warning' }}">{{ sm.total }} Update{{ 's' if sm.total != 1 }}</a>{% else %}<span class="badge success">aktuell</span>{% endif %}
+            {% if sm.reboot %}<span class="badge warning" title="Neustart erforderlich">↻</span>{% endif %}
+            {% if sm.release %}<span class="badge info" title="{{ sm.release.label }}">{{ sm.release.to }}</span>{% endif %}
+          </td>
+          <td class="nowrap"><small>{{ s.last_seen|ago }}</small></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </form>
+  {% else %}
+    {{ empty('Keine Systeme gefunden. Fügen Sie Systeme per Enrollment-Skript oder manuell hinzu.', 'i-server') }}
+  {% endif %}
+</div>
+{% endblock %}

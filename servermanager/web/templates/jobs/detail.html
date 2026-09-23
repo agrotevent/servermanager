@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, job_badge with context %}
+{% block title %}Job #{{ job.id }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>{{ job.title }}</h1>
+    <p>Job #{{ job.id }} · {{ kinds.get(job.kind, job.kind) }}{% if job.system %} · <a href="{{ url_for('systems.detail', system_id=job.system_id) }}">{{ job.system.name }}</a>{% endif %}
+      · gestartet von {{ job.user.label if job.user else 'System/Zeitplan' }} · {{ job.created_at|dt('%d.%m.%Y %H:%M:%S') }}</p></div>
+  <div class="actions">
+    <span id="job-status">{{ job_badge(job.status) }}</span>
+    {% if can_cancel %}
+    <form method="post" action="{{ url_for('jobs.cancel', job_id=job.id) }}" class="inline" data-hide-when-final data-confirm="Job wirklich abbrechen? Ein Abbruch während einer Paketinstallation kann dpkg in einem inkonsistenten Zustand hinterlassen.">
+      {{ csrf() }}<button class="btn danger-outline sm">Abbrechen</button></form>
+    {% endif %}
+    {% if job.system and job.is_final %}<a class="btn sm" href="{{ url_for('systems.detail', system_id=job.system_id) }}">Zum System</a>{% endif %}
+  </div>
+</div>
+<div class="alert {{ 'danger' if job.status == 'failed' else ('success' if job.status == 'success' else 'info') }}">
+  <strong>Ergebnis:</strong><span id="job-summary">{{ job.summary or 'läuft …' }}</span> <small class="muted">(Dauer: <span id="job-duration">{{ job.duration|duration }}</span>)</small>
+</div>
+<pre class="log" id="joblog" data-url="{{ url_for('jobs.log', job_id=job.id) }}"></pre>
+{% if job.payload and job.payload.steps %}
+<details class="mt-2"><summary class="muted">Job-Parameter</summary><pre class="codebox">{{ job.payload|tojson_pretty }}</pre></details>
+{% endif %}
+{% endblock %}

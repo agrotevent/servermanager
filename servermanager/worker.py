@@ -1,0 +1,702 @@
+"""Background worker: executes jobs, periodic status checks, schedules, auto backups.
+
+Runs as its own process (systemd unit ``servermanager-worker``). Long running
+package operations are executed "detached" on the target system, so a worker
+restart (e.g. during a self-update) does not interrupt them - the worker
+re-attaches to the remote log after the restart.
+"""
+from __future__ import annotations
+
+import logging
+import signal
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
+from typing import Optional
+
+import requests
+from sqlalchemy import select, update
+
+from . import inventory, schedules, settings, sshkeys, sysbackup
+from .core import audit, bootstrap, setup_logging
+from .db import session_scope
+from .jobs import log_path
+from .models import (AUTH_KEY, JOB_CANCELLED, JOB_FAILED, JOB_FINAL, JOB_QUEUED, JOB_RUNNING, JOB_SKIPPED,
+                     JOB_SUCCESS, STATUS_ERROR, STATUS_ONLINE, STATUS_PENDING, Job, ScheduleRun, System, utcnow)
+from .modules import ParamError, resolve_action
+from .ssh import CancelledError, Connection, SSHError, target_from_system
+
+log = logging.getLogger("servermanager.worker")
+
+POLL_LIMIT = 256 * 1024
+
+
+class JobFailed(Exception):
+    pass
+
+
+class JobSkipped(Exception):
+    pass
+
+
+class Interrupted(Exception):
+    """Worker shutdown while a detached remote process is still running."""
+
+
+# --------------------------------------------------------------------------
+class JobContext:
+    def __init__(self, worker: "Worker", job_id: int):
+        self.worker = worker
+        self.job_id = job_id
+        self.fh = open(log_path(job_id), "ab")
+        self._last_check = 0.0
+        self._cancel = False
+        self._line_start = self.fh.tell() == 0
+
+    def write(self, text: str) -> None:
+        if text:
+            self.write_bytes(text.encode("utf-8", "replace"))
+
+    def write_bytes(self, data: bytes) -> None:
+        if data:
+            self.fh.write(data)
+            self.fh.flush()
+            self._line_start = data.endswith(b"\n")
+
+    def say(self, msg: str) -> None:
+        prefix = "" if self._line_start else "\n"
+        self.write(f"{prefix}[servermanager {datetime.now().strftime('%H:%M:%S')}] {msg}\n")
+
+    def cancelled(self) -> bool:
+        if self._cancel:
+            return True
+        now = time.monotonic()
+        if now - self._last_check > 2:
+            self._last_check = now
+            with session_scope() as db:
+                job = db.get(Job, self.job_id)
+                self._cancel = bool(job and job.cancel_requested)
+        return self._cancel
+
+    def save_remote(self, remote: dict) -> None:
+        with session_scope() as db:
+            job = db.get(Job, self.job_id)
+            if job is not None:
+                job.remote = dict(remote)
+
+    def close(self) -> None:
+        try:
+            self.fh.close()
+        except OSError:
+            pass
+
+
+# --------------------------------------------------------------------------
+class Worker:
+    def __init__(self) -> None:
+        with session_scope() as db:
+            self.max_parallel = max(1, int(settings.get(db, "jobs.max_parallel") or 8))
+            check_parallel = max(1, int(settings.get(db, "checks.parallel") or 8))
+        self.pool = ThreadPoolExecutor(max_workers=self.max_parallel, thread_name_prefix="job")
+        self.check_pool = ThreadPoolExecutor(max_workers=check_parallel, thread_name_prefix="check")
+        self.lock = threading.Lock()
+        self.running: dict[int, Optional[int]] = {}   # job id -> system id
+        self.checking: set[int] = set()
+        self.stop = threading.Event()
+        self._last_periodic = 0.0
+        self._last_daily: Optional[str] = None
+        self._last_ispc = 0.0
+
+    # ------------------------------------------------------------------ main
+    def run_forever(self) -> None:
+        self.recover()
+        log.info("worker started (max %s parallel jobs)", self.max_parallel)
+        while not self.stop.is_set():
+            try:
+                self.claim_jobs()
+            except Exception:  # noqa: BLE001
+                log.exception("claiming jobs failed")
+            if time.monotonic() - self._last_periodic > 30:
+                self._last_periodic = time.monotonic()
+                try:
+                    self.periodic()
+                except Exception:  # noqa: BLE001
+                    log.exception("periodic tasks failed")
+            self.stop.wait(1.0)
+        log.info("worker stopping - waiting for running jobs")
+        self.pool.shutdown(wait=True)
+        self.check_pool.shutdown(wait=False, cancel_futures=True)
+
+    def recover(self) -> None:
+        with session_scope() as db:
+            for job in db.execute(select(Job).where(Job.status == JOB_RUNNING)).scalars():
+                remote = job.remote or {}
+                if remote.get("detached"):
+                    log.info("job %s: re-attaching to detached remote process", job.id)
+                    job.status = JOB_QUEUED  # will be claimed again and resumed
+                else:
+                    job.status = JOB_FAILED
+                    job.finished_at = utcnow()
+                    job.summary = "Unterbrochen (Worker wurde neu gestartet)"
+                    with open(log_path(job.id), "ab") as fh:
+                        fh.write(b"\n[servermanager] Job wurde durch einen Neustart des Workers unterbrochen.\n")
+
+    # ------------------------------------------------------------------ jobs
+    def claim_jobs(self) -> None:
+        with self.lock:
+            free = self.max_parallel - len(self.running)
+            busy_systems = {s for s in self.running.values() if s}
+        if free <= 0:
+            return
+        now = utcnow()
+        with session_scope() as db:
+            queued = db.execute(select(Job).where(Job.status == JOB_QUEUED).order_by(Job.id).limit(200)).scalars().all()
+            run_counts: dict[int, int] = {}
+            for rid, in db.execute(select(Job.run_id).where(Job.status == JOB_RUNNING, Job.run_id.is_not(None))):
+                run_counts[rid] = run_counts.get(rid, 0) + 1
+            for job in queued:
+                if free <= 0:
+                    break
+                if job.not_after and now > job.not_after and not (job.remote or {}).get("detached"):
+                    job.status = JOB_SKIPPED
+                    job.finished_at = now
+                    job.summary = "Wartungsfenster überschritten - nicht gestartet"
+                    continue
+                if job.system_id and job.system_id in busy_systems:
+                    continue
+                if job.run_id:
+                    run = db.get(ScheduleRun, job.run_id)
+                    limit = run.max_parallel if run else 1
+                    if run_counts.get(job.run_id, 0) >= limit:
+                        continue
+                    run_counts[job.run_id] = run_counts.get(job.run_id, 0) + 1
+                res = db.execute(update(Job).where(Job.id == job.id, Job.status == JOB_QUEUED)
+                                 .values(status=JOB_RUNNING, started_at=job.started_at or now))
+                if res.rowcount != 1:
+                    continue
+                db.commit()
+                with self.lock:
+                    self.running[job.id] = job.system_id
+                if job.system_id:
+                    busy_systems.add(job.system_id)
+                free -= 1
+                self.pool.submit(self._execute, job.id)
+
+    def _execute(self, job_id: int) -> None:
+        ctx = JobContext(self, job_id)
+        status, summary, exit_code = JOB_FAILED, "", None
+        try:
+            with session_scope() as db:
+                job = db.get(Job, job_id)
+                kind, payload = job.kind, dict(job.payload or {})
+                system_id = job.system_id
+                resumed = bool((job.remote or {}).get("detached"))
+            if resumed:
+                ctx.say("Worker neu gestartet - verbinde mich wieder mit dem laufenden Prozess ...")
+            else:
+                ctx.say(f"Job #{job_id} gestartet ({kind})")
+            handler = getattr(self, f"job_{kind}", None)
+            if handler is None:
+                raise JobFailed(f"Unbekannter Job-Typ {kind}")
+            summary = handler(ctx, job_id, system_id, payload) or "OK"
+            status = JOB_SUCCESS
+            exit_code = 0
+        except Interrupted:
+            ctx.say("Worker wird beendet - der Prozess läuft auf dem Zielsystem weiter und wird nach dem "
+                    "Neustart wieder aufgenommen.")
+            with self.lock:
+                self.running.pop(job_id, None)
+            ctx.close()
+            return
+        except JobSkipped as exc:
+            status, summary = JOB_SKIPPED, str(exc)
+            ctx.say(f"Übersprungen: {exc}")
+        except CancelledError:
+            status, summary = JOB_CANCELLED, "Abgebrochen"
+            ctx.say("Job abgebrochen.")
+        except (JobFailed, SSHError, ParamError, ValueError) as exc:
+            status, summary = JOB_FAILED, str(exc)
+            ctx.say(f"FEHLER: {exc}")
+        except Exception as exc:  # noqa: BLE001
+            log.exception("job %s crashed", job_id)
+            status, summary = JOB_FAILED, f"Interner Fehler: {exc}"
+            ctx.say(f"Interner Fehler: {exc}")
+        finally:
+            with self.lock:
+                self.running.pop(job_id, None)
+        if status == JOB_SUCCESS:
+            ctx.say(f"Job erfolgreich abgeschlossen: {summary}")
+        with session_scope() as db:
+            job = db.get(Job, job_id)
+            if job is not None:
+                job.status = status
+                job.summary = (summary or "")[:2000]
+                job.exit_code = exit_code if exit_code is not None else job.exit_code
+                job.finished_at = utcnow()
+                job.remote = {k: v for k, v in (job.remote or {}).items() if k != "detached"}
+        ctx.close()
+
+    # ------------------------------------------------------------------ helpers
+    def _system(self, system_id: Optional[int]) -> System:
+        if not system_id:
+            raise JobFailed("Kein Zielsystem")
+        with session_scope() as db:
+            system = db.get(System, system_id)
+            if system is None:
+                raise JobFailed("System existiert nicht mehr")
+            db.expunge(system)
+            return system
+
+    def _connect(self, ctx: JobContext, system: System) -> Connection:
+        ctx.say(f"Verbinde mit {system.username}@{system.host}:{system.port} ...")
+        return inventory.connect(system)
+
+    def _refresh(self, ctx: JobContext, conn: Connection, system_id: int) -> System:
+        with session_scope() as db:
+            system = db.get(System, system_id)
+            facts, apt = inventory.run_facts(conn, system)
+            inventory.apply_facts(system, facts, apt)
+            db.commit()
+            db.expunge(system)
+            return system
+
+    def _run_script(self, ctx: JobContext, conn: Connection, system: System, body: str, env: dict,
+                    detached: bool, timeout: int, state: dict, step: int) -> tuple[int, Connection]:
+        if not detached:
+            code = conn.run_script(body, env=env, root=True, on_output=ctx.write, cancel=ctx.cancelled,
+                                   timeout=timeout)
+            return code, conn
+        key = f"job-{ctx.job_id}-{step}"
+        conn.start_detached(body, key, env)
+        state.update({"detached": {"key": key, "offset": 0, "step": step}})
+        ctx.save_remote(state)
+        ctx.say("Prozess läuft im Hintergrund auf dem Zielsystem (übersteht Verbindungsabbrüche).")
+        return self._tail(ctx, conn, system, state, timeout)
+
+    def _tail(self, ctx: JobContext, conn: Optional[Connection], system: System, state: dict,
+              timeout: int) -> tuple[int, Connection]:
+        det = state["detached"]
+        key, offset = det["key"], int(det.get("offset", 0))
+        started = time.monotonic()
+        last_ok = time.monotonic()
+        cancel_sent = False
+        while True:
+            if self.stop.is_set():
+                if conn:
+                    conn.close()
+                raise Interrupted()
+            try:
+                if conn is None or not conn.alive:
+                    conn = inventory.connect(system)
+                data, rc = conn.poll_detached(key, offset, POLL_LIMIT)
+                last_ok = time.monotonic()
+                if data:
+                    ctx.write_bytes(data)
+                    offset += len(data)
+                    det["offset"] = offset
+                    ctx.save_remote(state)
+                if rc is not None and len(data) < POLL_LIMIT:
+                    conn.cleanup_detached(key)
+                    state.pop("detached", None)
+                    ctx.save_remote(state)
+                    if cancel_sent:
+                        raise CancelledError("Abgebrochen")
+                    return rc, conn
+                if len(data) >= POLL_LIMIT:
+                    continue
+                if not cancel_sent and (ctx.cancelled() or time.monotonic() - started > timeout):
+                    if not ctx.cancelled():
+                        ctx.say(f"Zeitlimit von {timeout // 60} Minuten überschritten - beende Prozess")
+                    else:
+                        ctx.say("Abbruch angefordert - beende Prozess auf dem Zielsystem")
+                    conn.cancel_detached(key)
+                    cancel_sent = True
+            except SSHError as exc:
+                if conn:
+                    conn.close()
+                conn = None
+                if time.monotonic() - last_ok > 1800:
+                    raise JobFailed("Keine Verbindung zum System seit 30 Minuten - der Prozess läuft evtl. "
+                                    f"weiter (Log auf dem System: /var/lib/servermanager-jobs/{key}.log)") from exc
+                ctx.say(f"Verbindung unterbrochen ({exc}) - neuer Versuch in 15 s")
+                self.stop.wait(15)
+                continue
+            self.stop.wait(2)
+
+    def _reboot(self, ctx: JobContext, conn: Connection, system: System) -> Connection:
+        boot_before = conn.exec("cat /proc/sys/kernel/random/boot_id", timeout=20).stdout.strip()
+        ctx.say("Neustart wird ausgelöst ...")
+        conn.exec("systemd-run --on-active=5 --timer-property=AccuracySec=1s /bin/systemctl reboot "
+                  ">/dev/null 2>&1 || (nohup sh -c 'sleep 5; /sbin/reboot' >/dev/null 2>&1 &)", root=True, timeout=30)
+        conn.close()
+        started = time.monotonic()
+        self.stop.wait(30)
+        while time.monotonic() - started < 20 * 60:
+            if ctx.cancelled():
+                raise CancelledError("Abgebrochen")
+            try:
+                new = inventory.connect(system, timeout=10)
+                boot_now = new.exec("cat /proc/sys/kernel/random/boot_id", timeout=20).stdout.strip()
+                if boot_now and boot_now != boot_before:
+                    ctx.say(f"System ist wieder erreichbar (nach {int(time.monotonic() - started)} s).")
+                    return new
+                new.close()
+            except SSHError:
+                pass
+            self.stop.wait(10)
+        raise JobFailed("System ist nach 20 Minuten nicht wieder erreichbar")
+
+    def _backup(self, ctx: JobContext, conn: Connection, system: System, note: str,
+                paths: Optional[list[str]] = None) -> None:
+        paths = paths or sysbackup.parse_paths(system.backup_paths or "/etc")
+        with session_scope() as db:
+            sysbackup.create_backup(conn, db, db.get(System, system.id), paths, note, ctx.job_id, ctx.write,
+                                    cancel=ctx.cancelled)
+
+    # ------------------------------------------------------------------ step engine
+    def _run_steps(self, ctx: JobContext, job_id: int, system_id: int, payload: dict) -> str:
+        system = self._system(system_id)
+        with session_scope() as db:
+            state = dict(db.get(Job, job_id).remote or {})
+        steps: list[dict] = payload.get("steps") or []
+        start_step = int(state.get("next_step", 0))
+        conn: Optional[Connection] = None
+        failures: list[str] = []
+        try:
+            if state.get("detached"):
+                # resume a detached step after a worker restart
+                idx = int(state["detached"].get("step", start_step))
+                code, conn = self._tail(ctx, None, system, state, 6 * 3600)
+                self._step_result(ctx, steps[idx] if idx < len(steps) else {}, code, failures)
+                start_step = idx + 1
+                state["next_step"] = start_step
+                ctx.save_remote(state)
+                if failures and payload.get("stop_on_error", True):
+                    raise JobFailed(failures[0])
+            if conn is None:
+                conn = self._connect(ctx, system)
+
+            if start_step == 0 and not state.get("prechecked"):
+                if payload.get("only_if_updates"):
+                    ctx.say("Prüfe auf ausstehende Updates ...")
+                    with session_scope() as db:
+                        s = db.get(System, system_id)
+                        inventory.deep_check(conn, db, s, ctx.write, manual=True)
+                        db.commit()
+                        pending = inventory.has_pending_updates(s)
+                        reboot = (s.upd.get("reboot") or {}).get("required")
+                    if not pending and not (reboot and payload.get("reboot_policy") == "if_required"):
+                        raise JobSkipped("Keine Updates ausstehend")
+                if payload.get("pre_backup"):
+                    ctx.say("Konfigurations-Backup vor der Wartung ...")
+                    self._backup(ctx, conn, system, "vor Wartung")
+                state["prechecked"] = True
+                ctx.save_remote(state)
+
+            for idx in range(start_step, len(steps)):
+                step = steps[idx]
+                if ctx.cancelled():
+                    raise CancelledError("Abgebrochen")
+                conn = self._run_step(ctx, conn, system, step, idx, state, failures)
+                state["next_step"] = idx + 1
+                ctx.save_remote(state)
+                if failures and payload.get("stop_on_error", True):
+                    break
+
+            policy = payload.get("reboot_policy", "never")
+            if not failures and policy in ("always", "if_required"):
+                system = self._refresh(ctx, conn, system_id)
+                needed = system.fact.get("reboot_required")
+                if policy == "always" or needed:
+                    ctx.say("Neustart " + ("(immer)" if policy == "always" else "erforderlich") + " ...")
+                    conn = self._reboot(ctx, conn, system)
+                else:
+                    ctx.say("Kein Neustart erforderlich.")
+            try:
+                system = self._refresh(ctx, conn, system_id)
+            except SSHError as exc:
+                ctx.say(f"Inventur nach dem Job fehlgeschlagen: {exc}")
+        finally:
+            if conn:
+                conn.close()
+        if failures:
+            raise JobFailed("; ".join(failures))
+        pend = inventory.update_summary(system)
+        extra = f", noch {pend['total']} Update(s) offen" if pend["total"] else ""
+        extra += ", Neustart erforderlich" if pend["reboot"] else ""
+        return f"{len(steps)} Schritt(e) erfolgreich{extra}"
+
+    def _step_result(self, ctx: JobContext, step: dict, code: int, failures: list[str]) -> None:
+        label = schedules.step_label(step) if step else "Schritt"
+        if code == 0:
+            ctx.say(f"✔ {label} erfolgreich")
+        else:
+            ctx.say(f"✘ {label} fehlgeschlagen (Exit-Code {code})")
+            failures.append(f"{label} fehlgeschlagen (Exit-Code {code})")
+
+    def _run_step(self, ctx: JobContext, conn: Connection, system: System, step: dict, idx: int,
+                  state: dict, failures: list[str]) -> Connection:
+        label = schedules.step_label(step)
+        ctx.say(f"── Schritt {idx + 1}: {label}")
+        if step.get("module") == "command":
+            code = conn.run_script(step.get("command", ""), root=True, on_output=ctx.write, cancel=ctx.cancelled,
+                                   timeout=int(step.get("timeout") or 3600))
+            self._step_result(ctx, step, code, failures)
+            return conn
+        mod, action = resolve_action(step.get("module", ""), step.get("action", ""))
+        if not mod.applies(system):
+            ctx.say(f"Übersprungen - Modul '{mod.label}' ist für dieses System nicht aktiv.")
+            return conn
+        params = action.clean_params(step.get("params") or {})
+        if action.special == "reboot":
+            conn = self._reboot(ctx, conn, system)
+            self._step_result(ctx, step, 0, failures)
+            return conn
+        if action.special == "reboot_if_required":
+            system = self._refresh(ctx, conn, system.id)
+            if system.fact.get("reboot_required"):
+                conn = self._reboot(ctx, conn, system)
+            else:
+                ctx.say("Kein Neustart erforderlich.")
+            self._step_result(ctx, step, 0, failures)
+            return conn
+        if action.key == "release_upgrade":
+            ctx.say("Konfigurations-Backup (/etc) vor dem Release-Upgrade ...")
+            self._backup(ctx, conn, system, "vor Release-Upgrade", ["/etc"])
+        body, env = mod.script_for(action, system, params)
+        code, conn = self._run_script(ctx, conn, system, body, env, action.detached, action.timeout, state, idx)
+        self._step_result(ctx, step, code, failures)
+        return conn
+
+    # ------------------------------------------------------------------ job kinds
+    def job_action(self, ctx, job_id, system_id, payload) -> str:
+        return self._run_steps(ctx, job_id, system_id, {
+            "steps": [{"module": payload["module"], "action": payload["action"], "params": payload.get("params", {})}],
+            "stop_on_error": True, "reboot_policy": "never"})
+
+    def job_maintenance(self, ctx, job_id, system_id, payload) -> str:
+        return self._run_steps(ctx, job_id, system_id, payload)
+
+    def job_command(self, ctx, job_id, system_id, payload) -> str:
+        return self._run_steps(ctx, job_id, system_id, {
+            "steps": [{"module": "command", "command": payload.get("command", ""),
+                       "timeout": payload.get("timeout", 3600)}], "stop_on_error": True})
+
+    def job_check(self, ctx, job_id, system_id, payload) -> str:
+        system = self._system(system_id)
+        with self._connect(ctx, system) as conn:
+            with session_scope() as db:
+                s = db.get(System, system_id)
+                inventory.deep_check(conn, db, s, ctx.write, manual=True, detect=bool(payload.get("detect")))
+                db.commit()
+                summ = inventory.update_summary(s)
+        lines = [f"{i['label']}: {i['text']}" for i in summ["items"]]
+        if summ["release"]:
+            lines.append(f"Release-Upgrade verfügbar: {summ['release']['label']}")
+        if summ["reboot"]:
+            lines.append("Neustart erforderlich")
+        ctx.write("\n" + ("\n".join(lines) if lines else "Keine Updates ausstehend.") + "\n")
+        return f"{summ['total']} Update(s) ausstehend" if summ["total"] else "Keine Updates ausstehend"
+
+    def job_backup(self, ctx, job_id, system_id, payload) -> str:
+        system = self._system(system_id)
+        paths = sysbackup.parse_paths(payload.get("paths") or system.backup_paths or "/etc")
+        with self._connect(ctx, system) as conn:
+            self._backup(ctx, conn, system, payload.get("note", "manuell"), paths)
+        return "Backup erstellt"
+
+    def job_restore(self, ctx, job_id, system_id, payload) -> str:
+        from .models import SystemBackup
+        system = self._system(system_id)
+        with session_scope() as db:
+            b = db.get(SystemBackup, int(payload.get("backup_id", 0)))
+            if b is None or b.system_id != system_id:
+                raise JobFailed("Backup nicht gefunden")
+            db.expunge(b)
+        with self._connect(ctx, system) as conn:
+            result = sysbackup.restore_backup(conn, b, payload.get("mode", "extract"), ctx.write)
+        return f"Wiederhergestellt: {result}"
+
+    def job_deploy_key(self, ctx, job_id, system_id, payload) -> str:
+        system = self._system(system_id)
+        pub = sshkeys.public_key()
+        if not pub:
+            raise JobFailed("Kein Servermanager-Schlüssel vorhanden")
+        blob = pub.split()[1]
+        script = f"""umask 077
+mkdir -p "$HOME/.ssh" && touch "$HOME/.ssh/authorized_keys"
+if grep -qF '{blob}' "$HOME/.ssh/authorized_keys"; then echo "Schlüssel bereits vorhanden"; else
+  echo '{pub}' >> "$HOME/.ssh/authorized_keys" && echo "Schlüssel hinzugefügt"; fi
+chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
+"""
+        with self._connect(ctx, system) as conn:
+            code = conn.run_script(script, root=False, on_output=ctx.write, timeout=60)
+            if code != 0:
+                raise JobFailed("Schlüssel konnte nicht installiert werden")
+        ctx.say("Teste Anmeldung mit Schlüssel ...")
+        target = target_from_system(system)
+        target.password = ""
+        target.pkey = sshkeys.default_private_key()
+        with Connection(target) as test:
+            test.check("true", timeout=30)
+        ctx.say("Anmeldung per Schlüssel erfolgreich - stelle System auf Schlüssel-Anmeldung um.")
+        with session_scope() as db:
+            s = db.get(System, system_id)
+            if s.sudo_mode == "password" and not s.sudo_password_enc and s.password_enc:
+                s.sudo_password_enc = s.password_enc  # keep the password for sudo
+            s.auth_method = AUTH_KEY
+            s.private_key_enc = None
+            s.key_passphrase_enc = None
+            if payload.get("remove_password"):
+                s.password_enc = None
+            audit(db, None, "system.key_deployed", s.name)
+        return "SSH-Schlüssel installiert, Anmeldung per Schlüssel aktiv"
+
+    def job_enroll_verify(self, ctx, job_id, system_id, payload) -> str:
+        system = self._system(system_id)
+        deadline = time.monotonic() + 180
+        conn = None
+        last = None
+        while time.monotonic() < deadline:
+            try:
+                conn = self._connect(ctx, system)
+                break
+            except SSHError as exc:
+                last = exc
+                ctx.say(f"Noch nicht erreichbar ({exc}) - neuer Versuch in 10 s")
+                self.stop.wait(10)
+        if conn is None:
+            with session_scope() as db:
+                s = db.get(System, system_id)
+                s.status = STATUS_ERROR
+                s.status_message = f"Nach Enrollment nicht erreichbar: {last}"
+            raise JobFailed(f"System nach dem Enrollment nicht erreichbar: {last}")
+        with conn:
+            with session_scope() as db:
+                s = db.get(System, system_id)
+                inventory.deep_check(conn, db, s, ctx.write, manual=True, detect=True)
+                s.status = STATUS_ONLINE
+                s.enrolled_at = s.enrolled_at or utcnow()
+                types = ", ".join(s.type_list)
+        return f"System erreichbar, erkannte Typen: {types}"
+
+    # ------------------------------------------------------------------ periodic
+    def periodic(self) -> None:
+        with session_scope() as db:
+            settings.set(db, "state.worker_heartbeat", utcnow().isoformat())
+            schedules.tick(db)
+            db.commit()
+            schedules.finalize_runs(db)
+            db.commit()
+            status_min = int(settings.get(db, "checks.status_interval_min") or 15)
+            deep_h = int(settings.get(db, "checks.deep_interval_hours") or 6)
+            now = utcnow()
+            with self.lock:
+                busy = {s for s in self.running.values() if s} | set(self.checking)
+            systems = db.execute(select(System).where(System.status != STATUS_PENDING)).scalars().all()
+            for s in systems:
+                if s.id in busy or s.maintenance_mode:
+                    continue
+                if status_min > 0 and (s.last_deep_check is None or now - s.last_deep_check > timedelta(hours=deep_h)):
+                    self._submit_check(s.id, deep=True)
+                elif status_min > 0 and (s.last_check is None or now - s.last_check > timedelta(minutes=status_min)):
+                    self._submit_check(s.id, deep=False)
+        if time.monotonic() - self._last_ispc > 6 * 3600:
+            self._last_ispc = time.monotonic()
+            self._fetch_ispconfig_latest()
+        self._daily_tasks()
+
+    def _submit_check(self, system_id: int, deep: bool) -> None:
+        with self.lock:
+            if system_id in self.checking:
+                return
+            self.checking.add(system_id)
+        self.check_pool.submit(self._check, system_id, deep)
+
+    def _check(self, system_id: int, deep: bool) -> None:
+        try:
+            if not deep:
+                inventory.quick_check(system_id)
+                return
+            with session_scope() as db:
+                system = db.get(System, system_id)
+                if system is None:
+                    return
+                try:
+                    with inventory.connect(system) as conn:
+                        inventory.deep_check(conn, db, system)
+                except Exception as exc:  # noqa: BLE001
+                    inventory.mark_unreachable(system, exc)
+                    system.last_deep_check = utcnow()  # retry after the next deep interval
+        except Exception:  # noqa: BLE001
+            log.exception("check of system %s failed", system_id)
+        finally:
+            with self.lock:
+                self.checking.discard(system_id)
+
+    def _fetch_ispconfig_latest(self) -> None:
+        with session_scope() as db:
+            if not db.execute(select(System.id).where(System.types.like('%ispconfig%'))).first():
+                return
+        try:
+            r = requests.get("https://www.ispconfig.org/downloads/ispconfig3_version.txt", timeout=15)
+            r.raise_for_status()
+            latest = r.text.strip()[:32]
+            if latest and latest[0].isdigit():
+                with session_scope() as db:
+                    settings.set(db, "state.ispconfig_latest", latest)
+                    settings.set(db, "state.ispconfig_checked", utcnow().isoformat())
+        except requests.RequestException as exc:
+            log.warning("ISPConfig version check failed: %s", exc)
+
+    def _daily_tasks(self) -> None:
+        from . import backup
+        with session_scope() as db:
+            tz = schedules.get_tz(db)
+            local_now = datetime.now(tz)
+            today = local_now.strftime("%Y-%m-%d")
+            if settings.get(db, "backup.auto_enabled"):
+                hour = int(settings.get(db, "backup.hour") or 2)
+                last = settings.get(db, "state.last_auto_backup") or ""
+                if local_now.hour >= hour and last != today:
+                    settings.set(db, "state.last_auto_backup", today)
+                    db.commit()
+                    try:
+                        path = backup.create_backup(db, note="automatisch", auto=True)
+                        audit(db, None, "backup.auto", path.name)
+                        backup.prune_backups(int(settings.get(db, "backup.keep") or 14))
+                    except Exception as exc:  # noqa: BLE001
+                        log.exception("automatic backup failed")
+                        audit(db, None, "backup.auto_failed", "", str(exc))
+            if self._last_daily != today:
+                self._last_daily = today
+                self._cleanup(db)
+
+    def _cleanup(self, db) -> None:
+        days = int(settings.get(db, "jobs.log_retention_days") or 90)
+        cutoff = utcnow() - timedelta(days=days)
+        old = db.execute(select(Job).where(Job.created_at < cutoff, Job.status.in_(JOB_FINAL))).scalars().all()
+        for job in old:
+            log_path(job.id).unlink(missing_ok=True)
+            db.delete(job)
+        if old:
+            log.info("removed %s old jobs", len(old))
+
+
+def main() -> None:
+    setup_logging()
+    bootstrap()
+    worker = Worker()
+
+    def _stop(signum, _frame):
+        log.info("signal %s received", signum)
+        worker.stop.set()
+
+    signal.signal(signal.SIGTERM, _stop)
+    signal.signal(signal.SIGINT, _stop)
+    worker.run_forever()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Zwei-Faktor-Anmeldung{% endblock %}
+{% block public %}
+<div class="login-wrap">
+  <div class="login-card">
+    <div class="brand"><span class="logo"><svg class="icon"><use href="#i-shield"/></svg></span>Bestätigungscode</div>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for cat, msg in messages %}<div class="alert {{ cat }}">{{ msg }}</div>{% endfor %}
+    {% endwith %}
+    <p class="muted">Bitte den 6-stelligen Code aus Ihrer Authenticator-App eingeben.</p>
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="field mb-2"><input type="text" name="code" inputmode="numeric" pattern="[0-9 ]{6,7}" maxlength="7"
+             autocomplete="one-time-code" autofocus required placeholder="123456"></div>
+      <button class="btn primary" style="width:100%">Bestätigen</button>
+    </form>
+    <p class="mt-2"><a href="{{ url_for('auth.login') }}">Zurück zur Anmeldung</a></p>
+  </div>
+</div>
+{% endblock %}

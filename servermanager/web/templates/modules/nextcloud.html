@@ -1,0 +1,17 @@
+{% from "_macros.html" import empty with context %}
+{% include "modules/_panel_head.html" %}
+{% set nc = data.nc or {} %}
+{% if nc %}
+<div class="stats">
+  <div class="stat"><div class="label">Version</div><div class="value" style="font-size:20px">{{ nc.installed or '?' }}</div><div class="sub mono">{{ data.path or 'occ-Befehl' }}</div></div>
+  <div class="stat {{ 'warning' if nc.core else 'success' }}"><div class="label">Core-Update</div><div class="value" style="font-size:20px">{{ nc.core or 'aktuell' }}</div></div>
+  <div class="stat {{ 'warning' if nc.apps else 'success' }}"><div class="label">App-Updates</div><div class="value">{{ nc.apps|length }}</div></div>
+  <div class="stat {{ 'danger' if nc.maintenance else 'success' }}"><div class="label">Wartungsmodus</div><div class="value" style="font-size:20px">{{ 'an' if nc.maintenance else 'aus' }}</div></div>
+</div>
+{% if nc.needs_db_upgrade %}<div class="alert danger"><strong>Datenbank-Upgrade erforderlich</strong> (occ upgrade) - "Nextcloud aktualisieren" ausführen.</div>{% endif %}
+{% if nc.apps %}
+<table class="table compact"><thead><tr><th>App</th><th>Neue Version</th></tr></thead><tbody>
+  {% for a in nc.apps %}<tr><td>{{ a.app }}</td><td class="mono">{{ a.version }}</td></tr>{% endfor %}
+</tbody></table>
+{% endif %}
+{% elif not error %}{{ empty('Keine Daten.') }}{% endif %}
