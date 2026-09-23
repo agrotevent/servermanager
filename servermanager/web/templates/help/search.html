@@ -1,0 +1,17 @@
+{% extends "help/_layout.html" %}
+{% block title %}Hilfe durchsuchen{% endblock %}
+{% block help_content %}
+<div class="card"><div class="card-body doc">
+  <h1>Suche{% if q %}: „{{ q }}“{% endif %}</h1>
+  {% if q|length < 2 %}<p class="muted">Bitte mindestens zwei Zeichen eingeben.</p>
+  {% elif not results %}<p class="muted">Keine Treffer.</p>
+  {% else %}
+    {% for r in results %}
+      <div class="search-hit">
+        <a href="{{ url_for('help.page', slug=r.slug) }}"><strong>{{ r.title }}</strong></a> <small class="muted">{{ r.count }} Treffer</small>
+        {% for h in r.hits %}<div class="muted"><small>… {{ h }} …</small></div>{% endfor %}
+      </div>
+    {% endfor %}
+  {% endif %}
+</div></div>
+{% endblock %}

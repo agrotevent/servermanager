@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% set help_page = "benutzer" %}
 {% from "_macros.html" import csrf, field, select, checkbox with context %}
 {% block title %}{{ 'Neuer Benutzer' if is_new else u.username }}{% endblock %}
 {% block content %}

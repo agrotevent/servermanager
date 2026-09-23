@@ -1,0 +1,15 @@
+{% extends "help/_layout.html" %}
+{% block title %}Hilfe: {{ title }}{% endblock %}
+{% block help_content %}
+<article class="card"><div class="card-body doc">
+  {{ body }}
+  <hr>
+  <div class="flex flex-wrap">
+    {% if prev_page %}<a class="btn sm" href="{{ url_for('help.page', slug=prev_page[0]) }}">← {{ prev_page[1] }}</a>{% endif %}
+    <span class="grow"></span>
+    <small class="muted">Stand dieser Seite: {{ updated }}</small>
+    <span class="grow"></span>
+    {% if next_page %}<a class="btn sm" href="{{ url_for('help.page', slug=next_page[0]) }}">{{ next_page[1] }} →</a>{% endif %}
+  </div>
+</div></article>
+{% endblock %}

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% set help_page = "oberflaeche" %}
 {% from "_macros.html" import job_badge, empty with context %}
 {% block title %}Jobs{% endblock %}
 {% block body_attrs %}{% if active %}data-autorefresh="10"{% endif %}{% endblock %}

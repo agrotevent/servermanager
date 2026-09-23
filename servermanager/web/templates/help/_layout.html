@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="help-layout">
+  <aside class="help-nav card">
+    <form class="card-body" action="{{ url_for('help.search') }}" method="get">
+      <input type="search" name="q" value="{{ q or '' }}" placeholder="Hilfe durchsuchen …" aria-label="Hilfe durchsuchen">
+    </form>
+    {% for section, pages in nav %}
+      <div class="help-section">{{ section }}</div>
+      {% for s, t in pages %}<a href="{{ url_for('help.page', slug=s) }}" class="{{ 'active' if s == slug }}">{{ t }}</a>{% endfor %}
+    {% endfor %}
+    <div class="help-version muted">Servermanager {{ version }}</div>
+  </aside>
+  <div class="help-main">{% block help_content %}{% endblock %}</div>
+</div>
+{% endblock %}

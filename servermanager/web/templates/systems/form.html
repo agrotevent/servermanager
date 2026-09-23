@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% set help_page = "systeme" %}
 {% from "_macros.html" import csrf, field, textarea, checkbox, select with context %}
 {% block title %}{{ 'System hinzufügen' if is_new else 'System bearbeiten' }}{% endblock %}
 {% block content %}

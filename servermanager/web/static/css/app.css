@@ -312,3 +312,29 @@ details.action.danger > summary { color: var(--danger); }
 .pkg-list { max-height: 360px; overflow: auto; }
 .nowrap { white-space: nowrap; }
 .break { word-break: break-all; }
+
+/* ------------------------------------------------------------------ help */
+.help-layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 900px) { .help-layout { grid-template-columns: 1fr; } }
+.help-nav { position: sticky; top: 70px; padding-bottom: 10px; }
+.help-nav .card-body { padding: 12px; }
+.help-nav a { display: block; padding: 5px 16px; color: var(--text); border-left: 3px solid transparent; }
+.help-nav a:hover { background: var(--surface-2); text-decoration: none; }
+.help-nav a.active { border-left-color: var(--primary); color: var(--primary); font-weight: 600; background: var(--surface-2); }
+.help-section { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: 12px 16px 4px; }
+.help-version { font-size: 12px; padding: 12px 16px 0; }
+.doc { max-width: 900px; line-height: 1.65; font-size: 15px; }
+.doc h1 { font-size: 26px; margin-bottom: 16px; }
+.doc h2 { font-size: 20px; margin-top: 32px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.doc h3 { font-size: 16px; margin-top: 24px; }
+.doc p, .doc ul, .doc ol { margin: 0 0 12px; }
+.doc li { margin-bottom: 4px; }
+.doc table { border-collapse: collapse; width: 100%; margin: 8px 0 16px; font-size: 14px; display: block; overflow-x: auto; }
+.doc th, .doc td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top; }
+.doc th { background: var(--surface-2); }
+.doc pre { background: var(--log-bg); color: var(--log-text); padding: 12px 14px; border-radius: 8px; overflow-x: auto; line-height: 1.4; }
+.doc pre code { background: none; padding: 0; color: inherit; word-break: normal; }
+.doc blockquote { margin: 0 0 12px; padding: 8px 14px; border-left: 4px solid var(--info); background: var(--info-soft); border-radius: 0 8px 8px 0; }
+.doc blockquote p { margin: 0; }
+.search-hit { padding: 10px 0; border-bottom: 1px solid var(--border); }
+mark { background: var(--warning-soft); color: inherit; padding: 0 2px; border-radius: 3px; }

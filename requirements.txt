@@ -7,3 +7,4 @@ argon2-cffi>=23.1
 pyotp>=2.9
 segno>=1.6
 requests>=2.31
+markdown>=3.5

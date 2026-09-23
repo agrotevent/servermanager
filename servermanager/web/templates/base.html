@@ -31,6 +31,7 @@
   <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></symbol>
   <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></symbol>
   <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></symbol>
+  <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 015 .5c0 1.7-2.5 2-2.5 4M12 17h.01"/></symbol>
   <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
 </svg>
 {% if user %}
@@ -59,6 +60,8 @@
       <a href="{{ url_for('admin.settings_page') }}" class="{{ 'active' if request.endpoint and request.endpoint.startswith('admin.settings') }}"><svg class="icon"><use href="#i-settings"/></svg>Einstellungen</a>
       <a href="{{ url_for('main.audit_log') }}" class="{{ 'active' if request.endpoint == 'main.audit_log' }}"><svg class="icon"><use href="#i-log"/></svg>Audit-Log</a>
       {% endif %}
+      <div class="section">Info</div>
+      <a href="{{ url_for('help.page', slug='index') }}" class="{{ 'active' if bp == 'help' }}"><svg class="icon"><use href="#i-help"/></svg>Hilfe</a>
     </nav>
     <div class="sidebar-foot">Servermanager {{ version }}</div>
   </aside>
@@ -67,6 +70,7 @@
       <label for="menu-toggle" class="menu-btn btn ghost sm"><svg class="icon"><use href="#i-menu"/></svg></label>
       <div class="title">{% block page_title %}{{ self.title() }}{% endblock %}</div>
       <div class="spacer"></div>
+      <a class="btn ghost sm" href="{{ url_for('help.page', slug=help_page|default('index')) }}" title="Hilfe zu dieser Seite"><svg class="icon"><use href="#i-help"/></svg></a>
       <div class="user">
         <a href="{{ url_for('main.profile') }}" class="flex" title="Profil">
           <span class="avatar">{{ user.label[:1]|upper }}</span>
