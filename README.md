@@ -412,6 +412,8 @@ Logs: `journalctl -u servermanager-web -u servermanager-worker -f`
 | `/var/lib/servermanager/jobs/` | Job-Protokolle |
 | `/var/lib/servermanager/backups/` | Backups des Servermanagers |
 | `/var/lib/servermanager/system-backups/` | Konfig-Backups der Systeme |
+| `/var/log/servermanager/` | Protokolle von Self-Update und Wiederherstellung |
+| `/var/backups/servermanager-pre-restore-*` | Stand vor einer Wiederherstellung (Datenbank, Schlüssel) |
 | `/var/lib/servermanager-jobs/` (auf Zielsystemen) | Protokolle von Hintergrund-Jobs während der Ausführung |
 
 ---
