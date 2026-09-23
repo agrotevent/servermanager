@@ -317,6 +317,7 @@ def routeros_script(db: Session) -> str:
 /ip service set www-ssl certificate=servermanager-api disabled=no
 
 # 5) API-Benutzer mit eingeschränkten Rechten (Passwort anpassen!)
+#    Falls RouterOS die Policy "rest-api" nicht kennt: sie weglassen ("api" genügt dann).
 /user group add name=servermanager policy=read,write,api,rest-api,!ftp,!reboot,!policy,!password,!sniff,!sensitive,!romon
 /user add name={user} group=servermanager address={sm_ip}/32 password="BITTE-AENDERN"
 

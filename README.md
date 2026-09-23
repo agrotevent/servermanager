@@ -79,7 +79,7 @@ Voraussetzungen:
   viele Systeme)
 - öffentlich erreichbarer Name (für Let's Encrypt Port 80/443 erreichbar) – alternativ selbstsigniertes
   Zertifikat
-- für das Management-Netz: MikroTik mit RouterOS ≥ 7.9 (REST-API)
+- für das Management-Netz: MikroTik mit RouterOS 7 (REST-API über den Dienst `www-ssl`)
 
 **WireGuard im LXC-Container:** Das Kernelmodul muss auf dem Proxmox-**Host** geladen sein:
 

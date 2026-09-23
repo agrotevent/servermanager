@@ -141,7 +141,7 @@ done
 log "Paketlisten für $TO laden"
 if ! apt-get -q -o DPkg::Lock::Timeout=900 update; then
     restore_sources
-    die "apt-get update mit den neuen Quellen fehlgeschlagen (fehlt ein Repository für '$TO'?). Quellen wurden zurückgesetzt, am System wurde nichts geändert."
+    die "apt-get update mit den neuen Quellen fehlgeschlagen (fehlt ein Repository für '$TO'?). Die Quellen wurden zurückgesetzt - installiert wurden nur die Updates für Debian 12."
 fi
 
 # ----------------------------------------------------- 5. minimal upgrade
