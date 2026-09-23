@@ -88,7 +88,8 @@ if [ "${ID:-}" != "debian" ] || [ "${VERSION_ID:-}" != "13" ]; then
     confirm "Trotzdem fortfahren?" || exit 1
 fi
 [[ "$BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]] || die "Ungültiger Branch-Name"
-[[ "$LISTEN" =~ ^[0-9a-zA-Z.:\[\]-]+:[0-9]+$ ]] || die "Ungültige Listen-Adresse"
+LISTEN_RE='^[][0-9A-Za-z.:-]+:[0-9]+$'
+[[ "$LISTEN" =~ $LISTEN_RE ]] || die "Ungültige Listen-Adresse"
 [[ "$ADMIN_USER" =~ ^[A-Za-z0-9][A-Za-z0-9._@-]{1,63}$ ]] || die "Ungültiger Admin-Benutzername"
 
 VIRT="$(systemd-detect-virt 2>/dev/null || echo none)"
@@ -119,7 +120,7 @@ fi
 # ---------------------------------------------------------------------------
 step "Pakete installieren"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -q
+apt-get update -q || c_yellow "Hinweis: apt-get update meldete Fehler (einzelne Paketquellen?) - fahre fort."
 PKGS=(python3 python3-venv python3-dev git curl ca-certificates openssl sudo sqlite3 wireguard-tools
       iproute2 openssh-client tzdata build-essential libffi-dev)
 [ "$WITH_NGINX" = "1" ] && PKGS+=(nginx)
@@ -164,8 +165,11 @@ git config --system --get-all safe.directory 2>/dev/null | grep -qx "$APP_DIR" \
     || git config --system --add safe.directory "$APP_DIR"
 if [ -d "$APP_DIR/.git" ]; then
     echo "Vorhandene Installation gefunden - aktualisiere auf origin/$BRANCH"
-    git -C "$APP_DIR" fetch --quiet origin "$BRANCH"
-    git -C "$APP_DIR" reset --quiet --hard "origin/$BRANCH"
+    if git -C "$APP_DIR" fetch --quiet origin "$BRANCH"; then
+        git -C "$APP_DIR" reset --quiet --hard "origin/$BRANCH"
+    else
+        c_yellow "origin/$BRANCH konnte nicht geholt werden - vorhandener Programmstand wird beibehalten."
+    fi
 elif [ -n "$SCRIPT_DIR" ] && [ -d "$SCRIPT_DIR/.git" ] && [ -f "$SCRIPT_DIR/servermanager/__init__.py" ] \
         && [ "$SCRIPT_DIR" != "$APP_DIR" ]; then
     echo "Installiere aus lokalem Checkout $SCRIPT_DIR"
