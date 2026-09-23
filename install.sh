@@ -304,6 +304,16 @@ if [ "$WITH_NGINX" = "1" ]; then
     fi
     sed -e "s|@DOMAIN@|$SERVER_NAME|g" -e "s|@CERT@|$CERT|g" -e "s|@KEY@|$KEY|g" -e "s|@LISTEN@|$LISTEN|g" \
         "$APP_DIR/deploy/nginx-servermanager.conf" > /etc/nginx/sites-available/servermanager
+    # containers without IPv6: nginx would fail on "listen [::]:..."
+    if [ ! -f /proc/net/if_inet6 ]; then
+        sed -i '/listen \[::\]/d' /etc/nginx/sites-available/servermanager
+    fi
+    # nginx < 1.25.1 does not know "http2 on;" (e.g. Debian 12)
+    NGX_VER="$(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)"
+    if [ -n "$NGX_VER" ] && [ "$(printf '%s\n1.25.1\n' "$NGX_VER" | sort -V | head -n 1)" != "1.25.1" ]; then
+        sed -i -e '/http2 on;/d' -e 's/listen 443 ssl;/listen 443 ssl http2;/' -e 's/listen \[::\]:443 ssl;/listen [::]:443 ssl http2;/' \
+            /etc/nginx/sites-available/servermanager
+    fi
     ln -sf /etc/nginx/sites-available/servermanager /etc/nginx/sites-enabled/servermanager
     rm -f /etc/nginx/sites-enabled/default
     install -d /var/www/html
