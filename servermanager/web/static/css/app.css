@@ -110,10 +110,13 @@ small, .muted { color: var(--muted); }
 .content { padding: 24px 28px 48px; max-width: 1500px; width: 100%; }
 .menu-toggle { display: none; }
 .menu-btn { display: none; cursor: pointer; }
+.menu-overlay { display: none; }
 
 @media (max-width: 900px) {
   .sidebar { position: fixed; left: -250px; z-index: 50; transition: left .2s; }
   .menu-toggle:checked ~ .layout .sidebar { left: 0; }
+  .menu-toggle:checked ~ .menu-overlay { display: block; position: fixed; inset: 0; background: rgba(0, 0, 0, .45); z-index: 40; }
+  .topbar .user .uname { display: none; }
   .menu-btn { display: inline-flex; }
   .content { padding: 16px; }
   .topbar { padding: 10px 16px; }

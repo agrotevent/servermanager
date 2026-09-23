@@ -35,6 +35,7 @@
 </svg>
 {% if user %}
 <input type="checkbox" id="menu-toggle" class="menu-toggle">
+<label for="menu-toggle" class="menu-overlay" aria-hidden="true"></label>
 <div class="layout">
   <aside class="sidebar">
     <div class="brand"><span class="logo"><svg class="icon"><use href="#i-server"/></svg></span>{{ site_name }}</div>
@@ -69,7 +70,7 @@
       <div class="user">
         <a href="{{ url_for('main.profile') }}" class="flex" title="Profil">
           <span class="avatar">{{ user.label[:1]|upper }}</span>
-          <span>{{ user.label }} <small>({{ ROLES[user.role] }})</small></span>
+          <span class="uname">{{ user.label }} <small>({{ ROLES[user.role] }})</small></span>
         </a>
         <form method="post" action="{{ url_for('auth.logout') }}" class="inline">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
