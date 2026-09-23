@@ -13,6 +13,7 @@ APP_DIR=/opt/servermanager
 DATA_DIR=/var/lib/servermanager
 BRANCH=main
 SVC_USER=servermanager
+LOG_DIR=/var/log/servermanager
 
 conf_get() {
     [ -f "$CONF" ] || return 0
@@ -43,10 +44,16 @@ case "$cmd" in
     wg-apply)
         iface="${1:-}"; valid_iface "$iface"
         src="$DATA_DIR/wireguard/$iface.conf"
-        validate_wg_conf "$src"
         command -v wg >/dev/null 2>&1 || die "wireguard-tools sind nicht installiert"
+        # The source directory belongs to the service user: copy first (without following
+        # symlinks) and validate the root-owned copy, so the file cannot be swapped afterwards.
+        tmp="$(mktemp /run/sm-wg.XXXXXX)"
+        trap 'rm -f "$tmp"' EXIT
+        [ -f "$src" ] && [ ! -L "$src" ] || die "Konfiguration $src fehlt"
+        cp -P --remove-destination "$src" "$tmp"
+        validate_wg_conf "$tmp"
         install -d -m 700 /etc/wireguard
-        install -m 600 -o root -g root "$src" "/etc/wireguard/$iface.conf"
+        install -m 600 -o root -g root "$tmp" "/etc/wireguard/$iface.conf"
         systemctl enable "wg-quick@$iface" >/dev/null 2>&1 || true
         if ip link show "$iface" >/dev/null 2>&1; then
             wg syncconf "$iface" <(wg-quick strip "$iface")
@@ -97,18 +104,33 @@ case "$cmd" in
 
     restore-apply)
         STAGE="$DATA_DIR/restore-staging"
-        LOG="$DATA_DIR/restore.log"
-        [ -d "$STAGE" ] && [ ! -L "$STAGE" ] || die "keine vorbereitete Wiederherstellung"
-        if find "$STAGE" -type l | grep -q .; then die "symbolische Links in der Sicherung sind nicht erlaubt"; fi
-        [ -f "$STAGE/servermanager.db" ] && [ -f "$STAGE/secret.key" ] || die "Sicherung unvollständig"
+        install -d -m 755 "$LOG_DIR"
+        LOG="$LOG_DIR/restore.log"
+        # whatever happens: the services must be running again afterwards
+        trap 'systemctl start servermanager-worker servermanager-web >/dev/null 2>&1 || true' EXIT
         {
             echo "== Wiederherstellung $(date)"
-            ts="$(date +%Y%m%d-%H%M%S)"
+            # Stop everything running as the service user first: from now on nobody can
+            # modify the files below $DATA_DIR while root works on them.
             systemctl stop servermanager-web servermanager-worker || true
-            keep="$DATA_DIR/pre-restore-$ts"
-            install -d -m 700 -o "$SVC_USER" -g "$SVC_USER" "$keep"
-            cp -a "$DATA_DIR"/servermanager.db* "$keep/" 2>/dev/null || true
-            cp -a "$CONF_DIR/secret.key" "$keep/" 2>/dev/null || true
+            pkill -KILL -u "$SVC_USER" 2>/dev/null || true
+            sleep 1
+            restore_fail() {
+                echo "FEHLER: $* - Wiederherstellung abgebrochen, bisheriger Stand bleibt aktiv."
+                systemctl start servermanager-worker servermanager-web || true
+                exit 1
+            }
+            [ -d "$STAGE" ] && [ ! -L "$STAGE" ] || restore_fail "keine vorbereitete Wiederherstellung"
+            if find "$STAGE" -type l | grep -q .; then restore_fail "symbolische Links in der Sicherung sind nicht erlaubt"; fi
+            [ -f "$STAGE/servermanager.db" ] && [ -f "$STAGE/secret.key" ] || restore_fail "Sicherung unvollständig"
+            for f in "$DATA_DIR/servermanager.db" "$DATA_DIR/servermanager.db-wal" "$DATA_DIR/servermanager.db-shm"; do
+                [ -L "$f" ] && rm -f "$f"
+            done
+            ts="$(date +%Y%m%d-%H%M%S)"
+            keep="$(mktemp -d "/var/backups/servermanager-pre-restore-$ts.XXXXXX")"
+            cp -P "$DATA_DIR"/servermanager.db* "$keep/" 2>/dev/null || true
+            cp -P "$CONF_DIR/secret.key" "$keep/" 2>/dev/null || true
+            echo "Bisheriger Stand gesichert in $keep"
             rm -f "$DATA_DIR/servermanager.db-wal" "$DATA_DIR/servermanager.db-shm"
             install -m 600 -o "$SVC_USER" -g "$SVC_USER" "$STAGE/servermanager.db" "$DATA_DIR/servermanager.db"
             install -m 640 -o root -g "$SVC_USER" "$STAGE/secret.key" "$CONF_DIR/secret.key"
@@ -118,12 +140,10 @@ case "$cmd" in
             fi
             for d in ssh wireguard system-backups; do
                 if [ -d "$STAGE/$d" ]; then
-                    rm -rf "$DATA_DIR/$d.old"
-                    [ -d "$DATA_DIR/$d" ] && mv "$DATA_DIR/$d" "$DATA_DIR/$d.old"
-                    cp -r "$STAGE/$d" "$DATA_DIR/$d"
-                    chown -R "$SVC_USER:$SVC_USER" "$DATA_DIR/$d"
+                    rm -rf "${DATA_DIR:?}/$d"
+                    cp -rP "$STAGE/$d" "$DATA_DIR/$d"
+                    chown -hR "$SVC_USER:$SVC_USER" "$DATA_DIR/$d"
                     chmod 700 "$DATA_DIR/$d"
-                    rm -rf "$DATA_DIR/$d.old"
                 fi
             done
             rm -rf "$STAGE"
@@ -138,7 +158,7 @@ case "$cmd" in
             done
             echo "== Wiederherstellung abgeschlossen"
         } > "$LOG" 2>&1
-        chown "$SVC_USER:$SVC_USER" "$LOG"
+        chmod 644 "$LOG"
         ;;
 
     restart)

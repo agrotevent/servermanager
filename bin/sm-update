@@ -8,7 +8,6 @@ set -uo pipefail
 CONF_DIR=/etc/servermanager
 CONF="$CONF_DIR/servermanager.conf"
 APP_DIR=/opt/servermanager
-DATA_DIR=/var/lib/servermanager
 BRANCH=main
 SVC_USER=servermanager
 LISTEN=127.0.0.1:8000
@@ -17,14 +16,15 @@ conf_get() {
     [ -f "$CONF" ] || return 0
     sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*\"\(.*\)\"[[:space:]]*$/\1/p" "$CONF" | head -n 1
 }
-v="$(conf_get data_dir)"; [ -n "$v" ] && DATA_DIR="$v"
 v="$(conf_get repo_dir)"; [ -n "$v" ] && APP_DIR="$v"
 v="$(conf_get branch)"; [ -n "$v" ] && BRANCH="$v"
 v="$(conf_get listen)"; [ -n "$v" ] && LISTEN="$v"
 
-LOG="$DATA_DIR/update.log"
-: > "$LOG"
-chown "$SVC_USER:$SVC_USER" "$LOG" 2>/dev/null || true
+# root-owned log directory (never write as root into the service user's data directory)
+install -d -m 755 /var/log/servermanager
+LOG=/var/log/servermanager/update.log
+rm -f "$LOG"
+( umask 022; : > "$LOG" )
 exec >>"$LOG" 2>&1
 
 say() { echo "[$(date '+%H:%M:%S')] $*"; }

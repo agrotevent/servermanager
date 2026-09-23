@@ -58,8 +58,11 @@ def start() -> str:
     return run_helper("self-update", timeout=60)
 
 
+UPDATE_LOG = Path("/var/log/servermanager/update.log")
+
+
 def log_text(max_bytes: int = 200_000) -> str:
-    p = Path(get_config().data_dir) / "update.log"
+    p = UPDATE_LOG if UPDATE_LOG.exists() else Path(get_config().data_dir) / "update.log"
     if not p.exists():
         return ""
     data = p.read_bytes()[-max_bytes:]

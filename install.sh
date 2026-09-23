@@ -157,6 +157,7 @@ for d in jobs backups system-backups ssh wireguard; do
     install -d -m 700 -o "$SVC_USER" -g "$SVC_USER" "$DATA_DIR/$d"
 done
 install -d -m 750 -o root -g "$SVC_USER" "$CONF_DIR"
+install -d -m 755 -o root -g root /var/log/servermanager
 
 # ---------------------------------------------------------------------------
 step "Programmcode ($APP_DIR)"
