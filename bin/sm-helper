@@ -101,7 +101,7 @@ case "$cmd" in
         # prints "none" or "set <user> <host> …<last 4 characters>" - never the token itself
         if [ -f "$CRED_FILE" ]; then
             line="$(head -n 1 "$CRED_FILE")"
-            creds="${line#https://}"; host="${creds##*@}"; creds="${creds%@*}"
+            creds="${line#https://}"; host="${creds##*@}"; host="${host//%3[aA]/:}"; creds="${creds%@*}"
             tok="${creds#*:}"
             echo "set ${creds%%:*} $host …${tok: -4}"
         else
