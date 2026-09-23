@@ -352,3 +352,41 @@ def test_cancel_queued_job(app, setup, db):
     db.commit()
     db.refresh(j2)
     assert j2.status == "running" and j2.cancel_requested
+
+
+def test_repository_token_page(app, setup, db, monkeypatch):
+    from servermanager import selfupdate
+    calls = []
+
+    def fake_helper(*args, stdin=None, **kw):
+        calls.append((args, stdin))
+        if args[0] == "git-token-status":
+            return "set x-access-token github.com …abcd\n"
+        return "Zugriffstoken gespeichert und geprüft.\n"
+
+    monkeypatch.setattr(selfupdate, "run_helper", fake_helper)
+    import dataclasses
+    from servermanager.config import get_config
+    cfg = dataclasses.replace(get_config(), use_sudo=True)
+    monkeypatch.setattr(selfupdate, "get_config", lambda: cfg)
+    admin = login(app, "admin1")
+    r = admin.get("/update")
+    assert r.status_code == 200 and "…abcd" in r.text and "github.com" in r.text
+
+    r = admin.post("/update/token", data={"token": "github_pat_SECRET123", "token_user": "x-access-token",
+                                         "csrf_token": admin.csrf})
+    assert r.status_code == 302
+    # the token goes to the helper via stdin only - never as argument
+    args, stdin = calls[-1]
+    assert args == ("set-git-token", "x-access-token") and stdin == "github_pat_SECRET123\n"
+
+    calls.clear()
+    r = admin.post("/update/token", data={"token": "bad token;rm -rf /", "csrf_token": admin.csrf},
+                   follow_redirects=True)
+    assert "Ungültiges Token" in r.text and not [c for c in calls if c[0][0] == "set-git-token"]
+
+    # only administrators
+    viewer = login(app, "viewer1")
+    assert viewer.post("/update/token", data={"token": "github_pat_SECRET123", "csrf_token": viewer.csrf}
+                       ).status_code in (302, 403)
+    assert not [c for c in calls if c[0][0] == "set-git-token"]

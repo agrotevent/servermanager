@@ -20,5 +20,8 @@
   abgelehnt).
 - Parameter von Aktionen werden serverseitig gegen Muster geprüft und als Umgebungsvariablen (nie per
   String-Verkettung) an die Skripte übergeben.
+- Das Repository-Token (privates Repository) liegt nur für root lesbar in
+  `/etc/servermanager/git-credentials`, wird an `sm-helper` ausschließlich über stdin übergeben und nie
+  angezeigt (nur die letzten vier Zeichen). Es sollte nur Leserechte auf dieses eine Repository haben.
 - Enrollment-Tokens sind zufällig, nur gehasht gespeichert, zeitlich begrenzt und auf eine Anzahl
   Verwendungen beschränkt.

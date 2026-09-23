@@ -15,9 +15,12 @@
 Umzug/Notfall auf einen neuen Server:
 
 ```bash
-bash install.sh --domain sm.example.com …     # neu installieren
+bash install.sh --domain sm.example.com …     # neu installieren (privates Repository: --token …)
 servermanager-cli restore /root/servermanager-backup-….tar.gz.enc --passphrase '…' --yes
 ```
+
+Das Repository-Token (`/etc/servermanager/git-credentials`) ist bewusst **nicht** im Backup enthalten –
+auf einem neuen Server wird es bei der Installation mit `--token` angegeben.
 
 **Konfig-Backups der Systeme** (Tab *Konfig-Backups* im System): Archiv der konfigurierten Pfade
 (Standard `/etc`) wird per SSH gezogen und im Servermanager gespeichert. Wiederherstellung wahlweise

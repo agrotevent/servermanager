@@ -2,6 +2,21 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.1.0 – 23.09.2026
+
+### Neu
+
+- Installation und Updates aus einem **privaten Repository** mit Lese-Token: `install.sh --token`
+  (oder `SM_GIT_TOKEN`, bzw. verdeckte Abfrage), Ablage root-only in
+  `/etc/servermanager/git-credentials`, automatische Verwendung durch `sm-update` und die
+  Update-Prüfung.
+- Menü **Update**: Token-Status anzeigen, neues Token prüfen und hinterlegen oder entfernen.
+
+### Geändert
+
+- Ein in der Repository-Adresse enthaltenes Token wird bei erneuter Installation in den
+  Credential-Speicher verschoben.
+
 ## 1.0.0 – 23.09.2026
 
 Erste Version.

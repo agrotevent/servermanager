@@ -37,6 +37,30 @@
     </div>
   </div>
 </div>
+<div class="card">
+  <div class="card-head"><h2>Zugriff auf das Repository</h2></div>
+  <div class="card-body">
+    {% if not token.available %}
+      <p class="muted">Tokenverwaltung nicht verfügbar{% if token.error %}: {{ token.error }}{% else %} (Installation ohne sudo-Hilfsdienst){% endif %}.</p>
+    {% else %}
+      <p>
+        {% if token.set %}Zugriffstoken hinterlegt für <code>{{ token.host }}</code> (Benutzer <code>{{ token.user }}</code>, endet auf <code>{{ token.hint }}</code>).
+        {% else %}Kein Zugriffstoken hinterlegt – nur für öffentliche Repositories ausreichend.{% endif %}
+        Das Token wird nur für root lesbar in <code>/etc/servermanager/git-credentials</code> gespeichert und bei jeder Update-Prüfung und jedem Update verwendet.
+      </p>
+      <form method="post" action="{{ url_for('admin.update_token') }}" class="inline-form mt-1" autocomplete="off">{{ csrf() }}
+        <div class="field"><label>Neues Token</label><input type="password" name="token" autocomplete="new-password" placeholder="github_pat_…" required></div>
+        <div class="field"><label>Benutzer</label><input type="text" name="token_user" value="{{ token.user or 'x-access-token' }}"></div>
+        <button class="btn primary">Prüfen und speichern</button>
+      </form>
+      {% if token.set %}
+      <form method="post" action="{{ url_for('admin.update_token') }}" class="mt-1" data-confirm="Zugriffstoken entfernen? Updates aus einem privaten Repository sind danach nicht mehr möglich.">{{ csrf() }}
+        <input type="hidden" name="remove" value="1"><button class="btn danger-outline sm">Token entfernen</button></form>
+      {% endif %}
+      <p class="muted mt-1"><small>GitHub: Fine-grained Personal Access Token, nur dieses Repository, Berechtigung „Contents: Read-only“. GitLab: Project/Deploy-Token mit <code>read_repository</code>, Benutzer <code>oauth2</code> bzw. Name des Deploy-Tokens.</small></p>
+    {% endif %}
+  </div>
+</div>
 {% if log %}
 <div class="card"><div class="card-head"><h2>Letztes Update-Protokoll</h2></div><div class="card-body"><pre class="log">{{ log }}</pre></div></div>
 {% endif %}

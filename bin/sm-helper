@@ -14,6 +14,8 @@ DATA_DIR=/var/lib/servermanager
 BRANCH=main
 SVC_USER=servermanager
 LOG_DIR=/var/log/servermanager
+CRED_FILE="$CONF_DIR/git-credentials"
+export GIT_TERMINAL_PROMPT=0
 
 conf_get() {
     [ -f "$CONF" ] || return 0
@@ -24,6 +26,13 @@ v="$(conf_get repo_dir)"; [ -n "$v" ] && APP_DIR="$v"
 v="$(conf_get branch)"; [ -n "$v" ] && BRANCH="$v"
 
 die() { echo "sm-helper: $*" >&2; exit 1; }
+git_cred() {  # git with the stored repository token (if any)
+    if [ -f "$CRED_FILE" ]; then
+        git -c credential.helper= -c "credential.helper=store --file=$CRED_FILE" "$@"
+    else
+        git "$@"
+    fi
+}
 valid_iface() { [[ "${1:-}" =~ ^[A-Za-z0-9_.-]{1,15}$ ]] || die "ungültiger Interface-Name"; }
 [[ "$BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]] || die "ungültiger Branch in $CONF"
 
@@ -85,7 +94,49 @@ case "$cmd" in
         ;;
 
     git-fetch)
-        git -C "$APP_DIR" fetch --quiet origin "$BRANCH" 2>&1
+        git_cred -C "$APP_DIR" fetch --quiet origin "$BRANCH" 2>&1
+        ;;
+
+    git-token-status)
+        # prints "none" or "set <user> <host> …<last 4 characters>" - never the token itself
+        if [ -f "$CRED_FILE" ]; then
+            line="$(head -n 1 "$CRED_FILE")"
+            creds="${line#https://}"; host="${creds##*@}"; creds="${creds%@*}"
+            tok="${creds#*:}"
+            echo "set ${creds%%:*} $host …${tok: -4}"
+        else
+            echo "none"
+        fi
+        ;;
+
+    set-git-token)
+        # token is read from stdin (never as argument - it would show up in the process list)
+        user="${1:-x-access-token}"
+        [[ "$user" =~ ^[A-Za-z0-9_.-]{1,64}$ ]] || die "ungültiger Token-Benutzer"
+        IFS= read -r token || true
+        if [ -z "$token" ]; then
+            rm -f "$CRED_FILE"
+            git -C "$APP_DIR" config --unset-all credential.helper 2>/dev/null || true
+            echo "Zugriffstoken entfernt."
+            exit 0
+        fi
+        [[ "$token" =~ ^[A-Za-z0-9_.~-]{8,255}$ ]] || die "ungültiges Token (erlaubt: A-Z a-z 0-9 _ . ~ -)"
+        url="$(git -C "$APP_DIR" config --get remote.origin.url || true)"
+        host="$(sed -nE 's#^https://([^/@]*@)?([^/]+)/.*$#\2#p' <<<"$url")"
+        [ -n "$host" ] || die "Ein Token wird nur für https-Repositories unterstützt"
+        [[ "$url" =~ ^https://[^/@]*@ ]] && die "Die Repository-Adresse enthält bereits Zugangsdaten - bitte install.sh erneut ausführen"
+        tmp="$(mktemp "$CONF_DIR/.git-credentials.XXXXXX")"
+        trap 'rm -f "$tmp"' EXIT
+        chmod 600 "$tmp"
+        printf 'https://%s:%s@%s\n' "$user" "$token" "$host" > "$tmp"
+        # check the token before replacing the stored one
+        git -c credential.helper= -c "credential.helper=store --file=$tmp" -C "$APP_DIR" \
+            ls-remote --exit-code origin "refs/heads/$BRANCH" >/dev/null 2>&1 \
+            || die "Zugriff auf $host mit diesem Token fehlgeschlagen (Rechte, Ablaufdatum und Branch $BRANCH prüfen)"
+        chown root:root "$tmp"
+        mv -f "$tmp" "$CRED_FILE"
+        git -C "$APP_DIR" config --replace-all credential.helper "store --file=$CRED_FILE"
+        echo "Zugriffstoken gespeichert und geprüft."
         ;;
 
     self-update)
@@ -166,7 +217,7 @@ case "$cmd" in
         ;;
 
     *)
-        echo "Verwendung: sm-helper {wg-apply|wg-show|wg-down IFACE | git-fetch | self-update | restore | restart}" >&2
+        echo "Verwendung: sm-helper {wg-apply|wg-show|wg-down IFACE | git-fetch | git-token-status | set-git-token [USER] | self-update | restore | restart}" >&2
         exit 2
         ;;
 esac

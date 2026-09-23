@@ -29,6 +29,19 @@ bash install.sh --domain sm.example.com --email admin@example.com
 > Solange die Entwicklung noch nicht in `main` übernommen ist, den Branch angeben:
 > `git clone -b <branch> …` und `bash install.sh --branch <branch> …`
 
+**Privates Repository** – mit einem Lese-Token (GitHub: Fine-grained Token, *Contents: Read-only*);
+das Token wird für spätere Updates root-only hinterlegt:
+
+```bash
+TOKEN=github_pat_xxxxxxxx
+apt-get update && apt-get install -y git curl
+curl -fsSL -H "Authorization: Bearer $TOKEN" \
+  https://raw.githubusercontent.com/agrotevent/servermanager/main/install.sh -o install.sh
+bash install.sh --token "$TOKEN" --domain sm.example.com --email admin@example.com
+```
+
+Details: [Installation aus einem privaten Repository](docs/installation.md#installation-aus-einem-privaten-repository-token).
+
 Danach die angezeigte Adresse öffnen und mit dem ausgegebenen Initialpasswort anmelden.
 
 ## Dokumentation

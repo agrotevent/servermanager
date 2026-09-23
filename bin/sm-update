@@ -29,6 +29,17 @@ exec >>"$LOG" 2>&1
 
 say() { echo "[$(date '+%H:%M:%S')] $*"; }
 
+# Access token for a private repository (written by install.sh --token or the web interface)
+CRED_FILE="$CONF_DIR/git-credentials"
+export GIT_TERMINAL_PROMPT=0
+git_fetch() {
+    if [ -f "$CRED_FILE" ]; then
+        git -c credential.helper= -c "credential.helper=store --file=$CRED_FILE" fetch --quiet origin "$BRANCH"
+    else
+        git fetch --quiet origin "$BRANCH"
+    fi
+}
+
 cd "$APP_DIR" || { say "FEHLER: $APP_DIR nicht gefunden"; exit 1; }
 say "Servermanager-Update gestartet (Branch $BRANCH)"
 OLD="$(git rev-parse HEAD)"
@@ -42,7 +53,7 @@ rollback() {
     exit 1
 }
 
-git fetch --quiet origin "$BRANCH" || { say "FEHLER: git fetch fehlgeschlagen"; exit 1; }
+git_fetch || { say "FEHLER: git fetch fehlgeschlagen (Netzwerk/Zugriffstoken prüfen)"; exit 1; }
 NEW="$(git rev-parse "origin/$BRANCH")"
 if [ "$OLD" = "$NEW" ]; then
     say "Bereits auf dem neuesten Stand ($OLD)."

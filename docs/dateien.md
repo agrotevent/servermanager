@@ -5,6 +5,7 @@
 | `/opt/servermanager` | Programmcode (Git-Checkout, root-eigen), `.venv` |
 | `/etc/servermanager/servermanager.conf` | Grundkonfiguration (Pfade, URL, Branch) |
 | `/etc/servermanager/secret.key` | Hauptschlüssel |
+| `/etc/servermanager/git-credentials` | Lese-Token für ein privates Repository (nur root, `600`; nicht im Backup) |
 | `/etc/servermanager/tls/` | selbstsigniertes Zertifikat |
 | `/var/lib/servermanager/servermanager.db` | Datenbank |
 | `/var/lib/servermanager/ssh/` | SSH-Schlüsselpaar des Servermanagers |

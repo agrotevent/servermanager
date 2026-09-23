@@ -13,6 +13,10 @@
 #                            none = ohne nginx/TLS, z. B. hinter einem vorhandenen Reverse-Proxy)
 #     --repo URL             Git-Repository (Standard: https://github.com/agrotevent/servermanager.git)
 #     --branch NAME          Branch für Installation und Updates (Standard: main)
+#     --token TOKEN          Zugriffstoken (nur Leserechte) für ein privates Repository; wird nach der
+#                            Installation root-only in /etc/servermanager/git-credentials hinterlegt und
+#                            von allen Updates verwendet (alternativ Umgebungsvariable SM_GIT_TOKEN)
+#     --token-user NAME      Benutzername zum Token (Standard: x-access-token; GitLab: oauth2)
 #     --admin-user NAME      Name des ersten Administrators (Standard: admin)
 #     --admin-password PW    Passwort (Standard: zufällig, wird angezeigt)
 #     --listen ADRESSE       interne Adresse der Weboberfläche (Standard: 127.0.0.1:8000)
@@ -37,6 +41,8 @@ ADMIN_PASS=""
 TIMEZONE="Europe/Berlin"
 WITH_NGINX=1
 ASSUME_YES=0
+GIT_TOKEN="${SM_GIT_TOKEN:-}"
+GIT_USER="x-access-token"
 
 c_red() { printf '\033[31m%s\033[0m\n' "$*"; }
 c_green() { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -64,13 +70,15 @@ while [ $# -gt 0 ]; do
         --tls) TLS_MODE="${2:-}"; shift ;;
         --repo) REPO_URL="${2:-}"; shift ;;
         --branch) BRANCH="${2:-}"; shift ;;
+        --token) GIT_TOKEN="${2:-}"; shift ;;
+        --token-user) GIT_USER="${2:-}"; shift ;;
         --admin-user) ADMIN_USER="${2:-}"; shift ;;
         --admin-password) ADMIN_PASS="${2:-}"; shift ;;
         --listen) LISTEN="${2:-}"; shift ;;
         --timezone) TIMEZONE="${2:-}"; shift ;;
         --no-nginx) WITH_NGINX=0 ;;
         --yes|-y) ASSUME_YES=1 ;;
-        -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
         *) die "Unbekannte Option: $1 (--help für Hilfe)" ;;
     esac
     shift
@@ -164,22 +172,116 @@ step "Programmcode ($APP_DIR)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "")"
 git config --system --get-all safe.directory 2>/dev/null | grep -qx "$APP_DIR" \
     || git config --system --add safe.directory "$APP_DIR"
+# never hang on a password prompt of git - a missing token is handled below
+export GIT_TERMINAL_PROMPT=0
+
+# Access token for a private repository: kept root-only in $CRED_FILE and used through
+# git's credential store - it never appears in the remote URL, in the process list or in
+# files the service user can read.
+CRED_FILE="$CONF_DIR/git-credentials"
+url_host() { sed -nE 's#^https://([^/@]*@)?([^/]+)/.*$#\2#p' <<<"$1"; }
+url_strip_creds() { sed -E 's#^(https?://)[^/@]*@#\1#' <<<"$1"; }
+take_url_creds() {  # move credentials embedded in an URL (https://user:token@host/...) into GIT_TOKEN
+    local creds; creds="$(sed -nE 's#^https://([^/@]+)@.*$#\1#p' <<<"$1")"
+    [ -n "$creds" ] || return 0
+    if [[ "$creds" == *:* ]]; then
+        [ -n "$GIT_TOKEN" ] || { GIT_TOKEN="${creds#*:}"; GIT_USER="${creds%%:*}"; }
+    else
+        [ -n "$GIT_TOKEN" ] || GIT_TOKEN="$creds"
+    fi
+}
+valid_token() { [[ "$1" =~ ^[A-Za-z0-9_.~-]{8,255}$ ]]; }
+write_git_credentials() {  # write_git_credentials URL
+    local host; host="$(url_host "$1")"
+    [ -n "$host" ] || die "Ein Token wird nur für https-Repositories unterstützt ($1)"
+    valid_token "$GIT_TOKEN" || die "Ungültiges Token (erlaubt: A-Z a-z 0-9 _ . ~ -)"
+    [[ "$GIT_USER" =~ ^[A-Za-z0-9_.-]{1,64}$ ]] || die "Ungültiger Token-Benutzer"
+    ( umask 077; printf 'https://%s:%s@%s\n' "$GIT_USER" "$GIT_TOKEN" "$host" > "$CRED_FILE.tmp" )
+    chown root:root "$CRED_FILE.tmp"
+    chmod 600 "$CRED_FILE.tmp"
+    mv -f "$CRED_FILE.tmp" "$CRED_FILE"
+    echo "Zugriffstoken hinterlegt in $CRED_FILE (nur root lesbar)"
+}
+use_git_credentials() {  # configure the checkout to use the stored token for all fetches
+    if [ -f "$CRED_FILE" ]; then
+        git -C "$APP_DIR" config --replace-all credential.helper "store --file=$CRED_FILE"
+    fi
+}
+git_cred() {  # git with the stored token (if any)
+    if [ -f "$CRED_FILE" ]; then
+        git -c credential.helper= -c "credential.helper=store --file=$CRED_FILE" "$@"
+    else
+        git "$@"
+    fi
+}
+ask_token() {  # interactive fallback when the repository needs authentication
+    [ -t 0 ] && [ "$ASSUME_YES" != "1" ] || return 1
+    c_yellow "Das Repository ist nicht öffentlich erreichbar. Bitte ein Zugriffstoken mit Leserechten eingeben"
+    c_yellow "(GitHub: Fine-grained Token, Repository-Zugriff nur auf dieses Repo, Contents: Read-only)."
+    local t=""
+    read -r -s -p "Token (leer = abbrechen): " t; echo
+    [ -n "$t" ] || return 1
+    GIT_TOKEN="$t"
+}
+
+take_url_creds "$REPO_URL"
+REPO_URL="$(url_strip_creds "$REPO_URL")"
+[ -n "$GIT_TOKEN" ] && write_git_credentials "$REPO_URL"
+
 if [ -d "$APP_DIR/.git" ]; then
     echo "Vorhandene Installation gefunden - aktualisiere auf origin/$BRANCH"
+    origin="$(git -C "$APP_DIR" config --get remote.origin.url || echo "$REPO_URL")"
+    if [ "$origin" != "$(url_strip_creds "$origin")" ]; then
+        # older installation with the token inside the remote URL: move it to the credential store
+        take_url_creds "$origin"
+        origin="$(url_strip_creds "$origin")"
+        git -C "$APP_DIR" remote set-url origin "$origin"
+        [ -n "$GIT_TOKEN" ] && write_git_credentials "$origin"
+    elif [ -n "$GIT_TOKEN" ] && [ "$(url_host "$origin")" != "$(url_host "$REPO_URL")" ]; then
+        write_git_credentials "$origin"
+    fi
+    use_git_credentials
     if git -C "$APP_DIR" fetch --quiet origin "$BRANCH"; then
         git -C "$APP_DIR" reset --quiet --hard "origin/$BRANCH"
     else
         c_yellow "origin/$BRANCH konnte nicht geholt werden - vorhandener Programmstand wird beibehalten."
+        [ -f "$CRED_FILE" ] || c_yellow "Privates Repository? Installation mit --token TOKEN wiederholen."
     fi
 elif [ -n "$SCRIPT_DIR" ] && [ -d "$SCRIPT_DIR/.git" ] && [ -f "$SCRIPT_DIR/servermanager/__init__.py" ] \
         && [ "$SCRIPT_DIR" != "$APP_DIR" ]; then
     echo "Installiere aus lokalem Checkout $SCRIPT_DIR"
     git clone --quiet --branch "$BRANCH" "$SCRIPT_DIR" "$APP_DIR" 2>/dev/null || git clone --quiet "$SCRIPT_DIR" "$APP_DIR"
     origin="$(git -C "$SCRIPT_DIR" config --get remote.origin.url || echo "$REPO_URL")"
+    case "$origin" in /*|file://*) origin="$REPO_URL" ;; esac
+    if [ "$origin" != "$(url_strip_creds "$origin")" ]; then
+        take_url_creds "$origin"
+        origin="$(url_strip_creds "$origin")"
+    fi
     git -C "$APP_DIR" remote set-url origin "$origin"
-    git -C "$APP_DIR" fetch --quiet origin "$BRANCH" 2>/dev/null || c_yellow "Hinweis: origin/$BRANCH nicht erreichbar - Updates prüfen!"
+    if [ -n "$GIT_TOKEN" ] && { [ ! -f "$CRED_FILE" ] || [ "$(url_host "$origin")" != "$(url_host "$REPO_URL")" ]; }; then
+        write_git_credentials "$origin"
+    fi
+    use_git_credentials
+    if ! git -C "$APP_DIR" fetch --quiet origin "$BRANCH" 2>/dev/null; then
+        if [ ! -f "$CRED_FILE" ] && ask_token; then
+            write_git_credentials "$origin"
+            use_git_credentials
+        fi
+        git -C "$APP_DIR" fetch --quiet origin "$BRANCH" 2>/dev/null \
+            || c_yellow "Hinweis: origin/$BRANCH nicht erreichbar - Updates prüfen (privates Repository: --token angeben)!"
+    fi
 else
-    git clone --quiet --branch "$BRANCH" "$REPO_URL" "$APP_DIR" || die "Repository $REPO_URL konnte nicht geklont werden"
+    if ! git_cred clone --quiet --branch "$BRANCH" "$REPO_URL" "$APP_DIR"; then
+        rm -rf "$APP_DIR"
+        if ask_token; then
+            write_git_credentials "$REPO_URL"
+            git_cred clone --quiet --branch "$BRANCH" "$REPO_URL" "$APP_DIR" \
+                || { rm -rf "$APP_DIR"; die "Repository $REPO_URL konnte auch mit Token nicht geklont werden (Token-Rechte/Branch prüfen)"; }
+        else
+            die "Repository $REPO_URL konnte nicht geklont werden (privates Repository: --token TOKEN angeben)"
+        fi
+    fi
+    use_git_credentials
 fi
 chown -R root:root "$APP_DIR"
 chmod 755 "$APP_DIR"/bin/*
@@ -362,6 +464,10 @@ c_green " Servermanager wurde installiert."
 c_green "=================================================================="
 echo " Adresse:      $BASE_URL"
 echo " $ADMIN_INFO"
+if [ -f "$CRED_FILE" ]; then
+    echo " Repository:   Zugriffstoken hinterlegt in $CRED_FILE (für Updates;"
+    echo "               ändern unter Administration > Update oder erneut mit --token installieren)"
+fi
 echo
 echo " Nächste Schritte:"
 echo "  1. Anmelden und unter Profil die Zwei-Faktor-Anmeldung einrichten."

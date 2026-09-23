@@ -246,8 +246,26 @@ def backups_restore_confirm():
 def update_page():
     running = g.db.execute(select(Job).where(Job.status == JOB_RUNNING)).scalars().all()
     return render_template("admin/update.html", info=selfupdate.current(), check=session.pop("update_check", None),
-                           log=selfupdate.log_text(), running=running,
+                           log=selfupdate.log_text(), running=running, token=selfupdate.token_status(),
                            last_check=settings.get(g.db, "state.update_checked"))
+
+
+@bp.post("/update/token")
+@admin_required
+def update_token():
+    remove = request.form.get("remove") == "1"
+    token = "" if remove else request.form.get("token", "")
+    if not remove and not token.strip():
+        flash("Bitte ein Token eingeben.", "warning")
+        return redirect(url_for("admin.update_page"))
+    try:
+        msg = selfupdate.set_token(token, request.form.get("token_user", ""))
+        audit(g.db, g.user, "update.token_remove" if remove else "update.token_set", "", ip=client_ip())
+        g.db.commit()
+        flash(msg or "Gespeichert.", "success")
+    except HelperError as exc:
+        flash(f"Token nicht gespeichert: {exc}", "danger")
+    return redirect(url_for("admin.update_page"))
 
 
 @bp.post("/update/check")

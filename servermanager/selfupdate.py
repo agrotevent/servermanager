@@ -1,6 +1,7 @@
 """Self update from the git repository."""
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -51,6 +52,37 @@ def check() -> dict:
             if len(parts) == 3:
                 commits.append({"sha": parts[0], "date": parts[1], "subject": parts[2]})
     return {"head": head[:12], "remote": remote[:12], "available": bool(commits), "commits": commits}
+
+
+TOKEN_RE = re.compile(r"^[A-Za-z0-9_.~-]{8,255}$")
+TOKEN_USER_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+
+
+def token_status() -> dict:
+    """State of the stored repository access token (never the token itself)."""
+    cfg = get_config()
+    if not cfg.use_sudo:
+        return {"available": False}
+    try:
+        out = run_helper("git-token-status", timeout=15).strip()
+    except HelperError as exc:
+        return {"available": False, "error": str(exc)}
+    parts = out.split()
+    if not parts or parts[0] != "set":
+        return {"available": True, "set": False}
+    return {"available": True, "set": True, "user": parts[1] if len(parts) > 1 else "",
+            "host": parts[2] if len(parts) > 2 else "", "hint": parts[3] if len(parts) > 3 else ""}
+
+
+def set_token(token: str, user: str = "x-access-token") -> str:
+    """Store (and verify) a new access token; an empty token removes it."""
+    token = token.strip()
+    user = user.strip() or "x-access-token"
+    if token and not TOKEN_RE.match(token):
+        raise HelperError("Ungültiges Token (erlaubt: A-Z a-z 0-9 _ . ~ -, mind. 8 Zeichen)")
+    if not TOKEN_USER_RE.match(user):
+        raise HelperError("Ungültiger Token-Benutzer")
+    return run_helper("set-git-token", user, stdin=token + "\n", timeout=60).strip()
 
 
 def start() -> str:
