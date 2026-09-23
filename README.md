@@ -200,7 +200,7 @@ curl -fsSL https://sm.example.com/enroll/<token>.sh | bash -s -- --name "Webserv
 |---|---|
 | `--name NAME` | Anzeigename |
 | `--direct` | ohne WireGuard, direkte SSH-Verbindung |
-| `--address HOST` | Adresse für direkte Verbindungen (Standard: öffentliche IP laut Servermanager) |
+| `--address HOST` | Adresse für direkte Verbindungen – nur bei Tokens von Administratoren; sonst wird immer die Absenderadresse der Anfrage registriert |
 | `--force` | vorhandene Tunnel-Konfiguration überschreiben |
 
 Ablauf:
@@ -305,7 +305,7 @@ Zuweisung je System (unter *Benutzer* oder im System unter *Zugriff*):
 |---|---|
 | Lesen | Status, Updates, Protokolle ansehen |
 | Bedienen | zusätzlich Updates installieren, Dienste/Container/VMs steuern, Neustart, Wartung planen, Konfig-Backups erstellen |
-| Vollzugriff | zusätzlich beliebige Befehle, Release-Upgrade, Nextcloud-Core-Update, Zugangsdaten ändern, Backups herunterladen/wiederherstellen, System entfernen |
+| Vollzugriff | zusätzlich beliebige Befehle, Release-Upgrade, Nextcloud-Core-Update, Zugangsdaten ändern, Backups herunterladen/wiederherstellen, System entfernen (Adresse, Hostkey und geroutete Netze bleiben Administratoren vorbehalten) |
 
 Weitere Schutzmechanismen: Sperre nach 8 Fehlversuchen (15 Minuten), Drosselung je IP,
 Sitzungsablauf, Invalidierung aller Sitzungen bei Passwortänderung, Audit-Log aller Aktionen.
@@ -382,6 +382,13 @@ Logs: `journalctl -u servermanager-web -u servermanager-worker -f`
   geänderter Hostkey blockiert die Verbindung.
 - Der SSH-Schlüssel des Servermanagers wird auf den Zielen standardmäßig mit `from=` auf die
   Management-IP beschränkt; Clients im Management-Netz sind voneinander isoliert.
+- Weil dieser Schlüssel auf allen Systemen hinterlegt ist, dürfen nur Administratoren Adressen/Ports
+  ändern, Hostkeys zurücksetzen, geroutete Netze setzen und Systeme ohne Passwortnachweis mit dem
+  Schlüssel anlegen. Manager legen manuelle Systeme per Passwort (oder eigenem Schlüssel) an; der
+  Schlüssel wird dann nach erfolgreicher Passwort-Anmeldung installiert. Beim Enrollment ohne Tunnel
+  wird die tatsächliche Absenderadresse registriert.
+- Skripte, die per sudo als root laufen, werden vor der Ausführung in den Speicher bzw. in ein
+  root-eigenes Verzeichnis übernommen und können vom Anmeldebenutzer nicht mehr verändert werden.
 - Die Weboberfläche läuft als unprivilegierter Benutzer; nur `bin/sm-helper` darf per sudo als root
   laufen und prüft alle Eingaben (u. a. werden WireGuard-Konfigurationen mit Hooks wie `PostUp`
   abgelehnt).

@@ -29,7 +29,7 @@
     </div>
   </div>
   <div class="card">
-    <div class="card-head"><h2>Zielsysteme ({{ targets|length }})</h2></div>
+    <div class="card-head"><h2>Zielsysteme ({{ targets|length }})</h2>{% if hidden_targets %}<small class="muted">+ {{ hidden_targets }} ohne Ihre Berechtigung</small>{% endif %}</div>
     <div class="card-body flush">
       {% if targets %}<table class="table compact"><tbody>
         {% for t in targets %}<tr><td><a href="{{ url_for('systems.detail', system_id=t.id) }}">{{ t.name }}</a></td><td>{{ status_badge(t) }}</td></tr>{% endfor %}

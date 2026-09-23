@@ -254,6 +254,8 @@ JOB_FINAL = (JOB_SUCCESS, JOB_FAILED, JOB_CANCELLED, JOB_SKIPPED)
 
 class Job(Base):
     __tablename__ = "jobs"
+    # never reuse ids - job logs are stored in files named after the id
+    __table_args__ = {"sqlite_autoincrement": True}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     batch_id: Mapped[str] = mapped_column(String(64), default="", index=True)

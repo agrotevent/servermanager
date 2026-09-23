@@ -4,12 +4,12 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from flask import Blueprint, abort, flash, g, redirect, render_template, request, url_for
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from ... import access, notify, schedules as sched
 from ...core import audit
-from ...models import (LEVEL_FULL, LEVEL_OPERATE, RECURRENCES, REBOOT_POLICIES, Job, MaintenanceSchedule,
-                       ScheduleRun, utcnow)
+from ...models import (JOB_CANCELLED, JOB_QUEUED, JOB_RUNNING, LEVEL_FULL, LEVEL_OPERATE, RECURRENCES,
+                       REBOOT_POLICIES, Job, MaintenanceSchedule, ScheduleRun, utcnow)
 from ...modules import ParamError, schedulable_actions
 from ..auth import can, client_ip, login_required
 
@@ -197,8 +197,14 @@ def detail(schedule_id: int):
     for r in runs[:5]:
         run_jobs[r.id] = g.db.execute(select(Job).where(Job.run_id == r.id).order_by(Job.id)).scalars().all()
     targets = sched.target_systems(g.db, s)
+    if not g.user.is_admin:
+        visible = access.accessible_system_ids(g.db, g.user) or set()
+        hidden = len([t for t in targets if t.id not in visible])
+        targets = [t for t in targets if t.id in visible]
+    else:
+        hidden = 0
     return render_template("schedules/detail.html", s=s, upcoming=upcoming, runs=runs, run_jobs=run_jobs,
-                           targets=targets, describe=sched.describe, step_label=sched.step_label,
+                           targets=targets, hidden_targets=hidden, describe=sched.describe, step_label=sched.step_label,
                            REBOOT_POLICIES=REBOOT_POLICIES)
 
 
@@ -230,6 +236,12 @@ def run_now(schedule_id: int):
 def delete(schedule_id: int):
     s = _get(schedule_id)
     name = s.name
+    # queued jobs of unfinished runs would otherwise lose their run (and parallelism limit)
+    run_ids = [r.id for r in g.db.execute(select(ScheduleRun).where(ScheduleRun.schedule_id == s.id,
+                                                                    ScheduleRun.status == JOB_RUNNING)).scalars()]
+    if run_ids:
+        g.db.execute(update(Job).where(Job.run_id.in_(run_ids), Job.status == JOB_QUEUED)
+                     .values(status=JOB_CANCELLED, finished_at=utcnow(), summary="Wartungsplan gelöscht"))
     g.db.delete(s)
     audit(g.db, g.user, "schedule.delete", name, ip=client_ip())
     g.db.commit()

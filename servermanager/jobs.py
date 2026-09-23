@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from .config import get_config
@@ -59,9 +60,9 @@ def read_log(job_id: int, offset: int = 0, limit: int = 256 * 1024) -> tuple[str
 
 
 def request_cancel(db: Session, job: Job) -> None:
-    if job.status == JOB_QUEUED:
-        job.status = JOB_CANCELLED
-        job.finished_at = utcnow()
-        job.summary = "Vor dem Start abgebrochen"
-    else:
-        job.cancel_requested = True
+    # conditional update: the worker may claim the job at the same moment
+    res = db.execute(update(Job).where(Job.id == job.id, Job.status == JOB_QUEUED)
+                     .values(status=JOB_CANCELLED, finished_at=utcnow(), summary="Vor dem Start abgebrochen"))
+    if res.rowcount != 1:
+        db.execute(update(Job).where(Job.id == job.id).values(cancel_requested=True))
+    db.expire(job)

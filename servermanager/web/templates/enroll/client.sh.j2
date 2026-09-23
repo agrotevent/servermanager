@@ -183,6 +183,7 @@ if [ "$SM_MODE" = "wireguard" ]; then
     [[ "$ALLOWED" =~ ^[0-9./,\ ]+$ ]] || die "Ungültige AllowedIPs"
     [[ "$KEEPALIVE" =~ ^[0-9]+$ && "$MTU" =~ ^[0-9]+$ ]] || die "Ungültige Parameter"
     [[ -z "$ROUTED" || "$ROUTED" =~ ^[0-9./\ ]+$ ]] || die "Ungültige Subnetze"
+    [[ "$MGMT_NET" =~ ^[0-9.]+/[0-9]+$ ]] || die "Ungültiges Management-Netz"
 
     POSTUP=""
     if [ -n "$ROUTED" ]; then

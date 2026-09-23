@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from ... import access, inventory, security, sshkeys, sysbackup, wireguard
 from ...core import audit
-from ...jobs import enqueue, new_batch_id
+from ...jobs import enqueue, log_path as job_log_path, new_batch_id
 from ...mikrotik import MikroTikError
 from ...models import (AUTH_KEY, AUTH_METHODS, AUTH_PASSWORD, CONN_DIRECT, CONN_WIREGUARD, LEVEL_FULL,
                        LEVEL_OPERATE, LEVEL_VIEW, LEVELS, SUDO_MODES, SUDO_NONE, SUDO_PASSWORD, Job, System,
@@ -139,6 +139,12 @@ def _form_to_system(system: System, form, is_new: bool) -> list[str]:
         errors.append("Für die Passwort-Anmeldung muss ein Passwort hinterlegt werden.")
     if system.sudo_mode == SUDO_PASSWORD and not (system.sudo_password_enc or system.password_enc):
         errors.append("Für 'sudo mit Passwort' muss ein sudo- oder Login-Passwort hinterlegt werden.")
+    if not g.user.is_admin and not system.private_key_enc and system.auth_method != AUTH_PASSWORD:
+        # The servermanager key is trusted by every managed host. Without this check a non-admin could
+        # point a system at a host he has no access to and log in with that key.
+        errors.append("Nur Administratoren dürfen Systeme mit dem Servermanager-Schlüssel ohne Nachweis anlegen: "
+                      "bitte die Anmeldung per Passwort wählen (der Schlüssel kann danach automatisch installiert "
+                      "werden) oder einen eigenen privaten Schlüssel hinterlegen.")
     types = [t for t in form.getlist("types") if t in MODULES]
     system.types = ["debian"] + [t for t in MODULES if t in types and t != "debian"]
     system.nextcloud_path = form.get("nextcloud_path", "").strip()
@@ -197,11 +203,21 @@ def edit(system_id: int):
     system = get_system_or_403(system_id, LEVEL_FULL)
     if request.method == "POST":
         old_routed = system.routed_subnet_list
+        old_conn = (system.host, system.port, system.connection, system.auth_method, system.private_key_enc)
         errors = _form_to_system(system, request.form, False)
+        if not g.user.is_admin:
+            # changing the target address of a key-authenticated system would allow to reach
+            # arbitrary hosts with the servermanager key
+            if (system.host, system.port, system.connection) != old_conn[:3]:
+                errors.append("Adresse, Port und Verbindungsart können nur von Administratoren geändert werden.")
+            errors = [e for e in errors if not e.startswith("Nur Administratoren dürfen Systeme")]
+            if system.auth_method != old_conn[3] and not system.private_key_enc and system.auth_method != AUTH_PASSWORD:
+                errors.append("Die Umstellung auf den Servermanager-Schlüssel erfolgt über 'SSH-Schlüssel installieren'.")
         routed: list[str] = old_routed
-        if system.connection == CONN_WIREGUARD:
+        if system.connection == CONN_WIREGUARD and g.user.is_admin:
             try:
-                routed = wireguard.parse_subnets(request.form.get("routed_subnets", ""))
+                routed = wireguard.validate_routed(g.db, wireguard.parse_subnets(request.form.get("routed_subnets", "")),
+                                                   exclude_system_id=system.id)
             except ValueError as exc:
                 errors.append(str(exc))
         dup = g.db.execute(select(System.id).where(System.name == system.name, System.id != system.id)).first()
@@ -242,6 +258,8 @@ def delete(system_id: int):
             flash(f"WireGuard-Peer konnte nicht entfernt werden: {exc}", "warning")
     for b in g.db.execute(select(SystemBackup).where(SystemBackup.system_id == system.id)).scalars():
         sysbackup.file_path(b).unlink(missing_ok=True)
+    for (job_id,) in g.db.execute(select(Job.id).where(Job.system_id == system.id)).all():
+        job_log_path(job_id).unlink(missing_ok=True)
     name = system.name
     g.db.delete(system)
     audit(g.db, g.user, "system.delete", name, ip=client_ip())
@@ -356,6 +374,8 @@ def deploy_key(system_id: int):
 @login_required
 def hostkey_reset(system_id: int):
     system = get_system_or_403(system_id, LEVEL_FULL)
+    if not g.user.is_admin:
+        abort(403)
     system.host_keys = ""
     audit(g.db, g.user, "system.hostkey_reset", system.name, ip=client_ip())
     g.db.commit()

@@ -60,6 +60,7 @@ def create_backup(conn: Connection, db: Session, system: System, paths: list[str
     say(f"Backup erstellt: {size / 1024 / 1024:.1f} MB\n")
     b = SystemBackup(system_id=system.id, job_id=job_id, filename=fname, size=size, paths=" ".join(paths), note=note)
     db.add(b)
+    db.flush()
     prune(db, system.id, int(settings.get(db, "system_backup.keep") or 10))
     return b
 

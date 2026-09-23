@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 Logger = Callable[[str], None]
 
 
-def _store_host_key(system_id: int, key_line: str) -> None:
+def store_host_key(system_id: int, key_line: str) -> None:
     with session_scope() as db:
         s = db.get(System, system_id)
         if s is not None and not s.host_keys:
@@ -33,7 +33,7 @@ def connect(system: System, timeout: Optional[int] = None) -> Connection:
             timeout = int(settings.get(db, "ssh.connect_timeout"))
     target = target_from_system(system, connect_timeout=timeout)
     sid = system.id
-    conn = Connection(target, on_new_host_key=lambda line: _store_host_key(sid, line))
+    conn = Connection(target, on_new_host_key=lambda line: store_host_key(sid, line))
     return conn.connect()
 
 

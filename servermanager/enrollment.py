@@ -44,7 +44,8 @@ def create_token(db: Session, user: User, *, name: str, connection: str, ssh_use
         name=name.strip()[:128], token_hash=security.token_hash(token), token_hint=token[:6],
         connection=connection if connection in (CONN_WIREGUARD, CONN_DIRECT) else CONN_WIREGUARD,
         ssh_user_mode=ssh_user_mode if ssh_user_mode in ("root", "dedicated") else "root",
-        system_types=[t for t in types if t in MODULES], routed_subnets=" ".join(wireguard.parse_subnets(routed)),
+        system_types=[t for t in types if t in MODULES],
+        routed_subnets=" ".join(wireguard.validate_routed(db, wireguard.parse_subnets(routed))),
         tags=tags.strip()[:255], assign=assign, bind_system_id=bind_system_id,
         max_uses=max(1, min(max_uses, 1000)), expires_at=utcnow() + timedelta(hours=max(1, min(valid_hours, 24 * 90))),
         created_by=user.id,
@@ -124,6 +125,8 @@ def enroll(db: Session, token: str, form: dict, remote_addr: str) -> dict:
         raise EnrollError("Ungültiger SSH-Port") from exc
 
     connection = row.connection
+    creator = db.get(User, row.created_by) if row.created_by else None
+    trusted = bool(creator and creator.is_admin)
     if form.get("mode") == CONN_DIRECT:
         connection = CONN_DIRECT
     wg_pub = _clean(form.get("wg_public_key"), 64)
@@ -204,9 +207,17 @@ def enroll(db: Session, token: str, form: dict, remote_addr: str) -> dict:
             "SM_SSH_FROM": settings.get(db, "wg.sm_ip") if settings.get(db, "enroll.restrict_ssh_source") else "",
         })
     else:
-        address = _clean(form.get("address"), 255) or remote_addr
+        # Only tokens of administrators may register an arbitrary address. Otherwise the system is
+        # registered with the address the request came from: the servermanager key must never be
+        # pointed at a host the token holder does not control.
+        address = (_clean(form.get("address"), 255) if trusted else "") or remote_addr
         if not address or not re.match(r"^[A-Za-z0-9.:-]+$", address):
             raise EnrollError("Keine gültige Adresse für die direkte Verbindung")
+        dup = db.execute(select(System.id).where(System.host == address, System.port == ssh_port,
+                                                 System.id != system.id)).first()
+        if dup and not trusted:
+            raise EnrollError("Unter dieser Adresse ist bereits ein System registriert - bitte einen Administrator "
+                              "ein erneutes Enrollment für dieses System erstellen lassen.", 409)
         if old_refs:
             try:
                 wireguard.remove_refs(wireguard.api(db), old_refs)

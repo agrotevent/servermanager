@@ -25,7 +25,7 @@ from .jobs import log_path
 from .models import (AUTH_KEY, JOB_CANCELLED, JOB_FAILED, JOB_FINAL, JOB_QUEUED, JOB_RUNNING, JOB_SKIPPED,
                      JOB_SUCCESS, STATUS_ERROR, STATUS_ONLINE, STATUS_PENDING, Job, ScheduleRun, System, utcnow)
 from .modules import ParamError, resolve_action
-from .ssh import CancelledError, Connection, SSHError, target_from_system
+from .ssh import DETACHED_DIED, CancelledError, Connection, SSHError, target_from_system
 
 log = logging.getLogger("servermanager.worker")
 
@@ -132,8 +132,8 @@ class Worker:
         with session_scope() as db:
             for job in db.execute(select(Job).where(Job.status == JOB_RUNNING)).scalars():
                 remote = job.remote or {}
-                if remote.get("detached"):
-                    log.info("job %s: re-attaching to detached remote process", job.id)
+                if remote.get("detached") or remote.get("reboot"):
+                    log.info("job %s: resuming after worker restart", job.id)
                     job.status = JOB_QUEUED  # will be claimed again and resumed
                 else:
                     job.status = JOB_FAILED
@@ -151,14 +151,15 @@ class Worker:
             return
         now = utcnow()
         with session_scope() as db:
-            queued = db.execute(select(Job).where(Job.status == JOB_QUEUED).order_by(Job.id).limit(200)).scalars().all()
+            queued = db.execute(select(Job).where(Job.status == JOB_QUEUED).order_by(Job.id).limit(1000)).scalars().all()
             run_counts: dict[int, int] = {}
             for rid, in db.execute(select(Job.run_id).where(Job.status == JOB_RUNNING, Job.run_id.is_not(None))):
                 run_counts[rid] = run_counts.get(rid, 0) + 1
             for job in queued:
                 if free <= 0:
                     break
-                if job.not_after and now > job.not_after and not (job.remote or {}).get("detached"):
+                resuming = bool((job.remote or {}).get("detached") or (job.remote or {}).get("reboot"))
+                if job.not_after and now > job.not_after and not resuming:
                     job.status = JOB_SKIPPED
                     job.finished_at = now
                     job.summary = "Wartungsfenster überschritten - nicht gestartet"
@@ -191,10 +192,12 @@ class Worker:
                 job = db.get(Job, job_id)
                 kind, payload = job.kind, dict(job.payload or {})
                 system_id = job.system_id
-                resumed = bool((job.remote or {}).get("detached"))
+                resumed = bool((job.remote or {}).get("detached") or (job.remote or {}).get("reboot"))
             if resumed:
                 ctx.say("Worker neu gestartet - verbinde mich wieder mit dem laufenden Prozess ...")
             else:
+                ctx.fh.truncate(0)
+                ctx._line_start = True
                 ctx.say(f"Job #{job_id} gestartet ({kind})")
             handler = getattr(self, f"job_{kind}", None)
             if handler is None:
@@ -278,9 +281,11 @@ class Worker:
               timeout: int) -> tuple[int, Connection]:
         det = state["detached"]
         key, offset = det["key"], int(det.get("offset", 0))
-        started = time.monotonic()
+        if "started" not in det:
+            det["started"] = time.time()   # wall clock: survives worker restarts
+            ctx.save_remote(state)
         last_ok = time.monotonic()
-        cancel_sent = False
+        cancel_sent = timed_out = False
         while True:
             if self.stop.is_set():
                 if conn:
@@ -300,18 +305,25 @@ class Worker:
                     conn.cleanup_detached(key)
                     state.pop("detached", None)
                     ctx.save_remote(state)
+                    if rc == DETACHED_DIED:
+                        raise JobFailed("Der Prozess auf dem Zielsystem wurde unerwartet beendet (z. B. durch einen "
+                                        "Neustart oder Absturz des Systems) - siehe Protokoll.")
+                    if timed_out:
+                        raise JobFailed(f"Zeitlimit von {timeout // 60} Minuten überschritten - Prozess beendet")
                     if cancel_sent:
                         raise CancelledError("Abgebrochen")
                     return rc, conn
                 if len(data) >= POLL_LIMIT:
                     continue
-                if not cancel_sent and (ctx.cancelled() or time.monotonic() - started > timeout):
-                    if not ctx.cancelled():
-                        ctx.say(f"Zeitlimit von {timeout // 60} Minuten überschritten - beende Prozess")
-                    else:
+                if not cancel_sent:
+                    if ctx.cancelled():
                         ctx.say("Abbruch angefordert - beende Prozess auf dem Zielsystem")
-                    conn.cancel_detached(key)
-                    cancel_sent = True
+                        conn.cancel_detached(key)
+                        cancel_sent = True
+                    elif time.time() - det["started"] > timeout:
+                        ctx.say(f"Zeitlimit von {timeout // 60} Minuten überschritten - beende Prozess")
+                        conn.cancel_detached(key)
+                        cancel_sent = timed_out = True
             except SSHError as exc:
                 if conn:
                     conn.close()
@@ -324,22 +336,33 @@ class Worker:
                 continue
             self.stop.wait(2)
 
-    def _reboot(self, ctx: JobContext, conn: Connection, system: System) -> Connection:
+    def _reboot(self, ctx: JobContext, conn: Connection, system: System, state: dict, phase: str,
+                step: int = 0) -> Connection:
         boot_before = conn.exec("cat /proc/sys/kernel/random/boot_id", timeout=20).stdout.strip()
         ctx.say("Neustart wird ausgelöst ...")
         conn.exec("systemd-run --on-active=5 --timer-property=AccuracySec=1s /bin/systemctl reboot "
                   ">/dev/null 2>&1 || (nohup sh -c 'sleep 5; /sbin/reboot' >/dev/null 2>&1 &)", root=True, timeout=30)
         conn.close()
-        started = time.monotonic()
-        self.stop.wait(30)
-        while time.monotonic() - started < 20 * 60:
+        state["reboot"] = {"boot_before": boot_before, "since": time.time(), "phase": phase, "step": step}
+        ctx.save_remote(state)
+        return self._await_reboot(ctx, system, state)
+
+    def _await_reboot(self, ctx: JobContext, system: System, state: dict) -> Connection:
+        """Wait until the system is back with a new boot id (resumable after a worker restart)."""
+        rb = state["reboot"]
+        self.stop.wait(max(0.0, 30 - (time.time() - rb["since"])))
+        while time.time() - rb["since"] < 20 * 60:
+            if self.stop.is_set():
+                raise Interrupted()
             if ctx.cancelled():
                 raise CancelledError("Abgebrochen")
             try:
                 new = inventory.connect(system, timeout=10)
                 boot_now = new.exec("cat /proc/sys/kernel/random/boot_id", timeout=20).stdout.strip()
-                if boot_now and boot_now != boot_before:
-                    ctx.say(f"System ist wieder erreichbar (nach {int(time.monotonic() - started)} s).")
+                if boot_now and boot_now != rb["boot_before"]:
+                    ctx.say(f"System ist wieder erreichbar (nach {int(time.time() - rb['since'])} s).")
+                    state.pop("reboot", None)
+                    ctx.save_remote(state)
                     return new
                 new.close()
             except SSHError:
@@ -363,8 +386,23 @@ class Worker:
         start_step = int(state.get("next_step", 0))
         conn: Optional[Connection] = None
         failures: list[str] = []
+        final_reboot_done = False
         try:
-            if state.get("detached"):
+            if state.get("reboot"):
+                # the worker was restarted while waiting for a reboot to finish
+                rb = state["reboot"]
+                ctx.say("Warte weiter darauf, dass das System nach dem Neustart erreichbar ist ...")
+                conn = self._await_reboot(ctx, system, state)
+                if rb.get("phase") == "final":
+                    start_step = len(steps)
+                    final_reboot_done = True
+                else:
+                    idx = int(rb.get("step", start_step))
+                    self._step_result(ctx, steps[idx] if idx < len(steps) else {}, 0, failures)
+                    start_step = idx + 1
+                state["next_step"] = start_step
+                ctx.save_remote(state)
+            elif state.get("detached"):
                 # resume a detached step after a worker restart
                 idx = int(state["detached"].get("step", start_step))
                 code, conn = self._tail(ctx, None, system, state, 6 * 3600)
@@ -405,12 +443,12 @@ class Worker:
                     break
 
             policy = payload.get("reboot_policy", "never")
-            if not failures and policy in ("always", "if_required"):
+            if not failures and not final_reboot_done and policy in ("always", "if_required"):
                 system = self._refresh(ctx, conn, system_id)
                 needed = system.fact.get("reboot_required")
                 if policy == "always" or needed:
                     ctx.say("Neustart " + ("(immer)" if policy == "always" else "erforderlich") + " ...")
-                    conn = self._reboot(ctx, conn, system)
+                    conn = self._reboot(ctx, conn, system, state, "final")
                 else:
                     ctx.say("Kein Neustart erforderlich.")
             try:
@@ -450,13 +488,13 @@ class Worker:
             return conn
         params = action.clean_params(step.get("params") or {})
         if action.special == "reboot":
-            conn = self._reboot(ctx, conn, system)
+            conn = self._reboot(ctx, conn, system, state, "step", idx)
             self._step_result(ctx, step, 0, failures)
             return conn
         if action.special == "reboot_if_required":
             system = self._refresh(ctx, conn, system.id)
             if system.fact.get("reboot_required"):
-                conn = self._reboot(ctx, conn, system)
+                conn = self._reboot(ctx, conn, system, state, "step", idx)
             else:
                 ctx.say("Kein Neustart erforderlich.")
             self._step_result(ctx, step, 0, failures)
@@ -530,7 +568,13 @@ if grep -qF '{blob}' "$HOME/.ssh/authorized_keys"; then echo "Schlüssel bereits
   echo '{pub}' >> "$HOME/.ssh/authorized_keys" && echo "Schlüssel hinzugefügt"; fi
 chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
 """
-        with self._connect(ctx, system) as conn:
+        if not system.password_enc:
+            raise JobFailed("Für die Installation des Schlüssels wird ein hinterlegtes Passwort benötigt")
+        # authenticate with the password only - the servermanager key must not be used to prove access
+        pw_target = target_from_system(system)
+        pw_target.pkey = None
+        ctx.say(f"Verbinde mit {system.username}@{system.host}:{system.port} (Passwort-Anmeldung) ...")
+        with Connection(pw_target, on_new_host_key=lambda line: inventory.store_host_key(system.id, line)) as conn:
             code = conn.run_script(script, root=False, on_output=ctx.write, timeout=60)
             if code != 0:
                 raise JobFailed("Schlüssel konnte nicht installiert werden")

@@ -182,8 +182,7 @@ def tick(db: Session, now: Optional[datetime] = None) -> int:
                                                        MaintenanceSchedule.next_run_at <= now)).scalars().all()
     for s in due:
         late = (now - s.next_run_at).total_seconds() / 60
-        window = s.window_minutes or 180
-        if late > window:
+        if s.window_minutes and late > s.window_minutes:
             log.warning("schedule %s missed (%.0f min late) - skipping this run", s.id, late)
             s.last_status = "missed"
         else:

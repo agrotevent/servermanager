@@ -29,9 +29,15 @@
   <div class="card">
     <div class="card-head"><h2>Verbindung</h2></div>
     <div class="card-body form-grid">
+      {% if is_new or user.is_admin %}
       {{ select('Verbindungsart', 'connection', CONNECTIONS, system.connection, help='WireGuard-Systeme werden normalerweise per Enrollment-Skript angelegt.') }}
       {{ field('Host / IP-Adresse', 'host', system.host, required=True, placeholder='server.example.com oder 203.0.113.10') }}
       {{ field('SSH-Port', 'port', system.port, type='number', attrs='min="1" max="65535"') }}
+      {% else %}
+      <input type="hidden" name="connection" value="{{ system.connection }}"><input type="hidden" name="host" value="{{ system.host }}"><input type="hidden" name="port" value="{{ system.port }}">
+      <div class="field"><label>Verbindung</label><input type="text" value="{{ CONNECTIONS[system.connection] }}: {{ system.host }}:{{ system.port }}" disabled>
+        <span class="help">Adresse und Port können nur Administratoren ändern.</span></div>
+      {% endif %}
       {{ field('Benutzer', 'username', system.username, help='root oder ein Benutzer mit sudo-Rechten') }}
       {{ select('Anmeldung', 'auth_method', auth_methods, system.auth_method) }}
       {{ select('Root-Rechte', 'sudo_mode', sudo_modes, system.sudo_mode, help='Nur relevant, wenn der Benutzer nicht root ist.') }}
@@ -42,7 +48,7 @@
         <div class="alert info mb-1"><strong>Schlüssel-Anmeldung:</strong> Standardmäßig wird der Schlüssel des Servermanagers verwendet. Dieser öffentliche Schlüssel muss in <code>~/.ssh/authorized_keys</code> des Zielsystems stehen:
           <div class="codebox mt-1" id="smkey">{{ sm_pubkey }}</div>
           <button type="button" class="btn xs mt-1" data-copy="#smkey">Kopieren</button>
-          {% if is_new %}Alternativ unten "Schlüssel automatisch installieren" wählen (Passwort erforderlich).{% endif %}
+          {% if is_new %}Alternativ Anmeldung "Passwort" wählen und unten "Schlüssel automatisch installieren" aktivieren.{% if not user.is_admin %} <strong>Als Manager ist beim Anlegen ein Passwort oder ein eigener Schlüssel erforderlich.</strong>{% endif %}{% endif %}
         </div>
       </div>
       {{ textarea('Eigener privater Schlüssel (optional)', 'private_key', '', help=('Ein eigener Schlüssel ist hinterlegt - leer lassen, um ihn beizubehalten.' if system.private_key_enc else 'Nur falls statt des Servermanager-Schlüssels ein vorhandener Schlüssel genutzt werden soll (OpenSSH/PEM).'), rows=3, placeholder='-----BEGIN OPENSSH PRIVATE KEY-----') }}
@@ -50,7 +56,9 @@
       {% if not is_new and system.private_key_enc %}<div>{{ checkbox('Eigenen Schlüssel entfernen', 'clear_key') }}</div>{% endif %}
       {% if not is_new and system.connection == 'wireguard' %}
         <div class="field"><label>WireGuard-IP</label><input type="text" value="{{ system.wg_ip }}" disabled></div>
+        {% if user.is_admin %}
         {{ field('Geroutete Netze hinter dem System', 'routed_subnets', system.routed_subnets, help='z. B. 192.168.50.0/24 - Routen und Peer werden auf dem MikroTik angepasst.') }}
+        {% endif %}
       {% endif %}
     </div>
   </div>

@@ -336,3 +336,24 @@ def update_peer_routes(db: Session, system: System, routed: list[str]) -> None:
     system.mt_refs = {}
     provision_peer(db, system, system.wg_public_key, routed, mt)
     system.routed_subnets = " ".join(routed)
+
+
+def validate_routed(db: Session, nets: list[str], exclude_system_id: Optional[int] = None) -> list[str]:
+    """Reject routes that would break the management network (default route, overlaps)."""
+    mgmt = mgmt_network(db)
+    others: list[tuple[str, ipaddress.IPv4Network]] = []
+    for s in db.execute(select(System).where(System.connection == CONN_WIREGUARD)).scalars():
+        if s.id == exclude_system_id:
+            continue
+        for n in parse_subnets(s.routed_subnets or ""):
+            others.append((s.name, ipaddress.ip_network(n)))
+    for n in nets:
+        net = ipaddress.ip_network(n)
+        if net.prefixlen < 8:
+            raise ValueError(f"Netz {n} ist zu groß (mindestens /8).")
+        if net.overlaps(mgmt):
+            raise ValueError(f"Netz {n} überschneidet sich mit dem Management-Netz {mgmt}.")
+        for name, other in others:
+            if net.overlaps(other):
+                raise ValueError(f"Netz {n} wird bereits über das System '{name}' geroutet ({other}).")
+    return nets

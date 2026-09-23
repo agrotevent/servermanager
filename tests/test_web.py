@@ -262,3 +262,93 @@ def test_user_management(app, setup, db):
     r = admin.post(f"/users/{me.id}", data={"csrf_token": admin.csrf, "role": "user", "active": "1"})
     db.refresh(me)
     assert me.role == "admin"
+
+
+def test_manager_cannot_use_global_key_for_new_systems(app, setup, db):
+    make_user(db, "mgr1", "manager")
+    mgr = login(app, "mgr1")
+    base = {"csrf_token": mgr.csrf, "name": "fremd", "host": "192.0.2.99", "port": "22", "username": "root",
+            "sudo_mode": "none", "connection": "direct", "backup_paths": "/etc"}
+    r = mgr.post("/systems/new", data=dict(base, auth_method="key"))
+    assert r.status_code == 200 and "Nur Administratoren" in r.text
+    assert db.query(System).filter_by(name="fremd").count() == 0
+    r = mgr.post("/systems/new", data=dict(base, auth_method="password", password="Ziel-Passwort-1",
+                                           deploy_key="1"))
+    assert r.status_code == 302
+    s = db.query(System).filter_by(name="fremd").one()
+    assert s.auth_method == "password"
+    # the manager got full access to his own system
+    assert db.query(SystemAccess).filter_by(system_id=s.id).one().level == "full"
+
+
+def test_full_user_cannot_retarget_system(app, setup, db):
+    u = make_user(db, "full1", "user")
+    db.add(SystemAccess(user_id=u.id, system_id=setup["s2"], level="full"))
+    db.commit()
+    c = login(app, "full1")
+    r = c.post(f"/systems/{setup['s2']}/edit", data={
+        "csrf_token": c.csrf, "name": "srv2", "host": "198.51.100.66", "port": "22", "username": "root",
+        "auth_method": "key", "sudo_mode": "none", "connection": "direct", "backup_paths": "/etc"})
+    assert r.status_code == 200 and "Administratoren" in r.text
+    assert db.get(System, setup["s2"]).host == "192.0.2.11"
+    assert c.post(f"/systems/{setup['s2']}/hostkey-reset", data={"csrf_token": c.csrf}).status_code == 403
+    # unchanged address: other fields may be edited
+    r = c.post(f"/systems/{setup['s2']}/edit", data={
+        "csrf_token": c.csrf, "name": "srv2", "host": "192.0.2.11", "port": "22", "username": "root",
+        "auth_method": "key", "sudo_mode": "none", "connection": "direct", "backup_paths": "/etc /root",
+        "description": "neu"})
+    assert r.status_code == 302
+    db.expire_all()
+    assert db.get(System, setup["s2"]).backup_paths == "/etc /root"
+
+
+def test_routed_subnet_validation(db):
+    from servermanager import wireguard
+    settings.set(db, "wg.network", "10.66.0.0/24")
+    db.add(System(name="router-a", connection="wireguard", wg_ip="10.66.0.50", routed_subnets="172.20.0.0/16"))
+    db.flush()
+    for bad in ["0.0.0.0/0", "10.66.0.0/25", "172.20.5.0/24"]:
+        with pytest.raises(ValueError):
+            wireguard.validate_routed(db, wireguard.parse_subnets(bad))
+    assert wireguard.validate_routed(db, ["192.168.77.0/24"]) == ["192.168.77.0/24"]
+    db.rollback()
+
+
+def test_direct_enrollment_uses_request_address_for_non_admin_tokens(app, setup, db):
+    from servermanager import enrollment
+    mgr = make_user(db, "mgr2", "manager")
+    token, _ = enrollment.create_token(db, mgr, name="", connection="direct", ssh_user_mode="root", types=[],
+                                       routed="", tags="", assign=[], valid_hours=1, max_uses=5)
+    db.commit()
+    hk = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIlfoNZ+m5PzsrZ3cPfG9A3lBv6Zj3y4vMN8b6xq7x1A"
+    c = app.test_client()
+    r = c.post("/api/enroll", data={"token": token, "hostname": "evil.example.com", "host_keys": hk,
+                                    "address": "192.0.2.10", "ssh_port": "22"},
+               environ_base={"REMOTE_ADDR": "203.0.113.5"})
+    assert r.status_code == 200, r.text
+    sid = int(dict(line.split("=", 1) for line in r.text.strip().splitlines())["SM_SYSTEM_ID"])
+    s = db.get(System, sid)
+    db.refresh(s)
+    assert s.host == "203.0.113.5"  # not the requested 192.0.2.10
+    # a second registration for an already managed address is refused
+    r = c.post("/api/enroll", data={"token": token, "hostname": "evil2.example.com", "host_keys": hk,
+                                    "ssh_port": "22"}, environ_base={"REMOTE_ADDR": "203.0.113.5"})
+    assert r.status_code == 409
+
+
+def test_cancel_queued_job(app, setup, db):
+    from servermanager import jobs as jobs_mod
+    s = db.get(System, setup["s1"])
+    j = jobs_mod.enqueue(db, kind="check", title="x", system=s)
+    db.commit()
+    jobs_mod.request_cancel(db, j)
+    db.commit()
+    db.refresh(j)
+    assert j.status == "cancelled" and not j.cancel_requested
+    j2 = jobs_mod.enqueue(db, kind="check", title="y", system=s)
+    j2.status = "running"
+    db.commit()
+    jobs_mod.request_cancel(db, j2)
+    db.commit()
+    db.refresh(j2)
+    assert j2.status == "running" and j2.cancel_requested

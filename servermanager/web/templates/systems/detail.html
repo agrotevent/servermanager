@@ -246,8 +246,8 @@
       {% if system.host_keys %}
         <p>Gespeicherte Hostkeys (Schutz vor Man-in-the-Middle):</p>
         <ul class="list-plain">{% for line in system.host_keys.splitlines() %}<li class="mono break"><small>{{ line|fingerprint }}</small></li>{% endfor %}</ul>
-        <form method="post" action="{{ url_for('systems.hostkey_reset', system_id=system.id) }}" data-confirm="Hostkey zurücksetzen? Nur nach Neuinstallation des Systems oder geänderten SSH-Schlüsseln!">
-          {{ csrf() }}<button class="btn danger-outline sm mt-1">Hostkey zurücksetzen</button></form>
+        {% if user.is_admin %}<form method="post" action="{{ url_for('systems.hostkey_reset', system_id=system.id) }}" data-confirm="Hostkey zurücksetzen? Nur nach Neuinstallation des Systems oder geänderten SSH-Schlüsseln!">
+          {{ csrf() }}<button class="btn danger-outline sm mt-1">Hostkey zurücksetzen</button></form>{% endif %}
       {% else %}<p class="muted">Noch kein Hostkey gespeichert - er wird bei der nächsten Verbindung übernommen (Trust on first use).</p>{% endif %}
     </div>
   </div>
