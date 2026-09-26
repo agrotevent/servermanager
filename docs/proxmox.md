@@ -100,6 +100,20 @@ Ablauf des Jobs: Vorlage laden → Container anlegen → starten → auf die DHC
 fixieren → als System aufnehmen → veröffentlichen. Das Root-Passwort wird nach dem Anlegen aus dem
 Job entfernt.
 
+### Fehlgeschlagen? Wiederholen
+
+Bricht ein Schritt ab (z. B. keine DHCP-Adresse, Router oder Pangolin nicht erreichbar), zeigt der Job
+den Knopf **Wiederholen**. Die Wiederholung ist ein neuer Job mit denselben Angaben, der **ab dem
+fehlgeschlagenen Schritt** weitermacht – ein bereits angelegter Container wird nicht erneut angelegt,
+ein laufender nicht erneut gestartet. Jeder Job lässt sich einmal wiederholen; schlägt auch die
+Wiederholung fehl, hat sie wieder den Knopf. Wiederholen darf, wer Vollzugriff auf die
+Proxmox-Verbindung hat (und Systeme anlegen darf, wenn der Container als System aufgenommen wird).
+
+Ist der Container bereits als System aufgenommen, die Einrichtung aber unvollständig (z. B. SSH nicht
+erreichbar), hilft auf der System-Seite im Kasten *Proxmox-Gast* **Einrichtung wiederholen**: SSH-Schlüssel
+und Hostkeys werden über Proxmox erneut hinterlegt, ein fehlender SSH-Server installiert, die Adresse
+bei Bedarf aktualisiert und das System geprüft.
+
 ## Bestand übernehmen
 
 *Bestand übernehmen* listet alle Gäste mit IP, Bridge, Guest-Agent und Verwaltungsstatus. Ausgewählte

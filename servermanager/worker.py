@@ -21,7 +21,7 @@ from sqlalchemy import select, update
 from . import access, integrations, inventory, pve, schedules, security, settings, sshkeys, sysbackup
 from .core import audit, bootstrap, setup_logging
 from .db import session_scope
-from .jobs import log_path
+from .jobs import PHASE_LABELS, log_path
 from .models import (AUTH_KEY, CONN_DIRECT, JOB_CANCELLED, JOB_FAILED, JOB_FINAL, JOB_QUEUED, JOB_RUNNING,
                      JOB_SKIPPED, JOB_SUCCESS, LEVEL_FULL, STATUS_ERROR, STATUS_ONLINE, STATUS_PENDING, Job,
                      PangolinServer, PveServer, RouterDevice, ScheduleRun, System, User, utcnow)
@@ -210,7 +210,17 @@ class Worker:
                 kind, payload = job.kind, dict(job.payload or {})
                 system_id = job.system_id
                 resumed = resumable(job.remote)
-            if resumed:
+                retry_of = (job.remote or {}).get("retry_of")
+                retry_phase = (job.remote or {}).get("phase", "")
+                if retry_of:
+                    job.remote = {k: v for k, v in job.remote.items() if k != "retry_of"}
+            if retry_of:
+                ctx.fh.truncate(0)
+                ctx._line_start = True
+                ctx.say(f"Job #{job_id} gestartet ({kind}) – Wiederholung von Job #{retry_of}"
+                        + (f", fortgesetzt ab Schritt „{PHASE_LABELS.get(retry_phase, retry_phase)}“"
+                           if retry_phase else ""))
+            elif resumed:
                 ctx.say("Worker neu gestartet - verbinde mich wieder mit dem laufenden Prozess ...")
             else:
                 ctx.fh.truncate(0)
@@ -255,7 +265,10 @@ class Worker:
                 job.summary = (summary or "")[:2000]
                 job.exit_code = exit_code if exit_code is not None else job.exit_code
                 job.finished_at = utcnow()
-                job.remote = {k: v for k, v in (job.remote or {}).items() if k not in ("detached", "pve_task", "phase")}
+                remote = dict(job.remote or {})
+                if status in (JOB_FAILED, JOB_CANCELLED) and remote.get("phase"):
+                    remote["resume_phase"] = remote["phase"]  # a retry continues here
+                job.remote = {k: v for k, v in remote.items() if k not in ("detached", "pve_task", "phase")}
         ctx.close()
 
     # ------------------------------------------------------------------ helpers
@@ -772,6 +785,8 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
         if phase == "create":
             if state.get("pve_task"):
                 self._pve_task(ctx, api, None, state)
+            elif state.get("retried") and self._ct_exists(api, node, vmid, p["hostname"]):
+                ctx.say(f"Container {vmid} ({p['hostname']}) existiert bereits – Anlegen wird übersprungen.")
             else:
                 ctx.say(f"Lege Container {vmid} ({p['hostname']}) auf {node} an ...")
                 upid = api.post(f"nodes/{node}/lxc", **pve.create_params(p))
@@ -788,6 +803,8 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
             if p.get("start"):
                 if state.get("pve_task"):
                     self._pve_task(ctx, api, None, state)
+                elif state.get("retried") and api.guest_status(node, "lxc", vmid).get("status") == "running":
+                    ctx.say("Container läuft bereits.")
                 else:
                     ctx.say("Starte Container ...")
                     self._pve_task(ctx, api, api.post(f"nodes/{node}/lxc/{vmid}/status/start"), state, node)
@@ -848,6 +865,16 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
         self._pve_refresh(server.id)
         return f"Container {vmid} ({p['hostname']}) angelegt" + (f", IP {ip}" if ip else "") + \
             "".join(f"; {n}" for n in notes if n)
+
+    @staticmethod
+    def _ct_exists(api, node: str, vmid: int, hostname: str) -> bool:
+        try:
+            cfg = api.guest_config(node, "lxc", vmid)
+        except PveError:
+            return False
+        if cfg.get("hostname") and cfg.get("hostname") != hostname:
+            raise JobFailed(f"ID {vmid} ist bereits von einem anderen Container ({cfg.get('hostname')}) belegt")
+        return True
 
     def _static_lease(self, ctx, api, server: PveServer, node: str, vmid: int, hostname: str, ip: str) -> str:
         if not server.router_id:
@@ -976,6 +1003,10 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
                 user = db.get(User, user_id) if user_id else None
                 if user is not None and not user.is_admin:
                     access.grant(db, user.id, system.id, LEVEL_FULL)
+            elif system.host != ip and (g.get("ip") or (system.status != STATUS_ONLINE
+                                                         and system.host not in res["ips"])):
+                ctx.say(f"Adresse von {system.name}: {system.host} → {ip}")
+                system.host = ip
             system.pve_server_id, system.pve_vmid = server.id, int(g["vmid"])
             if res["host_keys"]:
                 system.host_keys = "\n".join(res["host_keys"])
@@ -989,14 +1020,16 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
                     inventory.deep_check(conn, db, s, ctx.write, manual=True, detect=True)
                     s.status = STATUS_ONLINE
         except SSHError as exc:
-            return f"{label}: System #{sid} angelegt, SSH-Prüfung fehlgeschlagen ({exc})"
+            raise JobFailed(f"{label}: System #{sid} angelegt, SSH-Prüfung fehlgeschlagen ({exc}) – "
+                            "„Wiederholen“ richtet den Zugang erneut ein") from exc
         return f"{label}: als System #{sid} übernommen ({ip})"
 
     def job_pve_import(self, ctx, job_id, system_id, payload) -> str:
-        server, _state = self._pve_server(job_id)
+        server, state = self._pve_server(job_id)
         api = pve.client(server, timeout=60)
         host: dict = {}
         done, failed = [], []
+        failed_items: list[dict] = []
         try:
             for g in payload.get("items", []):
                 pve.check_guest_ref(g["node"], g["type"], g["vmid"])
@@ -1006,10 +1039,13 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
                     ctx.say(done[-1])
                 except (JobFailed, SSHError, PveError, ValueError) as exc:
                     failed.append(f"{g.get('name', g['vmid'])}: {exc}")
+                    failed_items.append(g)
                     ctx.say(f"FEHLER: {exc}")
         finally:
             if host.get("conn"):
                 host["conn"].close()
+            state["failed_items"] = failed_items + payload.get("items", [])[len(done) + len(failed_items):]
+            ctx.save_remote(state)
         if failed and not done:
             raise JobFailed("; ".join(failed))
         return f"{len(done)} übernommen" + (f", {len(failed)} fehlgeschlagen: " + "; ".join(failed) if failed else "")

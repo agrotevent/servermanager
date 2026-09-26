@@ -10,7 +10,7 @@ from ... import access, inventory, security, sshkeys, sysbackup, wireguard
 from ...core import audit
 from ...jobs import enqueue, log_path as job_log_path, new_batch_id
 from ...mikrotik import MikroTikError
-from ...models import (AUTH_KEY, AUTH_METHODS, AUTH_PASSWORD, CONN_DIRECT, CONN_WIREGUARD, LEVEL_FULL,
+from ...models import (AUTH_KEY, AUTH_METHODS, AUTH_PASSWORD, CONN_DIRECT, CONN_WIREGUARD, KIND_PVE, LEVEL_FULL,
                        LEVEL_OPERATE, LEVEL_VIEW, LEVELS, SUDO_MODES, SUDO_NONE, SUDO_PASSWORD, Job, System,
                        PveServer, SystemAccess, SystemBackup, User)
 from ...modules import MODULES, ParamError, get_module, modules_for
@@ -308,7 +308,10 @@ def detail(system_id: int):
         srv = g.db.get(PveServer, system.pve_server_id)
         if srv is not None:
             guest = next((x for x in srv.data.get("guests", []) if x.get("vmid") == system.pve_vmid), None)
-            pve_guest = {"server": srv, "guest": guest}
+            pve_guest = {"server": srv, "guest": guest,
+                         "can_resetup": bool(guest) and access.system_level(g.db, g.user, system.id) == LEVEL_FULL
+                         and (g.user.is_admin or access.has_integration_level(g.db, g.user, KIND_PVE, srv.id,
+                                                                              LEVEL_FULL))}
     return render_template("systems/detail.html", system=system, tab=tab, mods=mods, jobs=jobs, backups=backups,
                            summary=inventory.update_summary(system), access_rows=access_rows, users=users,
                            level=access.system_level(g.db, g.user, system.id), pve_guest=pve_guest)

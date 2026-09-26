@@ -397,6 +397,27 @@ def system_op(system_id: int):
     return redirect(url_for("jobs.detail", job_id=job.id))
 
 
+@bp.post("/system/<int:system_id>/resetup")
+@login_required
+def system_resetup(system_id: int):
+    """Set up the management access of a guest again (e.g. after a failed creation/import)."""
+    system = get_system_or_403(system_id, LEVEL_FULL)
+    if not system.pve_server_id or not system.pve_vmid:
+        abort(400)
+    server = _get(system.pve_server_id, LEVEL_FULL)
+    guest = next((x for x in server.data.get("guests", []) if x["vmid"] == system.pve_vmid), None)
+    if guest is None:
+        flash("Gast im Proxmox nicht gefunden – bitte die Proxmox-Übersicht aktualisieren.", "danger")
+        return redirect(url_for("systems.detail", system_id=system_id))
+    item = {"node": guest["node"], "type": guest["type"], "vmid": guest["vmid"], "name": guest.get("name", ""),
+            "ip": ""}
+    job = enqueue(g.db, kind="pve_import", title=f"Einrichtung wiederholen: {system.name} – {server.name}",
+                  user=g.user, pve_id=server.id, payload={"items": [item], "install_ssh": True})
+    audit(g.db, g.user, "pve.resetup", system.name, f"{server.name}/{guest['vmid']}", ip=client_ip())
+    g.db.commit()
+    return redirect(url_for("jobs.detail", job_id=job.id))
+
+
 # --------------------------------------------------------------------------
 # create LXC
 # --------------------------------------------------------------------------

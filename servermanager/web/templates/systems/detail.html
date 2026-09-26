@@ -62,6 +62,10 @@
           <input type="hidden" name="op" value="{{ op }}"><button class="btn sm {{ 'danger-outline' if op == 'stop' }}">{{ label }}</button></form>
         {% endfor %}
       {% endif %}
+      {% if pve_guest.can_resetup and pg.status == 'running' %}
+        <form method="post" action="{{ url_for('pve.system_resetup', system_id=system.id) }}" class="inline" data-confirm="Management-Zugang (SSH-Schlüssel, Hostkeys) für {{ system.name }} über Proxmox erneut einrichten und das System prüfen?">{{ csrf() }}
+          <button class="btn sm {{ 'primary' if system.status != 'online' }}" title="SSH-Schlüssel und Hostkeys über Proxmox erneut hinterlegen, danach prüfen">Einrichtung wiederholen</button></form>
+      {% endif %}
     {% else %}<span class="muted">Gast {{ system.pve_vmid }} in {{ pve_guest.server.name }} nicht gefunden (noch nicht abgefragt oder gelöscht).</span>{% endif %}
   </div>
 </div>

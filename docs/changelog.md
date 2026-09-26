@@ -2,6 +2,20 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.6.0 – 26.09.2026
+
+### Neu
+
+- Fehlgeschlagenes Anlegen eines Containers lässt sich per **Wiederholen** im Job erneut ausführen; die
+  Wiederholung setzt beim fehlgeschlagenen Schritt fort und legt nichts doppelt an.
+- *Bestand übernehmen*: **Wiederholen** übernimmt nur die fehlgeschlagenen Gäste erneut; Gäste mit einem
+  nicht erreichbaren System lassen sich wieder auswählen.
+- System-Seite: **Einrichtung wiederholen** für Proxmox-Gäste (SSH-Schlüssel, Hostkeys, Prüfung).
+
+### Geändert
+
+- Die Übernahme eines Gastes gilt als fehlgeschlagen, wenn das System danach per SSH nicht erreichbar ist.
+
 ## 1.5.3 – 26.09.2026
 
 ### Verbessert

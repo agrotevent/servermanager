@@ -13,6 +13,11 @@
     <form method="post" action="{{ url_for('jobs.cancel', job_id=job.id) }}" class="inline" data-hide-when-final data-confirm="Job wirklich abbrechen? Ein Abbruch während einer Paketinstallation kann dpkg in einem inkonsistenten Zustand hinterlassen.">
       {{ csrf() }}<button class="btn danger-outline sm">Abbrechen</button></form>
     {% endif %}
+    {% if retry %}
+    <form method="post" action="{{ url_for('jobs.retry', job_id=job.id) }}" class="inline" data-confirm="Job wiederholen ({{ retry.label }})?">
+      {{ csrf() }}<button class="btn primary sm" title="{{ retry.label }}">Wiederholen</button></form>
+    {% elif retried_by %}<a class="btn sm" href="{{ url_for('jobs.detail', job_id=retried_by) }}">Wiederholung #{{ retried_by }}</a>
+    {% endif %}
     {% if job.system and job.is_final %}<a class="btn sm" href="{{ url_for('systems.detail', system_id=job.system_id) }}">Zum System</a>{% endif %}
   </div>
 </div>

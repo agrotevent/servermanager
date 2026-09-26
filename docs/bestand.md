@@ -60,6 +60,10 @@ Das Einlesen ändert nichts an den Geräten.
     SSH-Verbindung ist geprüft.
   - Optional wird ein fehlender SSH-Server installiert (Debian/Ubuntu, Alpine, RHEL-Familie).
   - Danach wird das System aufgenommen, dem Gast zugeordnet und seine Komponenten erkannt.
+  - Schlägt ein Gast fehl (z. B. SSH danach nicht erreichbar), wiederholt **Wiederholen** im Job nur
+    die fehlgeschlagenen Gäste. Gäste, deren System nicht online ist, lassen sich in *Bestand
+    übernehmen* erneut auswählen (Kennzeichen „Einrichtung wiederholen“), einzelne Systeme auch über
+    **Einrichtung wiederholen** auf der System-Seite.
 - **Geräte ohne Proxmox** (z. B. aus der Geräteliste des Routers): *Als System* öffnet das normale
   Formular mit IP und Name vorausgefüllt.
 

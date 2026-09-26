@@ -279,3 +279,60 @@ def test_router_create_checks_login_first(app, env, mock, db):
                                       "save_anyway": "1"})
     assert r.status_code == 302
     assert db.query(RouterDevice).filter_by(name="chr-anyway").count() == 1
+
+
+def test_retry_failed_pve_jobs(app, env, db):
+    admin = login(app, "i-admin")
+    job = Job(kind="pve_create", title="Container 170 (x)", pve_id=env["pve"], status="failed",
+              payload={"vmid": 170, "password_enc": "enc"}, remote={"resume_phase": "register", "ip": "10.0.0.7"})
+    ok = Job(kind="pve_create", title="ok", pve_id=env["pve"], status="success", payload={})
+    imp = Job(kind="pve_import", title="import", pve_id=env["pve"], status="success",
+              payload={"items": [{"vmid": 1}, {"vmid": 2, "name": "b"}]}, remote={"failed_items": [{"vmid": 2, "name": "b"}]})
+    db.add_all([job, ok, imp])
+    db.commit()
+    assert "Wiederholen" in admin.get(f"/jobs/{job.id}").text
+    assert "Wiederholen" not in admin.get(f"/jobs/{ok.id}").text
+    # viewer of the Proxmox connection may not retry
+    viewer = login(app, "i-viewer")
+    assert "Wiederholen" not in viewer.get(f"/jobs/{job.id}").text
+    viewer.post(f"/jobs/{job.id}/retry", data={"csrf_token": viewer.csrf})
+    db.expire_all()
+    assert "retried_by" not in (db.get(Job, job.id).remote or {})
+
+    r = admin.post(f"/jobs/{job.id}/retry", data={"csrf_token": admin.csrf})
+    assert r.status_code == 302
+    db.expire_all()
+    old = db.get(Job, job.id)
+    new = db.get(Job, old.remote["retried_by"])
+    assert new.status == "queued" and new.title.startswith("Wiederholung: ")
+    assert new.remote == {"phase": "register", "retried": True, "ip": "10.0.0.7", "retry_of": job.id}
+    assert new.payload["password_enc"] == "enc" and "password_enc" not in old.payload
+    assert f"Wiederholung #{new.id}" in admin.get(f"/jobs/{job.id}").text
+    admin.post(f"/jobs/{job.id}/retry", data={"csrf_token": admin.csrf})  # second click does nothing
+    assert db.query(Job).filter(Job.title.like("Wiederholung:%"), Job.pve_id == env["pve"]).count() == 1
+    # import: only the failed guest is retried
+    admin.post(f"/jobs/{imp.id}/retry", data={"csrf_token": admin.csrf})
+    db.expire_all()
+    new_imp = db.get(Job, db.get(Job, imp.id).remote["retried_by"])
+    assert new_imp.payload["items"] == [{"vmid": 2, "name": "b"}]
+    for j in db.query(Job).filter(Job.status == "queued").all():
+        j.status = "cancelled"
+    db.commit()
+
+
+def test_system_resetup_via_proxmox(app, env, db):
+    admin = login(app, "i-admin")
+    admin.post(f"/proxmox/{env['pve']}/refresh", data={"csrf_token": admin.csrf})
+    assert "Einrichtung wiederholen" in admin.get(f"/systems/{env['system']}").text
+    r = admin.post(f"/proxmox/system/{env['system']}/resetup", data={"csrf_token": admin.csrf})
+    assert r.status_code == 302
+    job = db.query(Job).filter_by(kind="pve_import").order_by(Job.id.desc()).first()
+    assert job.payload["items"][0]["vmid"] == 100 and job.payload["install_ssh"] is True
+    job.status = "cancelled"
+    db.commit()
+    # operator (not full) cannot
+    op = login(app, "i-op")
+    assert "Einrichtung wiederholen" not in op.get(f"/systems/{env['system']}").text
+    assert op.post(f"/proxmox/system/{env['system']}/resetup", data={"csrf_token": op.csrf}).status_code == 403
+    # import page offers the guest again while the system is not online
+    assert "Einrichtung wiederholen" in admin.get(f"/proxmox/{env['pve']}/import").text

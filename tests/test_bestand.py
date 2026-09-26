@@ -112,7 +112,10 @@ def test_import_vm_via_guest_agent(db, mocks, infra):
     _run(job.id)
     db.expire_all()
     job = db.get(Job, job.id)
-    assert job.status == "success", log_path(job.id).read_text()
+    # key and host keys are in place, but nothing listens on port 22 here: the system exists, the job
+    # fails and can be retried
+    assert job.status == "failed" and "SSH-Prüfung fehlgeschlagen" in job.summary, log_path(job.id).read_text()
+    assert job.remote["failed_items"][0]["vmid"] == 200
     s = db.query(System).filter_by(pve_server_id=infra["srv"].id, pve_vmid=200).one()
     assert s.host_keys.startswith("ssh-ed25519 ") and s.host == "127.0.0.1"
     assert g["_exec"][:2] == ["/bin/sh", "-c"] and "authorized_keys" in g["_exec"][2]
@@ -265,3 +268,17 @@ def test_newt_setup_form_validation(app, db, infra):
     from servermanager.models import Job
     job = db.query(Job).filter_by(kind="newt_setup").order_by(Job.id.desc()).first()
     assert "supersecret123" not in str(job.payload) and job.payload["newt"]["secret_enc"]
+
+
+def test_failed_import_keeps_failed_guests_for_retry(db, mocks, infra):
+    from servermanager import jobs as jobq
+    from servermanager.jobs import enqueue
+    from servermanager.models import Job
+    item = {"node": "pve1", "type": "qemu", "vmid": 999, "name": "gone", "ip": ""}
+    job = enqueue(db, kind="pve_import", title="import", pve_id=infra["srv"].id, payload={"items": [item]})
+    db.commit()
+    _run(job.id)
+    db.expire_all()
+    job = db.get(Job, job.id)
+    assert job.status == "failed" and job.remote["failed_items"] == [item]
+    assert jobq.retry_plan(job)["payload"]["items"] == [item]

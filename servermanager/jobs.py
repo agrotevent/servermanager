@@ -11,7 +11,7 @@ from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from .config import get_config
-from .models import JOB_QUEUED, JOB_CANCELLED, Job, System, User, utcnow
+from .models import JOB_CANCELLED, JOB_FAILED, JOB_QUEUED, JOB_SUCCESS, Job, System, User, utcnow
 
 KIND_LABELS = {
     "action": "Aktion",
@@ -33,6 +33,19 @@ KIND_LABELS = {
     "sso_connect": "SSO verbinden",
     "sso_disconnect": "SSO trennen",
 }
+
+# steps of "pve_create"; a failed job is retried from the step it failed in
+PHASE_LABELS = {
+    "download": "Vorlage herunterladen",
+    "create": "Container anlegen",
+    "start": "Container starten",
+    "network": "IP-Adresse ermitteln",
+    "lease": "DHCP-Lease fixieren",
+    "register": "als System aufnehmen",
+    "publish": "über Pangolin veröffentlichen",
+    "newt": "Newt einrichten",
+}
+RETRY_KINDS = ("pve_create", "pve_import")
 
 
 def log_path(job_id: int) -> Path:
@@ -75,3 +88,44 @@ def request_cancel(db: Session, job: Job) -> None:
     if res.rowcount != 1:
         db.execute(update(Job).where(Job.id == job.id).values(cancel_requested=True))
     db.expire(job)
+
+
+def retry_plan(job: Job) -> Optional[dict]:
+    """What retrying a failed container creation / guest import would do, or None if not retryable."""
+    remote, payload = dict(job.remote or {}), dict(job.payload or {})
+    if job.kind not in RETRY_KINDS or remote.get("retried_by"):
+        return None
+    if job.kind == "pve_create":
+        if job.status not in (JOB_FAILED, JOB_CANCELLED):
+            return None
+        phase = remote.get("resume_phase") if remote.get("resume_phase") in PHASE_LABELS else "download"
+        new_remote = {"phase": phase, "retried": True}
+        if remote.get("ip"):
+            new_remote["ip"] = remote["ip"]
+        return {"payload": payload, "remote": new_remote, "register": bool(payload.get("register")),
+                "label": f"ab Schritt „{PHASE_LABELS[phase]}“"}
+    failed = remote.get("failed_items") or []
+    if job.status in (JOB_FAILED, JOB_CANCELLED):
+        items = failed or payload.get("items") or []
+    elif job.status == JOB_SUCCESS:
+        items = failed
+    else:
+        items = []
+    if not items:
+        return None
+    return {"payload": {**payload, "items": items}, "remote": {}, "register": True,
+            "label": f"{len(items)} Gast/Gäste: " + ", ".join(str(i.get("name") or i.get("vmid")) for i in items)}
+
+
+def retry(db: Session, job: Job, user: Optional[User]) -> Job:
+    plan = retry_plan(job)
+    if plan is None:
+        raise ValueError("Dieser Job kann nicht wiederholt werden")
+    title = job.title[len("Wiederholung: "):] if job.title.startswith("Wiederholung: ") else job.title
+    new = enqueue(db, kind=job.kind, title=f"Wiederholung: {title}", system=job.system, user=user,
+                  payload=plan["payload"], pve_id=job.pve_id)
+    new.remote = {**plan["remote"], "retry_of": job.id}
+    job.remote = {**(job.remote or {}), "retried_by": new.id}
+    # the (encrypted) root password now lives only in the new job
+    job.payload = {k: v for k, v in (job.payload or {}).items() if k != "password_enc"}
+    return new

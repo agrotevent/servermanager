@@ -301,3 +301,69 @@ def test_migration_v1_to_v2(tmp_path):
         assert conn.execute(text("SELECT value FROM meta WHERE key='schema_version'")).scalar() == \
             str(migrations.SCHEMA_VERSION)
     assert {"role", "tunnel_system_id"} <= {c["name"] for c in insp.get_columns("pangolin_servers")}
+
+
+def test_failed_create_is_retried_from_failed_step(mock, objects, db, data_dir, monkeypatch):
+    from servermanager import jobs as jobq
+    from servermanager.jobs import enqueue, log_path
+    from servermanager.models import Job
+    from servermanager.worker import JobFailed, Worker
+    server, _router, _pg = objects
+    payload = pve.build_create({
+        "node": "pve1", "hostname": "retry01", "vmid": "152", "template": "download:debian-13-standard_13.1-2_amd64.tar.zst", "template_storage": "local",
+        "storage": "local-lvm", "bridge": "vmbr1", "ip_mode": "dhcp", "start": "1", "publish": "1",
+        "pub_subdomain": "retry", "pub_domain": "dom1", "pub_site": "1", "pub_port": "80", "pub_method": "http",
+        "password": "secret-pass"})
+    job = enqueue(db, kind="pve_create", title="create", payload=payload, pve_id=server.id)
+    db.commit()
+    real_publish = Worker._publish
+
+    def broken(self, ctx, srv, p, ip):
+        raise JobFailed("Pangolin nicht erreichbar")
+    monkeypatch.setattr(Worker, "_publish", broken)
+    _run(job.id)
+    db.expire_all()
+    job = db.get(Job, job.id)
+    assert job.status == "failed" and job.remote["resume_phase"] == "publish", log_path(job.id).read_text()
+    assert mock.state.guests[152]["status"] == "running"
+    plan = jobq.retry_plan(job)
+    assert plan and "veröffentlichen" in plan["label"]
+
+    monkeypatch.setattr(Worker, "_publish", real_publish)
+    new = jobq.retry(db, job, None)
+    db.commit()
+    assert jobq.retry_plan(job) is None  # only once
+    _run(new.id)
+    db.expire_all()
+    new = db.get(Job, new.id)
+    log = log_path(new.id).read_text()
+    assert new.status == "success", log
+    assert f"Wiederholung von Job #{job.id}" in log and "Lege Container" not in log and "Starte Container" not in log
+    assert any(r["name"] == "retry01" for r in mock.state.resources.values())
+    assert "retry_of" not in (new.remote or {})
+
+
+def test_retry_create_skips_existing_container(mock, objects, db, data_dir):
+    from servermanager import jobs as jobq
+    from servermanager.jobs import enqueue, log_path
+    from servermanager.models import Job
+    server, _router, _pg = objects
+    payload = pve.build_create({
+        "node": "pve1", "hostname": "retry02", "vmid": "153", "template": "download:debian-13-standard_13.1-2_amd64.tar.zst", "template_storage": "local",
+        "storage": "local-lvm", "bridge": "vmbr1", "ip_mode": "static", "ip": "10.20.0.53/24", "gateway": "10.20.0.1", "password": "secret-pass",
+        "start": "1"})
+    first = enqueue(db, kind="pve_create", title="create", payload=payload, pve_id=server.id)
+    db.commit()
+    _run(first.id)
+    db.expire_all()
+    # pretend the first run failed while creating (task state lost)
+    first = db.get(Job, first.id)
+    first.status, first.remote = "failed", {"resume_phase": "create"}
+    db.commit()
+    new = jobq.retry(db, first, None)
+    db.commit()
+    _run(new.id)
+    db.expire_all()
+    log = log_path(new.id).read_text()
+    assert db.get(Job, new.id).status == "success", log
+    assert "existiert bereits" in log and "Container läuft bereits" in log

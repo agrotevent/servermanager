@@ -6,8 +6,9 @@ from sqlalchemy import select
 
 from ... import access
 from ...core import audit
+from ... import jobs as jobq
 from ...jobs import KIND_LABELS, read_log, request_cancel
-from ...models import JOB_QUEUED, JOB_RUNNING, JOB_STATUSES, KIND_PVE, LEVEL_OPERATE, Job
+from ...models import JOB_QUEUED, JOB_RUNNING, JOB_STATUSES, KIND_PVE, LEVEL_FULL, LEVEL_OPERATE, Job
 from ..auth import can, client_ip, login_required
 
 bp = Blueprint("jobs", __name__, url_prefix="/jobs")
@@ -30,6 +31,19 @@ def _can_cancel(job: Job) -> bool:
     if job.pve_id and access.has_integration_level(g.db, g.user, KIND_PVE, job.pve_id, LEVEL_OPERATE):
         return True
     return bool(job.system_id and can(job.system_id, LEVEL_OPERATE))
+
+
+def _retry_plan(job: Job):
+    """Retry of a failed container creation / guest import (same rights as starting it)."""
+    plan = jobq.retry_plan(job)
+    if plan is None or not job.pve_id:
+        return None
+    if not g.user.is_admin:
+        if not access.has_integration_level(g.db, g.user, KIND_PVE, job.pve_id, LEVEL_FULL):
+            return None
+        if plan["register"] and not g.user.can_add_systems:
+            return None
+    return plan
 
 
 @bp.get("/")
@@ -64,7 +78,9 @@ def index():
 @login_required
 def detail(job_id: int):
     job = _get(job_id)
-    return render_template("jobs/detail.html", job=job, kinds=KIND_LABELS, can_cancel=_can_cancel(job))
+    retry_of = (job.remote or {}).get("retried_by")
+    return render_template("jobs/detail.html", job=job, kinds=KIND_LABELS, can_cancel=_can_cancel(job),
+                           retry=_retry_plan(job), retried_by=retry_of)
 
 
 @bp.get("/<int:job_id>/log")
@@ -94,3 +110,16 @@ def cancel(job_id: int):
     g.db.commit()
     flash("Abbruch angefordert.", "warning")
     return redirect(url_for("jobs.detail", job_id=job.id))
+
+
+@bp.post("/<int:job_id>/retry")
+@login_required
+def retry(job_id: int):
+    job = _get(job_id)
+    if _retry_plan(job) is None:
+        flash("Dieser Job kann nicht (mehr) wiederholt werden.", "warning")
+        return redirect(url_for("jobs.detail", job_id=job.id))
+    new = jobq.retry(g.db, job, g.user)
+    audit(g.db, g.user, "job.retry", f"#{job.id}", f"-> #{new.id} {job.title}", ip=client_ip())
+    g.db.commit()
+    return redirect(url_for("jobs.detail", job_id=new.id))
