@@ -182,6 +182,11 @@ class System(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
+    # Proxmox guest this system runs in (optional, for power control via the Proxmox API)
+    # no FK constraint: pve_servers.system_id already references systems (cycle); cleared on delete
+    pve_server_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    pve_vmid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
     access: Mapped[list[SystemAccess]] = relationship(back_populates="system", cascade="all, delete-orphan")
 
     @property
@@ -264,6 +269,8 @@ class Job(Base):
     system_id: Mapped[Optional[int]] = mapped_column(ForeignKey("systems.id", ondelete="CASCADE"),
                                                      nullable=True, index=True)
     user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    pve_id: Mapped[Optional[int]] = mapped_column(ForeignKey("pve_servers.id", ondelete="CASCADE"),
+                                                  nullable=True, index=True)
     kind: Mapped[str] = mapped_column(String(32))
     title: Mapped[str] = mapped_column(String(255), default="")
     payload: Mapped[Optional[dict]] = mapped_column(JSONText, default=dict)
@@ -346,6 +353,103 @@ class ScheduleRun(Base):
     max_parallel: Mapped[int] = mapped_column(Integer, default=3)
 
     schedule: Mapped[Optional[MaintenanceSchedule]] = relationship()
+
+
+# --------------------------------------------------------------------------
+# Integrations: Proxmox VE API, RouterOS API, Pangolin
+# --------------------------------------------------------------------------
+KIND_PVE = "pve"
+KIND_ROUTER = "router"
+KIND_PANGOLIN = "pangolin"
+INTEGRATION_KINDS = {KIND_PVE: "Proxmox VE", KIND_ROUTER: "RouterOS", KIND_PANGOLIN: "Pangolin"}
+
+
+class IntegrationMixin:
+    """Common state of an API connection (status, cached data, alerts)."""
+
+    name: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str] = mapped_column(Text, default="")
+    fingerprint: Mapped[str] = mapped_column(String(128), default="")
+    verify_ca: Mapped[bool] = mapped_column(Boolean, default=False)
+    monitor: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String(16), default=STATUS_UNKNOWN)
+    status_message: Mapped[str] = mapped_column(Text, default="")
+    last_poll: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_ok: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    cache: Mapped[Optional[dict]] = mapped_column(JSONText, default=dict)
+    alerts: Mapped[Optional[list]] = mapped_column(JSONText, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+    @property
+    def data(self) -> dict:
+        return self.cache or {}
+
+    @property
+    def alert_list(self) -> list:
+        return list(self.alerts or [])
+
+
+class PveServer(IntegrationMixin, Base):
+    __tablename__ = "pve_servers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    api_url: Mapped[str] = mapped_column(String(255), default="")
+    token_id: Mapped[str] = mapped_column(String(128), default="")
+    token_secret_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    system_id: Mapped[Optional[int]] = mapped_column(ForeignKey("systems.id", ondelete="SET NULL"), nullable=True)
+    watch: Mapped[Optional[list]] = mapped_column(JSONText, default=list)   # vmids that must be running
+    router_id: Mapped[Optional[int]] = mapped_column(ForeignKey("router_devices.id", ondelete="SET NULL"),
+                                                     nullable=True)          # DHCP for new containers
+    pangolin_id: Mapped[Optional[int]] = mapped_column(ForeignKey("pangolin_servers.id", ondelete="SET NULL"),
+                                                       nullable=True)        # publishing of services
+
+    system: Mapped[Optional[System]] = relationship(foreign_keys=[system_id])
+
+    @property
+    def watch_list(self) -> list[int]:
+        return [int(v) for v in (self.watch or [])]
+
+
+class RouterDevice(IntegrationMixin, Base):
+    __tablename__ = "router_devices"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    api_url: Mapped[str] = mapped_column(String(255), default="")
+    username: Mapped[str] = mapped_column(String(64), default="")
+    password_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    target: Mapped[Optional[dict]] = mapped_column(JSONText, default=dict)     # desired setup (analysis)
+    snapshot: Mapped[Optional[dict]] = mapped_column(JSONText, default=dict)   # imported configuration
+    snapshot_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    snapshot_source: Mapped[str] = mapped_column(String(16), default="")
+
+    @property
+    def target_cfg(self) -> dict:
+        return self.target or {}
+
+
+class PangolinServer(IntegrationMixin, Base):
+    __tablename__ = "pangolin_servers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    api_url: Mapped[str] = mapped_column(String(255), default="")
+    org_id: Mapped[str] = mapped_column(String(64), default="")
+    api_key_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    default_site_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    default_domain_id: Mapped[str] = mapped_column(String(64), default="")
+
+
+class IntegrationAccess(Base):
+    """Per user access level to a Proxmox server, router or Pangolin instance."""
+
+    __tablename__ = "integration_access"
+    __table_args__ = (UniqueConstraint("user_id", "kind", "obj_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    obj_id: Mapped[int] = mapped_column(Integer, index=True)
+    level: Mapped[str] = mapped_column(String(16), default=LEVEL_VIEW)
 
 
 # --------------------------------------------------------------------------

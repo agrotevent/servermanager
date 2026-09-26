@@ -20,10 +20,14 @@
   <div>
     <div class="card">
       <div class="card-head"><h2>Probleme</h2></div>
-      <div class="card-body {{ 'flush' if problems or failed }}">
-        {% if problems or failed %}
+      <div class="card-body {{ 'flush' if problems or failed or int_alerts }}">
+        {% if problems or failed or int_alerts %}
         <table class="table">
           <tbody>
+          {% for a in int_alerts %}
+            <tr><td><a href="{{ a.url }}">{{ a.name }}</a><span class="sub">{{ a.text }}</span></td>
+                <td class="nowrap"><span class="badge {{ 'danger' if a.severity == 'crit' else 'warning' }}">{{ 'kritisch' if a.severity == 'crit' else 'Warnung' }}</span></td></tr>
+          {% endfor %}
           {% for s in problems %}
             <tr><td><a href="{{ url_for('systems.detail', system_id=s.id) }}">{{ s.name }}</a> {{ conn_badge(s) }}<span class="sub">{{ s.status_message|truncate(140) }}</span></td>
                 <td class="nowrap">{{ status_badge(s) }}</td></tr>

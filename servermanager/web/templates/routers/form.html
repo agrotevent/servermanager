@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% set help_page = "routeros" %}
+{% from "_macros.html" import csrf, field with context %}
+{% from "integrations/_macros.html" import conn_fields with context %}
+{% block title %}{{ 'Router hinzufügen' if is_new else 'Router bearbeiten' }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>{{ 'Router hinzufügen' if is_new else r.name ~ ' bearbeiten' }}</h1>
+  <p>Zugriff über die REST-API von RouterOS 7 (Dienst <code>www-ssl</code>). Empfohlen: eigener Benutzer mit Gruppe, die nur die nötigen Rechte hat, und Zugriff nur über das Management-Netz.</p></div></div>
+<form method="post" autocomplete="off">{{ csrf() }}
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>Verbindung</h2></div><div class="card-body"><div class="form-grid">
+    {{ conn_fields(r, 'REST-Adresse', 'https://10.66.0.1', 'https://<router> (Port 443) – z. B. über das WireGuard-Management-Netz.', 'RouterOS verwendet meist ein selbstsigniertes Zertifikat.') }}
+  </div></div></div>
+  <div class="card"><div class="card-head"><h2>Anmeldung</h2></div><div class="card-body"><div class="form-grid">
+    {{ field('Benutzer', 'username', r.username, required=True) }}
+    {{ field('Passwort', 'password', '', type='password', help=('Hinterlegt – leer lassen, um es zu behalten' if r.password_enc else 'wird verschlüsselt gespeichert'), attrs='autocomplete="new-password"') }}
+    <div class="full help">Benutzer auf dem Router anlegen (Lesen reicht für Überwachung und Analyse; für Änderungen <code>write</code>):
+      <pre class="mono small">/user group add name=servermanager policy=read,write,api,rest-api,test,!ftp,!ssh,!winbox,!telnet,!web,!sniff,!sensitive,!password,!policy,!reboot,!local,!romon
+/user add name=servermanager group=servermanager address=10.66.0.0/24 password="…"</pre>
+      <code>test</code> wird für den Ping-Test benötigt, <code>address</code> beschränkt die Anmeldung auf das Management-Netz. Für Sicherungen vor Änderungen zusätzlich <code>ftp</code> und <code>sensitive</code>.</div>
+  </div></div></div>
+</div>
+<div class="actions mt-1"><button class="btn primary">Speichern</button><a class="btn" href="{{ url_for('routers.index') if is_new else url_for('routers.detail', router_id=r.id) }}">Abbrechen</a></div>
+</form>
+{% if not is_new %}
+<div class="card danger-zone mt-2"><div class="card-head"><h2>Verbindung entfernen</h2></div><div class="card-body">
+  <form method="post" action="{{ url_for('routers.delete', router_id=r.id) }}" data-confirm="Verbindung {{ r.name }} entfernen?">{{ csrf() }}<button class="btn danger">Entfernen</button></form>
+</div></div>
+{% endif %}
+{% endblock %}

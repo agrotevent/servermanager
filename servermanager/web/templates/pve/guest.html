@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% set help_page = "proxmox" %}
+{% from "_macros.html" import csrf, pct_bar, empty, job_badge, field, checkbox with context %}
+{% from "integrations/_macros.html" import line_chart with context %}
+{% set st = status or {} %}{% set cfg = config or {} %}
+{% set gname = st.name or cfg.hostname or cfg.name or vmid %}
+{% set ctlabel = 'CT' if gtype == 'lxc' else 'VM' %}
+{% block title %}{{ ctlabel }} {{ vmid }} {{ gname }}{% endblock %}
+{% macro opform(op, cls='', extra='') -%}
+  <form method="post" action="{{ url_for('pve.guest_op', pve_id=s.id, node=node, gtype=gtype, vmid=vmid) }}" class="inline" {% if ops[op].confirm %}data-confirm="{{ gname }} {{ ops[op].confirm }}?"{% endif %}>{{ csrf() }}
+    <input type="hidden" name="op" value="{{ op }}"><input type="hidden" name="name" value="{{ gname }}">{{ extra|safe }}
+    <button class="btn {{ cls }}">{{ ops[op].label }}</button></form>
+{%- endmacro %}
+{% block content %}
+<div class="page-head">
+  <div class="grow">
+    <h1>{{ ctlabel }} {{ vmid }} · {{ gname }}
+      <span class="badge {{ 'success' if st.status == 'running' else '' }}"><span class="dot"></span>{{ {'running': 'läuft', 'stopped': 'gestoppt', 'paused': 'pausiert'}.get(st.status, st.status or '?') }}</span>
+      {% if vmid in s.watch_list %}<span class="badge info">überwacht</span>{% endif %}</h1>
+    <p><a href="{{ url_for('pve.server', pve_id=s.id, tab=gtype, live=0) }}">{{ s.name }}</a> · Node {{ node }}{% if ip %} · IP <span class="mono">{{ ip }}</span>{% endif %}{% if st.uptime %} · läuft seit {{ st.uptime|duration }}{% endif %}</p>
+  </div>
+  <div class="actions">
+    {% if int_can('pve', s.id, 'operate') %}
+      {% if st.status == 'running' %}{{ opform('shutdown') }}{{ opform('reboot') }}{{ opform('stop', 'danger-outline') }}{% if gtype == 'qemu' %}{{ opform('suspend') }}{% endif %}
+      {% elif st.status == 'paused' %}{{ opform('resume', 'primary') }}
+      {% else %}{{ opform('start', 'primary') }}{% endif %}
+    {% endif %}
+    {% if int_can('pve', s.id, 'full') %}
+    <form method="post" action="{{ url_for('pve.guest_watch', pve_id=s.id, vmid=vmid) }}" class="inline">{{ csrf() }}
+      <input type="hidden" name="next" value="{{ request.full_path }}">
+      <button class="btn ghost" title="Warnung, wenn der Gast nicht läuft">{{ 'Überwachung beenden' if vmid in s.watch_list else 'Überwachen' }}</button></form>
+    {% endif %}
+  </div>
+</div>
+{% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>Status</h2></div><div class="card-body">
+    {% set mp = ((st.mem or 0) * 100 / st.maxmem)|round|int if st.maxmem else 0 %}
+    {% set dp = ((st.disk or 0) * 100 / st.maxdisk)|round|int if st.maxdisk else 0 %}
+    <dl class="kv">
+      <dt>CPU</dt><dd>{{ ((st.cpu or 0) * 100)|round(1) }} % von {{ st.cpus or cfg.cores or '?' }} Kern(en)</dd>
+      <dt>RAM</dt><dd>{{ pct_bar(mp) }}<small>{{ (st.mem or 0)|bytes }} / {{ (st.maxmem or 0)|bytes }}</small></dd>
+      {% if gtype == 'lxc' %}<dt>Root-Disk</dt><dd>{{ pct_bar(dp) }}<small>{{ (st.disk or 0)|bytes }} / {{ (st.maxdisk or 0)|bytes }}</small></dd>{% endif %}
+      <dt>Netzwerk</dt><dd class="mono break"><small>{{ cfg.net0 }}</small></dd>
+      {% if cfg.ostype %}<dt>Betriebssystem</dt><dd>{{ cfg.ostype }}</dd>{% endif %}
+      <dt>Autostart</dt><dd>{{ 'ja' if cfg.onboot else 'nein' }}</dd>
+      {% if gtype == 'lxc' %}<dt>Unprivilegiert</dt><dd>{{ 'ja' if cfg.unprivileged else 'nein (privilegiert)' }}{% if cfg.features %} · {{ cfg.features }}{% endif %}</dd>{% endif %}
+      {% if cfg.tags %}<dt>Tags</dt><dd>{% for t in cfg.tags.split(';') if t %}<span class="badge outline">{{ t }}</span> {% endfor %}</dd>{% endif %}
+    </dl>
+    <div class="mt-1 flex" style="gap:8px;flex-wrap:wrap">
+      {% if system %}<a class="btn sm" href="{{ url_for('systems.detail', system_id=system.id) }}"><svg class="icon"><use href="#i-server"/></svg>System {{ system.name }}</a>
+      {% elif user.can_add_systems and gtype == 'lxc' %}<a class="btn sm" href="{{ url_for('systems.new', name=gname, host=ip, pve=s.id, vmid=vmid) }}"><svg class="icon"><use href="#i-plus"/></svg>Als System verwalten</a>{% endif %}
+      {% if pangolin and ip and int_can('pangolin', pangolin.id, 'full') %}<a class="btn sm" href="{{ url_for('pangolin.publish', pg_id=pangolin.id, name=gname, ip=ip) }}"><svg class="icon"><use href="#i-cloud"/></svg>In Pangolin veröffentlichen</a>{% endif %}
+    </div>
+  </div></div>
+
+  {% if gtype == 'lxc' %}
+  <div class="card"><div class="card-head"><h2>Ressourcen</h2></div><div class="card-body">
+    {% if int_can('pve', s.id, 'full') %}
+    <form method="post" action="{{ url_for('pve.guest_config', pve_id=s.id, node=node, vmid=vmid) }}">{{ csrf() }}
+      <div class="form-grid">
+        {{ field('CPU-Kerne', 'cores', cfg.cores or 1, type='number', attrs='min="1" max="512"') }}
+        {{ field('RAM (MB)', 'memory', cfg.memory or 512, type='number', attrs='min="16"') }}
+        {{ field('Swap (MB)', 'swap', cfg.swap if cfg.swap is not none else 512, type='number', attrs='min="0"') }}
+        <div class="field"><label>&nbsp;</label>{{ checkbox('Beim Booten des Hosts starten', 'onboot', cfg.onboot) }}</div>
+        <div class="field full"><label>Beschreibung</label><textarea name="description" rows="2">{{ cfg.description or '' }}</textarea></div>
+      </div>
+      <button class="btn primary mt-1">Speichern</button>
+    </form>
+    <hr>
+    <form method="post" action="{{ url_for('pve.guest_op', pve_id=s.id, node=node, gtype=gtype, vmid=vmid) }}" class="inline-form" data-confirm="Root-Disk vergrößern? (Verkleinern ist nicht möglich)">{{ csrf() }}
+      <input type="hidden" name="op" value="resize"><input type="hidden" name="name" value="{{ gname }}">
+      <div class="field"><label>Root-Disk vergrößern um (GB)</label><input type="number" name="add_gb" min="1" value="4"></div>
+      <button class="btn">Vergrößern</button></form>
+    {% else %}
+    <dl class="kv"><dt>CPU-Kerne</dt><dd>{{ cfg.cores }}</dd><dt>RAM</dt><dd>{{ cfg.memory }} MB</dd><dt>Swap</dt><dd>{{ cfg.swap }} MB</dd><dt>Root-Disk</dt><dd class="mono"><small>{{ cfg.rootfs }}</small></dd></dl>
+    {% endif %}
+  </div></div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-head"><h2>Verlauf</h2>
+    <nav class="tabs" style="margin:0;border:0">{% for k, v in timeframes.items() %}<a href="?tf={{ k }}" class="{{ 'active' if tf == k }}">{{ v }}</a>{% endfor %}</nav></div>
+  <div class="card-body">
+    {% if charts %}<div class="chart-grid">{% for ch in charts %}{{ line_chart(ch) }}{% endfor %}</div>
+    {% else %}{{ empty('Keine Verlaufsdaten.', 'i-log') }}{% endif %}
+  </div>
+</div>
+
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>Snapshots</h2></div><div class="card-body">
+    {% if snapshots %}
+    <table class="table compact"><thead><tr><th>Name</th><th>Erstellt</th><th></th></tr></thead><tbody>
+    {% for sn in snapshots %}
+      <tr><td><strong>{{ sn.name }}</strong>{% if sn.description %}<span class="sub">{{ sn.description }}</span>{% endif %}</td>
+        <td class="nowrap"><small>{{ sn.snaptime|dt if sn.snaptime else '–' }}</small></td>
+        <td class="nowrap text-right">{% if int_can('pve', s.id, 'full') %}
+          {{ opform('rollback', 'xs', '<input type="hidden" name="snapname" value="' ~ (sn.name|e) ~ '">') }}
+          {{ opform('delsnapshot', 'xs danger-outline', '<input type="hidden" name="snapname" value="' ~ (sn.name|e) ~ '">') }}
+        {% endif %}</td></tr>
+    {% endfor %}</tbody></table>
+    {% else %}<p class="muted">Keine Snapshots.</p>{% endif %}
+    {% if int_can('pve', s.id, 'operate') %}
+    <form method="post" action="{{ url_for('pve.guest_op', pve_id=s.id, node=node, gtype=gtype, vmid=vmid) }}" class="inline-form mt-1">{{ csrf() }}
+      <input type="hidden" name="op" value="snapshot"><input type="hidden" name="name" value="{{ gname }}">
+      <div class="field"><label>Name</label><input type="text" name="snapname" value="sm{{ now.strftime('%Y%m%d%H%M') }}" required pattern="[A-Za-z][A-Za-z0-9_-]{1,39}"></div>
+      <div class="field"><label>Beschreibung</label><input type="text" name="description" placeholder="vor Update …"></div>
+      <button class="btn">Snapshot erstellen</button></form>
+    {% endif %}
+  </div></div>
+
+  <div class="card"><div class="card-head"><h2>Sicherung (vzdump)</h2></div><div class="card-body">
+    {% if int_can('pve', s.id, 'operate') %}
+      {% if backup_storages %}
+      <form method="post" action="{{ url_for('pve.guest_op', pve_id=s.id, node=node, gtype=gtype, vmid=vmid) }}" class="form-grid" data-confirm="Sicherung jetzt starten?">{{ csrf() }}
+        <input type="hidden" name="op" value="backup"><input type="hidden" name="name" value="{{ gname }}">
+        <div class="field"><label>Ziel-Storage</label><select name="storage">{% for b in backup_storages %}<option>{{ b }}</option>{% endfor %}</select></div>
+        <div class="field"><label>Modus</label><select name="mode"><option value="snapshot">Snapshot (ohne Unterbrechung)</option><option value="suspend">Suspend</option><option value="stop">Stop (konsistent)</option></select></div>
+        <div class="field full"><label>Notiz</label><input type="text" name="notes" placeholder="optional"></div>
+        <div class="full"><button class="btn primary">Sicherung starten</button></div>
+      </form>
+      {% else %}<p class="muted">Kein Storage mit Inhalt „Backup“ auf {{ node }}.</p>{% endif %}
+    {% else %}<p class="muted">Keine Berechtigung.</p>{% endif %}
+    {% if jobs %}<h4 class="mt-2">Letzte Jobs</h4>
+    <ul class="list-plain">{% for j in jobs %}<li><a href="{{ url_for('jobs.detail', job_id=j.id) }}">#{{ j.id }}</a><span class="grow">{{ j.title }}</span>{{ job_badge(j.status, j.id) }}</li>{% endfor %}</ul>{% endif %}
+  </div></div>
+</div>
+
+{% if int_can('pve', s.id, 'full') %}
+<div class="card danger-zone"><div class="card-head"><h2>{{ ctlabel }} löschen</h2></div><div class="card-body">
+  {% if st.status == 'running' %}<p class="muted">Zum Löschen muss der Gast gestoppt sein.</p>{% else %}
+  <form method="post" action="{{ url_for('pve.guest_op', pve_id=s.id, node=node, gtype=gtype, vmid=vmid) }}" class="inline-form" data-confirm="{{ ctlabel }} {{ vmid }} ({{ gname }}) mit allen Disks unwiderruflich löschen?">{{ csrf() }}
+    <input type="hidden" name="op" value="destroy"><input type="hidden" name="name" value="{{ gname }}">
+    <div class="field"><label>VMID zur Bestätigung</label><input type="text" name="confirm_vmid" required autocomplete="off"></div>
+    <label class="check"><input type="checkbox" name="purge" value="1" checked> auch aus Backup-Jobs, HA und Replikation entfernen</label>
+    <button class="btn danger">Endgültig löschen</button></form>
+  {% endif %}
+</div></div>
+{% endif %}
+{% endblock %}

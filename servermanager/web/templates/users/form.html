@@ -39,6 +39,21 @@
         </div>
       </div>
     </div>
+    {% if integrations|selectattr(2)|list %}
+    <div class="card">
+      <div class="card-head"><h2>Infrastruktur (API-Verbindungen)</h2></div>
+      <div class="card-body">
+        <p class="muted"><small>Lesen: Status und Überwachung · Bedienen: Start/Stopp, Snapshots, Backups, Leases statisch machen, Dienste ein-/ausschalten · Vollzugriff: anlegen, ändern, löschen.</small></p>
+        <table class="table compact"><tbody>
+        {% for kind, label, objs in integrations %}{% for o in objs %}
+          <tr><td><span class="badge outline">{{ label }}</span> {{ o.name }}</td>
+            <td><select name="int_{{ kind }}_{{ o.id }}"><option value="">kein Zugriff</option>
+              {% for k, v in LEVELS.items() %}<option value="{{ k }}" {% if int_levels.get(kind ~ '_' ~ o.id) == k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></td></tr>
+        {% endfor %}{% endfor %}
+        </tbody></table>
+      </div>
+    </div>
+    {% endif %}
   </div>
   <div class="actions"><button class="btn primary">Speichern</button><a class="btn" href="{{ url_for('users.index') }}">Abbrechen</a></div>
 </form>

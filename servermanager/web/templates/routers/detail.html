@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+{% set help_page = "routeros" %}
+{% from "_macros.html" import csrf, pct_bar, empty, field, checkbox with context %}
+{% from "integrations/_macros.html" import int_status, alerts_box with context %}
+{% block title %}{{ r.name }} · RouterOS{% endblock %}
+{% macro act(action, label, id, cls='xs', confirm='', extra={}) -%}
+  <form method="post" action="{{ url_for('routers.do', router_id=r.id) }}" class="inline" {% if confirm %}data-confirm="{{ confirm }}"{% endif %}>{{ csrf() }}
+    <input type="hidden" name="action" value="{{ action }}"><input type="hidden" name="id" value="{{ id }}">
+    {% for k, v in extra.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+    <button class="btn {{ cls }}">{{ label }}</button></form>
+{%- endmacro %}
+{% macro flags(it) -%}
+  {% if it.dynamic == 'true' %}<span class="badge outline" title="dynamisch">D</span>{% endif %}
+  {% if it.disabled == 'true' %}<span class="badge" title="deaktiviert">aus</span>{% endif %}
+  {% if it.invalid == 'true' %}<span class="badge danger">ungültig</span>{% endif %}
+  {% if (it.comment or '').startswith('servermanager') %}<span class="badge info" title="vom Servermanager angelegt">SM</span>{% endif %}
+{%- endmacro %}
+{% macro rule(it) -%}
+  {%- for k in ['chain', 'action', 'protocol', 'src-address', 'src-address-list', 'dst-address', 'dst-address-list', 'dst-port', 'in-interface', 'in-interface-list', 'out-interface', 'out-interface-list', 'connection-state', 'connection-nat-state', 'connection-mark', 'new-connection-mark', 'new-routing-mark', 'to-addresses', 'to-ports', 'new-mss'] if it[k] is defined and it[k] -%}
+    <code>{{ k }}={{ it[k] }}</code> {% endfor -%}
+{%- endmacro %}
+{% block content %}
+{% set d0 = r.data %}
+<div class="page-head">
+  <div class="grow"><h1>{{ r.name }} {{ int_status(r) }}</h1>
+    <p>{{ d0.identity or '' }} · RouterOS {{ d0.version or '?' }} {{ d0.board or '' }} · {{ r.api_url }} · abgefragt {{ r.last_poll|ago }}</p></div>
+  <div class="actions">
+    <form method="post" action="{{ url_for('routers.refresh', router_id=r.id) }}" class="inline">{{ csrf() }}<input type="hidden" name="tab" value="{{ tab }}"><button class="btn"><svg class="icon"><use href="#i-refresh"/></svg>Aktualisieren</button></form>
+    {% if user.is_admin %}<a class="btn ghost" href="{{ url_for('routers.edit', router_id=r.id) }}"><svg class="icon"><use href="#i-edit"/></svg>Bearbeiten</a>{% endif %}
+  </div>
+</div>
+{{ alerts_box(r) }}
+<nav class="tabs">{% for k, v in tabs.items() %}<a href="?tab={{ k }}" class="{{ 'active' if tab == k }}">{{ v }}</a>{% endfor %}</nav>
+{% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+
+{% if tab == 'overview' and not error %}
+<div class="stats">
+  <div class="stat"><div class="label">CPU</div><div class="value">{{ d0.cpu_load or 0 }} %</div></div>
+  <div class="stat"><div class="label">RAM</div><div class="value">{{ d0.mem_pct or 0 }} %</div><div class="sub">{{ (d0.mem_used or 0)|bytes }} / {{ (d0.mem_total or 0)|bytes }}</div></div>
+  <div class="stat"><div class="label">Laufzeit</div><div class="value" style="font-size:18px">{{ d0.uptime or '–' }}</div></div>
+  <div class="stat"><div class="label">DHCP-Leases</div><div class="value">{{ d0.leases or 0 }}</div><div class="sub">{{ d0.leases_dynamic or 0 }} dynamisch</div></div>
+</div>
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>Interfaces</h2></div><div class="table-wrap"><table class="table compact">
+    <thead><tr><th>Name</th><th>Typ</th><th>Status</th><th class="num">RX</th><th class="num">TX</th></tr></thead><tbody>
+    {% for i in d['interface'] %}<tr><td><strong>{{ i.name }}</strong>{% if i.comment %}<span class="sub">{{ i.comment }}</span>{% endif %}</td><td>{{ i.type }}</td>
+      <td>{% if i.disabled == 'true' %}<span class="badge">aus</span>{% elif i.running == 'true' %}<span class="badge success">aktiv</span>{% else %}<span class="badge warning">kein Link</span>{% endif %}</td>
+      <td class="num"><small>{{ (i['rx-byte'] or 0)|int|bytes }}</small></td><td class="num"><small>{{ (i['tx-byte'] or 0)|int|bytes }}</small></td></tr>{% endfor %}
+  </tbody></table></div></div>
+  <div class="card"><div class="card-head"><h2>IP-Adressen</h2></div><div class="table-wrap"><table class="table compact">
+    <thead><tr><th>Adresse</th><th>Interface</th><th></th></tr></thead><tbody>
+    {% for a in d['ip/address'] %}<tr><td class="mono">{{ a.address }}</td><td>{{ a.interface }}</td><td>{{ flags(a) }}</td></tr>{% endfor %}
+    {% for c in d['ip/dhcp-client'] %}<tr><td class="mono">{{ c.address or 'DHCP' }}</td><td>{{ c.interface }}</td><td><span class="badge outline">DHCP-Client</span> <small>{{ c.status }}</small></td></tr>{% endfor %}
+  </tbody></table></div>
+  {% if int_can('router', r.id, 'operate') %}
+  <div class="card-body"><h4>Konnektivitätstest (Ping vom Router)</h4>
+    <form method="post" action="{{ url_for('routers.do', router_id=r.id) }}" class="inline-form">{{ csrf() }}<input type="hidden" name="action" value="ping">
+      <div class="field"><label>Ziel</label><input type="text" name="address" value="1.1.1.1"></div>
+      <div class="field"><label>Quelle (optional)</label><input type="text" name="src" placeholder="LAN-IP des Routers"></div>
+      <button class="btn">Ping</button></form>
+    <small class="muted">Mit der LAN-IP als Quelle wird der Weg der Dienste ins Internet (NAT/Policy-Routing) geprüft.</small></div>
+  {% endif %}
+  </div>
+</div>
+<div class="card"><div class="card-head"><h2>Routen</h2></div><div class="table-wrap"><table class="table compact">
+  <thead><tr><th>Ziel</th><th>Gateway</th><th>Tabelle</th><th>Distanz</th><th></th></tr></thead><tbody>
+  {% for rt in d['ip/route'] %}<tr class="{{ 'muted' if rt.active != 'true' }}"><td class="mono">{{ rt['dst-address'] }}</td><td class="mono">{{ rt.gateway }}<span class="sub">{{ rt['immediate-gw'] or '' }}</span></td><td>{{ rt['routing-table'] or 'main' }}</td><td>{{ rt.distance }}</td><td>{{ flags(rt) }}{% if rt.active == 'true' %}<span class="badge success">aktiv</span>{% endif %}</td></tr>{% endfor %}
+</tbody></table></div></div>
+
+{% elif tab == 'dhcp' and not error %}
+<div class="card"><div class="card-head"><h2>Leases</h2><input type="search" placeholder="Suchen …" data-filter-list="#lease-table tbody tr" style="max-width:220px"></div>
+  <div class="table-wrap"><table class="table compact" id="lease-table">
+  <thead><tr><th>Adresse</th><th>MAC</th><th>Hostname</th><th>Server</th><th>Status</th><th>Kommentar</th><th></th></tr></thead><tbody>
+  {% for le in d['ip/dhcp-server/lease']|sort(attribute='address') %}
+    <tr><td class="mono">{{ le.address }}</td><td class="mono"><small>{{ le['mac-address'] }}</small></td><td>{{ le['host-name'] or '' }}</td><td>{{ le.server or 'alle' }}</td>
+      <td class="nowrap">{% if le.dynamic == 'true' %}<span class="badge warning">dynamisch</span>{% else %}<span class="badge success">statisch</span>{% endif %}
+        {% if le.status %}<span class="sub">{{ le.status }}</span>{% endif %}</td>
+      <td><small>{{ le.comment or '' }}</small></td>
+      <td class="nowrap text-right">
+        {% if le.dynamic == 'true' and int_can('router', r.id, 'operate') %}{{ act('lease_static', 'Statisch machen', le['.id'], 'xs primary', '', {'comment': 'servermanager: ' ~ (le['host-name'] or le.address)}) }}{% endif %}
+        {% if le.dynamic != 'true' and int_can('router', r.id, 'full') %}{{ act('lease_delete', 'Löschen', le['.id'], 'xs danger-outline', 'Lease ' ~ le.address ~ ' löschen?') }}{% endif %}
+      </td></tr>
+  {% else %}<tr><td colspan="7" class="muted">Keine Leases.</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% if int_can('router', r.id, 'full') %}
+  <div class="card-body"><h4>Statische Lease anlegen</h4>
+    <form method="post" action="{{ url_for('routers.do', router_id=r.id) }}" class="inline-form">{{ csrf() }}<input type="hidden" name="action" value="lease_add">
+      <div class="field"><label>IP</label><input type="text" name="address" required placeholder="10.20.0.50"></div>
+      <div class="field"><label>MAC</label><input type="text" name="mac" required placeholder="BC:24:11:…"></div>
+      <div class="field"><label>Server</label><select name="server"><option value="">alle</option>{% for s in d['ip/dhcp-server'] %}<option>{{ s.name }}</option>{% endfor %}</select></div>
+      <div class="field"><label>Kommentar</label><input type="text" name="comment"></div>
+      <button class="btn">Anlegen</button></form></div>
+  {% endif %}
+</div>
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>DHCP-Server</h2></div><div class="table-wrap"><table class="table compact">
+    <thead><tr><th>Name</th><th>Interface</th><th>Pool</th><th>Lease-Zeit</th><th></th></tr></thead><tbody>
+    {% for s in d['ip/dhcp-server'] %}<tr><td>{{ s.name }}</td><td>{{ s.interface }}</td><td>{{ s['address-pool'] }}{% for p in d['ip/pool'] if p.name == s['address-pool'] %}<span class="sub mono">{{ p.ranges }}</span>{% endfor %}</td><td>{{ s['lease-time'] }}</td><td>{{ flags(s) }}</td></tr>{% endfor %}
+  </tbody></table></div></div>
+  <div class="card"><div class="card-head"><h2>DHCP-Netze</h2></div><div class="table-wrap"><table class="table compact">
+    <thead><tr><th>Netz</th><th>Gateway</th><th>DNS</th></tr></thead><tbody>
+    {% for n in d['ip/dhcp-server/network'] %}<tr><td class="mono">{{ n.address }}</td><td class="mono">{{ n.gateway }}</td><td class="mono">{{ n['dns-server'] or '–' }}</td></tr>{% endfor %}
+  </tbody></table></div></div>
+</div>
+
+{% elif tab == 'nat' and not error %}
+<div class="card"><div class="card-head"><h2>NAT-Regeln</h2></div><div class="table-wrap"><table class="table compact">
+  <thead><tr><th>#</th><th>Regel</th><th>Kommentar</th><th></th></tr></thead><tbody>
+  {% for n in d['ip/firewall/nat'] %}
+    <tr class="{{ 'muted' if n.disabled == 'true' }}"><td>{{ loop.index0 }}</td><td>{{ rule(n) }} {{ flags(n) }}</td><td><small>{{ n.comment or '' }}</small></td>
+      <td class="nowrap text-right">
+        {% if int_can('router', r.id, 'operate') %}{{ act('nat_toggle', 'Aktivieren' if n.disabled == 'true' else 'Deaktivieren', n['.id'], 'xs', '' if n.disabled == 'true' else 'NAT-Regel deaktivieren?', {'disabled': 'no' if n.disabled == 'true' else 'yes'}) }}{% endif %}
+        {% if int_can('router', r.id, 'full') and n.dynamic != 'true' %}{{ act('nat_delete', 'Löschen', n['.id'], 'xs danger-outline', 'NAT-Regel löschen?') }}{% endif %}
+      </td></tr>
+  {% else %}<tr><td colspan="4" class="muted">Keine NAT-Regeln.</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% if int_can('router', r.id, 'full') %}
+  <div class="card-body"><h4>Portweiterleitung anlegen</h4>
+    <p class="muted"><small>Über Pangolin veröffentlichte Dienste brauchen keine Portweiterleitung – nur für Dienste, die direkt über die öffentliche IP erreichbar sein müssen (z. B. WireGuard zu einem internen Host).</small></p>
+    <form method="post" action="{{ url_for('routers.do', router_id=r.id) }}" class="inline-form">{{ csrf() }}<input type="hidden" name="action" value="nat_add">
+      <div class="field"><label>Protokoll</label><select name="protocol"><option>tcp</option><option>udp</option></select></div>
+      <div class="field"><label>Port(s) außen</label><input type="text" name="dst_port" required placeholder="443"></div>
+      <div class="field"><label>Eingang</label><select name="in_interface">{% for i in d['interface'] %}<option>{{ i.name }}</option>{% endfor %}</select></div>
+      <div class="field"><label>Ziel-IP</label><input type="text" name="to_address" required placeholder="10.20.0.50"></div>
+      <div class="field"><label>Ziel-Port</label><input type="text" name="to_ports" placeholder="wie außen"></div>
+      <div class="field"><label>Kommentar</label><input type="text" name="comment"></div>
+      <button class="btn">Anlegen</button></form></div>
+  {% endif %}
+</div>
+
+{% elif tab == 'routing' and not error %}
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>Routing-Tabellen</h2></div><div class="table-wrap"><table class="table compact"><tbody>
+    {% for t in d['routing/table'] %}<tr><td>{{ t.name }}</td><td>{{ 'fib' if t.fib == 'true' or t.fib == '' else '' }}</td><td>{{ flags(t) }}</td></tr>{% endfor %}
+  </tbody></table></div></div>
+  <div class="card"><div class="card-head"><h2>Routing-Regeln</h2></div><div class="table-wrap"><table class="table compact"><tbody>
+    {% for t in d['routing/rule'] %}<tr><td>{{ rule(t) }} <code>table={{ t.table }}</code> <code>action={{ t.action }}</code></td></tr>{% else %}<tr><td class="muted">keine</td></tr>{% endfor %}
+  </tbody></table></div></div>
+</div>
+<div class="card"><div class="card-head"><h2>Mangle</h2></div><div class="table-wrap"><table class="table compact">
+  <thead><tr><th>#</th><th>Regel</th><th>Kommentar</th></tr></thead><tbody>
+  {% for m in d['ip/firewall/mangle'] %}<tr class="{{ 'muted' if m.disabled == 'true' }}"><td>{{ loop.index0 }}</td><td>{{ rule(m) }} {{ flags(m) }}</td><td><small>{{ m.comment or '' }}</small></td></tr>
+  {% else %}<tr><td colspan="3" class="muted">Keine Mangle-Regeln.</td></tr>{% endfor %}
+  </tbody></table></div></div>
+<div class="card"><div class="card-head"><h2>Statische Routen</h2></div><div class="table-wrap"><table class="table compact">
+  <thead><tr><th>Ziel</th><th>Gateway</th><th>Tabelle</th><th>Kommentar</th><th></th></tr></thead><tbody>
+  {% for rt in d['ip/route'] if rt.dynamic != 'true' %}<tr><td class="mono">{{ rt['dst-address'] }}</td><td class="mono">{{ rt.gateway }}</td><td>{{ rt['routing-table'] or 'main' }}</td><td><small>{{ rt.comment or '' }}</small></td>
+    <td class="text-right">{% if int_can('router', r.id, 'full') %}{{ act('route_delete', 'Löschen', rt['.id'], 'xs danger-outline', 'Route ' ~ rt['dst-address'] ~ ' löschen? (Achtung bei der Default-Route!)') }}{% endif %}</td></tr>
+  {% endfor %}</tbody></table></div>
+  {% if int_can('router', r.id, 'full') %}
+  <div class="card-body"><form method="post" action="{{ url_for('routers.do', router_id=r.id) }}" class="inline-form">{{ csrf() }}<input type="hidden" name="action" value="route_add">
+    <div class="field"><label>Ziel</label><input type="text" name="dst" required placeholder="192.168.50.0/24"></div>
+    <div class="field"><label>Gateway</label><input type="text" name="gateway" required></div>
+    <div class="field"><label>Tabelle</label><select name="table"><option>main</option>{% for t in d['routing/table'] if t.name != 'main' %}<option>{{ t.name }}</option>{% endfor %}</select></div>
+    <div class="field"><label>Kommentar</label><input type="text" name="comment"></div>
+    <button class="btn">Route anlegen</button></form></div>
+  {% endif %}
+</div>
+
+{% elif tab == 'firewall' and not error %}
+<div class="alert info">Firewall-Regeln werden hier nur angezeigt. Änderungen an der Firewall schlägt die Konfigurationsanalyse als Skript vor – so kann sich niemand versehentlich aussperren.</div>
+{% for chain in ['input', 'forward', 'output'] %}
+<div class="card"><div class="card-head"><h2>Filter: {{ chain }}</h2></div><div class="table-wrap"><table class="table compact">
+  <tbody>{% for f in d['ip/firewall/filter'] if f.chain == chain %}<tr class="{{ 'muted' if f.disabled == 'true' }}"><td>{{ rule(f) }} {{ flags(f) }}</td><td><small>{{ f.comment or '' }}</small></td></tr>
+  {% else %}<tr><td class="muted">Keine Regeln (alles erlaubt).</td></tr>{% endfor %}</tbody></table></div></div>
+{% endfor %}
+<div class="card"><div class="card-head"><h2>Adresslisten</h2></div><div class="table-wrap"><table class="table compact">
+  <thead><tr><th>Liste</th><th>Adresse</th><th>Kommentar</th></tr></thead><tbody>
+  {% for a in d['ip/firewall/address-list']|sort(attribute='list') %}<tr><td>{{ a.list }}</td><td class="mono">{{ a.address }}</td><td><small>{{ a.comment or '' }}</small> {{ flags(a) }}</td></tr>{% endfor %}
+</tbody></table></div></div>
+
+{% elif tab == 'dns' and not error %}
+{% set dns = (d['ip/dns'] or [{}])[0] %}
+<div class="card"><div class="card-head"><h2>DNS</h2></div><div class="card-body"><dl class="kv">
+  <dt>Server</dt><dd class="mono">{{ dns.servers or '–' }}</dd><dt>Dynamisch</dt><dd class="mono">{{ dns['dynamic-servers'] or '–' }}</dd>
+  <dt>Anfragen aus dem Netz</dt><dd>{{ 'erlaubt' if dns['allow-remote-requests'] == 'true' else 'nicht erlaubt' }}</dd></dl></div></div>
+<div class="card"><div class="card-head"><h2>Statische Einträge</h2></div><div class="table-wrap"><table class="table compact">
+  <thead><tr><th>Name</th><th>Adresse</th><th>Kommentar</th><th></th></tr></thead><tbody>
+  {% for e in d['ip/dns/static'] %}<tr><td>{{ e.name or e.regexp }}</td><td class="mono">{{ e.address or e.cname or '' }}</td><td><small>{{ e.comment or '' }}</small></td>
+    <td class="text-right">{% if int_can('router', r.id, 'full') %}{{ act('dns_delete', 'Löschen', e['.id'], 'xs danger-outline', 'Eintrag löschen?') }}{% endif %}</td></tr>
+  {% else %}<tr><td colspan="4" class="muted">Keine Einträge.</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% if int_can('router', r.id, 'full') %}
+  <div class="card-body"><form method="post" action="{{ url_for('routers.do', router_id=r.id) }}" class="inline-form">{{ csrf() }}<input type="hidden" name="action" value="dns_add">
+    <div class="field"><label>Name</label><input type="text" name="name" required placeholder="nextcloud.lan"></div>
+    <div class="field"><label>Adresse</label><input type="text" name="address" required></div>
+    <div class="field"><label>Kommentar</label><input type="text" name="comment"></div>
+    <button class="btn">Anlegen</button></form></div>
+  {% endif %}
+</div>
+
+{% elif tab == 'analysis' %}
+{% include "routers/_analysis.html" %}
+{% endif %}
+{% endblock %}

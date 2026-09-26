@@ -12,7 +12,7 @@ from ...jobs import enqueue, log_path as job_log_path, new_batch_id
 from ...mikrotik import MikroTikError
 from ...models import (AUTH_KEY, AUTH_METHODS, AUTH_PASSWORD, CONN_DIRECT, CONN_WIREGUARD, LEVEL_FULL,
                        LEVEL_OPERATE, LEVEL_VIEW, LEVELS, SUDO_MODES, SUDO_NONE, SUDO_PASSWORD, Job, System,
-                       SystemAccess, SystemBackup, User)
+                       PveServer, SystemAccess, SystemBackup, User)
 from ...modules import MODULES, ParamError, get_module, modules_for
 from ...ssh import SSHError
 from ..auth import can, client_ip, get_system_or_403, login_required, manager_required
@@ -155,6 +155,16 @@ def _form_to_system(system: System, form, is_new: bool) -> list[str]:
         system.backup_paths = " ".join(sysbackup.parse_paths(form.get("backup_paths", "/etc")))
     except ValueError as exc:
         errors.append(str(exc))
+    if g.user.is_admin and "pve_server_id" in form:
+        # linking grants power control of the guest to everybody with operate rights on the system
+        pid, vmid = form.get("pve_server_id", ""), form.get("pve_vmid", "").strip()
+        if pid.isdigit() and g.db.get(PveServer, int(pid)):
+            if not vmid.isdigit() or not 100 <= int(vmid) <= 999999999:
+                errors.append("Für die Proxmox-Verknüpfung die VMID angeben.")
+            else:
+                system.pve_server_id, system.pve_vmid = int(pid), int(vmid)
+        else:
+            system.pve_server_id, system.pve_vmid = None, None
     return errors
 
 
@@ -190,11 +200,18 @@ def new():
         if job:
             return redirect(url_for("jobs.detail", job_id=job.id))
         return redirect(url_for("systems.detail", system_id=system.id))
+    # prefill (e.g. "Als System verwalten" on a Proxmox container)
+    system.name = request.args.get("name", "")[:128]
+    system.host = request.args.get("host", "")[:255]
+    if g.user.is_admin and request.args.get("pve", "").isdigit() and request.args.get("vmid", "").isdigit():
+        system.pve_server_id, system.pve_vmid = int(request.args["pve"]), int(request.args["vmid"])
     return render_template("systems/form.html", system=system, is_new=True, **_form_ctx())
 
 
 def _form_ctx() -> dict:
-    return {"auth_methods": AUTH_METHODS, "sudo_modes": SUDO_MODES, "sm_pubkey": sshkeys.public_key()}
+    pve_servers = g.db.execute(select(PveServer).order_by(PveServer.name)).scalars().all() if g.user.is_admin else []
+    return {"auth_methods": AUTH_METHODS, "sudo_modes": SUDO_MODES, "sm_pubkey": sshkeys.public_key(),
+            "pve_servers": pve_servers}
 
 
 @bp.route("/<int:system_id>/edit", methods=["GET", "POST"])
@@ -286,9 +303,15 @@ def detail(system_id: int):
     if g.user.is_admin:
         access_rows = g.db.execute(select(SystemAccess).where(SystemAccess.system_id == system.id)).scalars().all()
         users = g.db.execute(select(User).order_by(User.username)).scalars().all()
+    pve_guest = None
+    if system.pve_server_id and system.pve_vmid:
+        srv = g.db.get(PveServer, system.pve_server_id)
+        if srv is not None:
+            guest = next((x for x in srv.data.get("guests", []) if x.get("vmid") == system.pve_vmid), None)
+            pve_guest = {"server": srv, "guest": guest}
     return render_template("systems/detail.html", system=system, tab=tab, mods=mods, jobs=jobs, backups=backups,
                            summary=inventory.update_summary(system), access_rows=access_rows, users=users,
-                           level=access.system_level(g.db, g.user, system.id))
+                           level=access.system_level(g.db, g.user, system.id), pve_guest=pve_guest)
 
 
 @bp.get("/<int:system_id>/panel/<module_key>")

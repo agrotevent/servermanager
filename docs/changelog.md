@@ -2,6 +2,34 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.2.0 – 26.09.2026
+
+### Neu
+
+- **Proxmox VE über die API:** mehrere Server/Cluster mit API-Token (auch automatisch per SSH
+  eingerichtet) und Zertifikats-Pinning; Container und VMs starten, herunterfahren, neu starten,
+  stoppen, Snapshots, Sicherungen (vzdump), Ressourcen ändern, Disk vergrößern, löschen; Verlauf von
+  CPU/RAM/Netz/Disk als Diagramme; Überwachung mit Warnungen (Node offline, Quorum, überwachter Gast
+  läuft nicht, Disk/Storage voll).
+- **Container anlegen** mit Vorlagen-Download, DHCP oder statischer IP, SSH-Schlüssel des
+  Servermanagers; optional direkt als System aufnehmen, DHCP-Lease auf dem RouterOS statisch machen und
+  über Pangolin veröffentlichen.
+- Systeme lassen sich einem Proxmox-Gast zuordnen: Start/Stopp auf der System-Seite mit den Rechten des
+  Systems.
+- **RouterOS über die API** (mehrere Router, z. B. CHR): Übersicht, DHCP/Leases (statisch machen),
+  NAT/Portweiterleitungen, Routing & Mangle, Firewall-Anzeige, DNS, Ping-Test.
+- **Konfigurationsanalyse** für bestehende Router: Import per API oder `/export`, Soll-Ist-Vergleich
+  (WAN, LAN/DHCP, DNS, NAT, Policy-Routing mit Mangle, FastTrack, MSS-Clamping, Firewall, Dienste),
+  Anwenden unkritischer Änderungen mit vorheriger Sicherung, Skript für den Rest.
+- **Pangolin:** Dienste mit Domain und Ziel (IP:Port) veröffentlichen, Ziele und Anmeldung verwalten,
+  Überwachung der Newt-Sites.
+- Rechte je API-Verbindung (Lesen/Bedienen/Vollzugriff) in der Benutzerverwaltung, Warnungen auf dem
+  Dashboard und per E-Mail, neue Hilfeseiten.
+
+### Geändert
+
+- Datenbank-Schema Version 2 (wird beim Update automatisch migriert).
+
 ## 1.1.0 – 23.09.2026
 
 ### Neu

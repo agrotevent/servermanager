@@ -71,6 +71,10 @@ DEFAULTS: dict[str, Any] = {
     "mail.sender": "",
     "mail.admin_recipients": "",
     "mail.notify_failures": True,
+    # API connections (Proxmox, RouterOS, Pangolin)
+    "integrations.poll_min": 5,
+    "integrations.disk_alert_pct": 90,
+    "integrations.notify": True,
     # cached state
     "state.ispconfig_latest": "",
     "state.ispconfig_checked": "",

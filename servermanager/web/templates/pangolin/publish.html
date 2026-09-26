@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% set help_page = "pangolin" %}
+{% from "_macros.html" import csrf, field, checkbox with context %}
+{% block title %}Dienst veröffentlichen · {{ p.name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>Dienst veröffentlichen</h1>
+  <p>Legt in <a href="{{ url_for('pangolin.detail', pg_id=p.id) }}">{{ p.name }}</a> eine Resource mit Domain und Ziel (IP:Port im internen Netz) an. Der Newt-Client der gewählten Site leitet die Anfragen weiter.</p></div></div>
+<form method="post" autocomplete="off">{{ csrf() }}
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>Öffentliche Adresse</h2></div><div class="card-body"><div class="form-grid">
+    {{ field('Name', 'name', f.get('name', ''), required=True, placeholder='Nextcloud') }}
+    <div class="field"><label>Art</label><select name="protocol">{% for k, v in protocols.items() %}<option value="{{ k }}" {% if f.get('protocol', 'http') == k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></div>
+    <div class="full form-grid" data-show-for="protocol=http">
+      {{ field('Subdomain', 'subdomain', f.get('subdomain', ''), placeholder='cloud', help='leer = Basisdomain selbst') }}
+      <div class="field"><label>Domain</label><select name="domain_id">{% for d in domains %}<option value="{{ d.domainId }}" {% if (f.get('domain_id') or p.default_domain_id) == d.domainId %}selected{% endif %}>{{ d.baseDomain }}</option>{% endfor %}</select></div>
+      <div class="full">{{ checkbox('Pangolin-Anmeldung (SSO) vorschalten', 'sso', request.method == 'GET' or f.get('sso'), 'Ohne Anmeldung ist der Dienst für jeden im Internet erreichbar.') }}</div>
+    </div>
+    <div class="full" data-show-for="protocol=tcp,udp">
+      {{ field('Öffentlicher Port', 'proxy_port', f.get('proxy_port', ''), type='number', help='Muss in Pangolin/Gerbil freigegeben sein') }}
+    </div>
+  </div></div></div>
+  <div class="card"><div class="card-head"><h2>Ziel im internen Netz</h2></div><div class="card-body"><div class="form-grid">
+    <div class="field full"><label>Site (Newt)</label><select name="site_id">{% for s in sites %}<option value="{{ s.siteId }}" {% if (f.get('site_id') or p.default_site_id)|string == s.siteId|string %}selected{% endif %}>{{ s.name }}{% if not s.online %} (offline!){% endif %}</option>{% endfor %}</select></div>
+    {{ field('IP-Adresse', 'ip', f.get('ip', ''), required=True, placeholder='10.20.0.50', help='Tipp: DHCP-Lease auf dem RouterOS statisch machen') }}
+    {{ field('Port', 'port', f.get('port', '80'), type='number', required=True, attrs='min="1" max="65535"') }}
+    <div class="field" data-show-for="protocol=http"><label>Ziel spricht</label><select name="method">{% for k, v in methods.items() %}<option value="{{ k }}" {% if f.get('method') == k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></div>
+  </div></div></div>
+</div>
+<div class="actions mt-1"><button class="btn primary">Veröffentlichen</button><a class="btn" href="{{ url_for('pangolin.detail', pg_id=p.id) }}">Abbrechen</a></div>
+</form>
+{% endblock %}

@@ -84,8 +84,18 @@ def create_app(testing: bool = False) -> Flask:
             "csrf_token": csrf_token, "can": can, "user": g.get("user"), "site_name": site,
             "version": __version__, "MODULES": MODULES, "TYPE_LABELS": TYPE_LABELS, "LEVELS": LEVELS,
             "ROLES": ROLES, "STATUSES": STATUSES, "JOB_STATUSES": JOB_STATUSES, "CONNECTIONS": CONNECTIONS,
-            "now": utcnow(),
+            "now": utcnow(), "nav_integrations": _nav_integrations, "int_can": _int_can,
         }
+
+    def _int_can(kind: str, obj_id: int, level: str) -> bool:
+        from .views._integration import can as int_can
+        return int_can(kind, obj_id, level)
+
+    def _nav_integrations() -> set:
+        if "nav_int" not in g:
+            from .. import access
+            g.nav_int = access.any_integration_access(g.db, g.user) if g.get("user") else set()
+        return g.nav_int
 
     def _tz():
         if "tz" not in g:
@@ -188,9 +198,10 @@ def create_app(testing: bool = False) -> Flask:
         return re.sub(r"[^a-z0-9]+", "-", (value or "").lower()).strip("-")
 
     # ---- blueprints ------------------------------------------------------------
-    from .views import admin, auth_views, enroll, help, jobs, main, schedules, systems, updates, users, wg
+    from .views import (admin, auth_views, enroll, help, jobs, main, pangolin, pve, routers, schedules, systems,
+                        updates, users, wg)
     for bp in (auth_views.bp, main.bp, systems.bp, updates.bp, schedules.bp, jobs.bp, enroll.bp,
-               wg.bp, users.bp, admin.bp, help.bp):
+               wg.bp, users.bp, admin.bp, help.bp, pve.bp, routers.bp, pangolin.bp):
         app.register_blueprint(bp)
 
     @app.get("/healthz")

@@ -10,6 +10,13 @@ einem MikroTik (RouterOS 7)** oder direkt per SSH für bestehende Systeme ohne T
   einmalig, täglich, wöchentlich, monatlich, mit Wartungsfenster, Neustart-Regel und E-Mail-Bericht
 - Enrollment per Skript: neue Geräte fordern ihren WireGuard-Zugang selbst an; der Servermanager
   legt Peer, Routing und Adressliste auf dem MikroTik an und nimmt das Gerät in die Verwaltung auf
+- **Proxmox VE über die API** (ein oder mehrere Server/Cluster): Container und VMs steuern, überwachen
+  (Verlauf, Warnungen) und Container anlegen – auf Wunsch direkt als System verwaltet, mit fixierter
+  DHCP-Lease und über Pangolin veröffentlicht
+- **RouterOS über die API** (z. B. CHR mit öffentlicher IP): DHCP/Leases, NAT, Routing, DNS und eine
+  Konfigurationsanalyse für bestehende Router (NAT/Mangle/Policy-Routing, Firewall, Dienste)
+- **Pangolin**: Dienste aus dem internen Netz per Domain und Ziel-IP:Port veröffentlichen, Newt-Sites
+  überwachen
 - Benutzerverwaltung mit Rollen und Rechten je System, Zwei-Faktor-Anmeldung, Audit-Log
 - Backup/Restore des Servermanagers (optional verschlüsselt) und Konfigurations-Backups der Systeme
 - Update des Servermanagers per Klick aus dem Git-Repository (mit automatischer Sicherung und Rollback)
@@ -39,6 +46,7 @@ einem MikroTik (RouterOS 7)** oder direkt per SSH für bestehende Systeme ohne T
 |---|---|
 | `servermanager-web` | Weboberfläche und Enrollment-API (gunicorn hinter nginx) |
 | `servermanager-worker` | führt Jobs aus, prüft regelmäßig Status/Updates, startet Wartungspläne, erstellt automatische Backups |
+| API-Verbindungen | Proxmox-API (Port 8006), RouterOS-REST (`www-ssl`), Pangolin-Integration-API – vom Web-Prozess und Worker abgefragt |
 | `bin/sm-helper` | kleiner, streng prüfender Root-Helfer (per sudo) für WireGuard, Self-Update und Restore |
 | Zielsysteme | werden per SSH (Schlüssel und/oder Passwort, optional sudo) verwaltet; auf den Zielen wird **kein Agent** installiert |
 

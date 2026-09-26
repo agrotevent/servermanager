@@ -8,7 +8,8 @@ from sqlalchemy import func, select
 
 from ... import security
 from ...core import audit
-from ...models import LEVELS, ROLE_ADMIN, ROLES, System, SystemAccess, User
+from ...integrations import MODELS as INTEGRATION_MODELS
+from ...models import INTEGRATION_KINDS, LEVELS, ROLE_ADMIN, ROLES, IntegrationAccess, System, SystemAccess, User
 from ..auth import admin_required, client_ip
 
 bp = Blueprint("users", __name__, url_prefix="/users")
@@ -75,6 +76,34 @@ def _save_access(user: User) -> None:
             g.db.delete(rows[system.id])
 
 
+def _integration_objects() -> list[tuple[str, str, list]]:
+    return [(kind, INTEGRATION_KINDS[kind], g.db.execute(select(model).order_by(model.name)).scalars().all())
+            for kind, model in INTEGRATION_MODELS.items()]
+
+
+def _integration_levels(user: User) -> dict[str, str]:
+    if user.id is None:
+        return {}
+    return {f"{a.kind}_{a.obj_id}": a.level for a in g.db.execute(
+        select(IntegrationAccess).where(IntegrationAccess.user_id == user.id)).scalars()}
+
+
+def _save_integration_access(user: User) -> None:
+    rows = {(a.kind, a.obj_id): a for a in g.db.execute(
+        select(IntegrationAccess).where(IntegrationAccess.user_id == user.id)).scalars()}
+    for kind, _label, objs in _integration_objects():
+        for obj in objs:
+            level = request.form.get(f"int_{kind}_{obj.id}", "")
+            row = rows.get((kind, obj.id))
+            if level in LEVELS:
+                if row:
+                    row.level = level
+                else:
+                    g.db.add(IntegrationAccess(user_id=user.id, kind=kind, obj_id=obj.id, level=level))
+            elif row:
+                g.db.delete(row)
+
+
 @bp.route("/new", methods=["GET", "POST"])
 @admin_required
 def new():
@@ -85,15 +114,18 @@ def new():
         if errors:
             for e in errors:
                 flash(e, "danger")
-            return render_template("users/form.html", u=user, is_new=True, systems=systems, levels_by_system={})
+            return render_template("users/form.html", u=user, is_new=True, systems=systems, levels_by_system={},
+                                   integrations=_integration_objects(), int_levels={})
         g.db.add(user)
         g.db.flush()
         _save_access(user)
+        _save_integration_access(user)
         audit(g.db, g.user, "user.create", user.username, user.role, ip=client_ip())
         g.db.commit()
         flash(f"Benutzer '{user.username}' angelegt.", "success")
         return redirect(url_for("users.index"))
-    return render_template("users/form.html", u=user, is_new=True, systems=systems, levels_by_system={})
+    return render_template("users/form.html", u=user, is_new=True, systems=systems, levels_by_system={},
+                           integrations=_integration_objects(), int_levels={})
 
 
 @bp.route("/<int:user_id>", methods=["GET", "POST"])
@@ -112,12 +144,14 @@ def edit(user_id: int):
                 flash(e, "danger")
             return redirect(url_for("users.edit", user_id=user_id))
         _save_access(user)
+        _save_integration_access(user)
         audit(g.db, g.user, "user.update", user.username, user.role, ip=client_ip())
         g.db.commit()
         flash("Benutzer gespeichert.", "success")
         return redirect(url_for("users.index"))
     return render_template("users/form.html", u=user, is_new=False, systems=systems,
-                           levels_by_system=levels_by_system)
+                           levels_by_system=levels_by_system, integrations=_integration_objects(),
+                           int_levels=_integration_levels(user))
 
 
 @bp.post("/<int:user_id>/reset-2fa")

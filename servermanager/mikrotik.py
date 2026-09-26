@@ -7,6 +7,8 @@ from typing import Any, Optional
 import requests
 import urllib3
 
+from . import tlspin
+
 log = logging.getLogger(__name__)
 
 
@@ -15,7 +17,8 @@ class MikroTikError(Exception):
 
 
 class MikroTik:
-    def __init__(self, url: str, user: str, password: str, verify_tls: bool = False, timeout: int = 15):
+    def __init__(self, url: str, user: str, password: str, verify_tls: bool = False, timeout: int = 15,
+                 fingerprint: str = ""):
         url = (url or "").strip().rstrip("/")
         if not url:
             raise MikroTikError("Keine MikroTik-API-URL konfiguriert")
@@ -27,9 +30,17 @@ class MikroTik:
         self.session = requests.Session()
         self.session.auth = (user, password)
         self.session.verify = verify_tls
+        self.session.trust_env = False  # never send credentials through a proxy from the environment
         self.session.headers["Content-Type"] = "application/json"
         self.timeout = timeout
-        if not verify_tls:
+        if fingerprint and url.startswith("https://"):
+            try:
+                adapter = tlspin.PinnedAdapter(fingerprint)
+            except tlspin.PinError as exc:
+                raise MikroTikError(str(exc)) from exc
+            self.session.verify = False
+            self.session.mount(url + "/", adapter)
+        elif not verify_tls:
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     @classmethod
@@ -77,6 +88,16 @@ class MikroTik:
 
     def delete(self, path: str, item_id: str) -> None:
         self._req("DELETE", f"{path}/{item_id}")
+
+    def command(self, path: str, data: Optional[dict] = None, timeout: Optional[int] = None) -> Any:
+        """Run a console command (POST /rest/<menu>/<command>), e.g. ip/dhcp-server/lease/make-static."""
+        if timeout:
+            old, self.timeout = self.timeout, timeout
+            try:
+                return self._req("POST", path, data=data or {})
+            finally:
+                self.timeout = old
+        return self._req("POST", path, data=data or {})
 
     # ------------------------------------------------------------------
     def identity(self) -> str:

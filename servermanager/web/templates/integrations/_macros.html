@@ -1,0 +1,65 @@
+{% from "_macros.html" import field, textarea, checkbox %}
+{% macro int_status(o) -%}
+  {%- set cls = {'online': 'success', 'error': 'danger'}.get(o.status, '') -%}
+  <span class="badge {{ cls }}" title="{{ o.status_message }}"><span class="dot"></span>{{ {'online': 'Online', 'error': 'Fehler'}.get(o.status, 'Unbekannt') }}</span>
+{%- endmacro %}
+
+{% macro alerts_box(o) -%}
+  {% if o.alert_list %}
+  <div class="alert {{ 'danger' if o.alert_list|selectattr('severity', 'equalto', 'crit')|list else 'warning' }}">
+    <svg class="icon"><use href="#i-alert"/></svg>
+    <div>{% for a in o.alert_list %}<div>{{ a.text }} <small class="muted">seit {{ a.since|dt }}</small></div>{% endfor %}</div>
+  </div>
+  {% endif %}
+{%- endmacro %}
+
+{# common connection fields: name, description, URL, TLS pinning, monitoring #}
+{% macro conn_fields(o, url_label, url_placeholder, url_help, fp_help) -%}
+  {{ field('Name', 'name', o.name, required=True) }}
+  {{ field(url_label, 'api_url', o.api_url, required=True, placeholder=url_placeholder, help=url_help) }}
+  <div class="field full">
+    <label for="f-fingerprint">Zertifikats-Fingerabdruck (SHA-256)</label>
+    <div class="flex">
+      <input type="text" id="f-fingerprint" name="fingerprint" value="{{ o.fingerprint or '' }}" class="mono grow" placeholder="AA:BB:CC:…">
+      <button class="btn" name="fetch_fp" value="1" formnovalidate>Abrufen</button>
+    </div>
+    <span class="help">{{ fp_help }} Der Fingerabdruck wird festgeschrieben – ändert sich das Zertifikat, schlägt die Verbindung fehl, statt einem fremden Server zu vertrauen.</span>
+  </div>
+  <div class="full">
+    {{ checkbox('Zertifikat stattdessen über die System-CAs prüfen (z. B. Let’s Encrypt)', 'verify_ca', o.verify_ca) }}
+    {{ checkbox('Überwachen (Status regelmäßig abfragen, Warnungen melden)', 'monitor', o.monitor) }}
+  </div>
+  {{ textarea('Beschreibung', 'description', o.description, rows=2, cls='full') }}
+{%- endmacro %}
+
+{# line chart rendered server side (see web/charts.py); app.js adds the crosshair tooltip #}
+{% macro line_chart(ch) -%}
+<figure class="chart" data-chart>
+  <figcaption class="chart-title">{{ ch.title }}</figcaption>
+  {% if ch.labels|length > 1 %}
+  <div class="chart-legend">{% for l in ch.labels %}<span><i class="key {{ ch.classes[loop.index0] }}"></i>{{ l }}</span>{% endfor %}</div>
+  {% endif %}
+  <div class="chart-box">
+    <svg viewBox="0 0 {{ ch.w }} {{ ch.h }}" role="img" aria-label="{{ ch.title }}" preserveAspectRatio="none"
+         data-points='{{ ch.points|tojson|forceescape }}' data-labels='{{ ch.labels|tojson|forceescape }}'
+         data-classes='{{ ch.classes|tojson|forceescape }}' data-x0="{{ ch.plot.x0 }}" data-x1="{{ ch.plot.x1 }}">
+      {% for t in ch.yticks %}
+        <line class="grid" x1="{{ ch.plot.x0 }}" x2="{{ ch.plot.x1 }}" y1="{{ t.y }}" y2="{{ t.y }}"/>
+        <text class="tick" x="{{ ch.plot.x0 - 6 }}" y="{{ t.y + 4 }}" text-anchor="end">{{ t.label }}</text>
+      {% endfor %}
+      {% for t in ch.xticks %}<text class="tick" x="{{ t.x }}" y="{{ ch.h - 6 }}" text-anchor="{{ 'start' if loop.first else ('end' if loop.last else 'middle') }}">{{ t.label }}</text>{% endfor %}
+      {% for srs in ch.series %}
+        <path class="line {{ srs.cls }}" d="{{ srs.path }}"/>
+        {% if srs.last %}<text class="end-label" x="{{ srs.last.x + 6 }}" y="{{ srs.last.y + 4 }}">{{ srs.last.text }}</text>{% endif %}
+      {% endfor %}
+      <line class="crosshair hidden" x1="0" x2="0" y1="{{ ch.plot.y0 }}" y2="{{ ch.plot.y1 }}"/>
+      <rect class="hit" x="{{ ch.plot.x0 }}" y="{{ ch.plot.y0 }}" width="{{ ch.plot.x1 - ch.plot.x0 }}" height="{{ ch.plot.y1 - ch.plot.y0 }}"/>
+    </svg>
+    <div class="chart-tip hidden" role="status"></div>
+  </div>
+  <details class="chart-table"><summary>Tabelle</summary>
+    <table class="table compact"><thead><tr><th>Zeit</th>{% for l in ch.labels %}<th class="num">{{ l }}</th>{% endfor %}</tr></thead>
+      <tbody>{% for r in ch.table %}<tr><td>{{ r.t }}</td>{% for v in r.v %}<td class="num">{{ v }}</td>{% endfor %}</tr>{% endfor %}</tbody></table>
+  </details>
+</figure>
+{%- endmacro %}

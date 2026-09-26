@@ -23,6 +23,9 @@ KIND_LABELS = {
     "deploy_key": "SSH-Schlüssel installieren",
     "enroll_verify": "Enrollment-Prüfung",
     "sm_backup": "Servermanager-Backup",
+    "pve": "Proxmox",
+    "pve_create": "Container anlegen",
+    "pve_token": "Proxmox-Token einrichten",
 }
 
 
@@ -36,8 +39,8 @@ def new_batch_id() -> str:
 
 def enqueue(db: Session, *, kind: str, title: str, system: Optional[System] = None, user: Optional[User] = None,
             payload: Optional[dict] = None, batch_id: str = "", run_id: Optional[int] = None,
-            not_after: Optional[datetime] = None) -> Job:
-    job = Job(kind=kind, title=title[:255], system_id=system.id if system else None,
+            not_after: Optional[datetime] = None, pve_id: Optional[int] = None) -> Job:
+    job = Job(kind=kind, title=title[:255], system_id=system.id if system else None, pve_id=pve_id,
               user_id=user.id if user else None, payload=payload or {}, batch_id=batch_id,
               run_id=run_id, not_after=not_after, status=JOB_QUEUED, created_at=utcnow())
     db.add(job)

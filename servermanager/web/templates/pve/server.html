@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% set help_page = "proxmox" %}
+{% from "_macros.html" import csrf, pct_bar, empty, job_badge with context %}
+{% from "integrations/_macros.html" import int_status, alerts_box with context %}
+{% block title %}{{ s.name }} · Proxmox{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>{{ s.name }} {{ int_status(s) }}</h1>
+    <p>{{ s.api_url }}{% if data.cluster %} · Cluster <strong>{{ data.cluster.name }}</strong> ({{ 'Quorum ok' if data.cluster.quorate else 'KEIN Quorum' }}){% endif %}{% if data.version %} · Proxmox VE {{ data.version }}{% endif %} · abgefragt {{ s.last_poll|ago }}</p></div>
+  <div class="actions">
+    <form method="post" action="{{ url_for('pve.refresh', pve_id=s.id) }}" class="inline">{{ csrf() }}<button class="btn"><svg class="icon"><use href="#i-refresh"/></svg>Aktualisieren</button></form>
+    {% if int_can('pve', s.id, 'full') %}<a class="btn primary" href="{{ url_for('pve.create', pve_id=s.id) }}"><svg class="icon"><use href="#i-plus"/></svg>Container anlegen</a>{% endif %}
+    {% if user.is_admin %}<a class="btn ghost" href="{{ url_for('pve.edit', pve_id=s.id) }}"><svg class="icon"><use href="#i-edit"/></svg>Bearbeiten</a>{% endif %}
+  </div>
+</div>
+{% if s.status_message %}<div class="alert danger">{{ s.status_message }}</div>{% endif %}
+{{ alerts_box(s) }}
+
+{% set lxc = (data.guests or [])|selectattr('type', 'equalto', 'lxc')|list %}
+{% set vms = (data.guests or [])|selectattr('type', 'equalto', 'qemu')|list %}
+<nav class="tabs">
+  <a href="?tab=lxc&live=0" class="{{ 'active' if tab == 'lxc' }}">Container <span class="badge">{{ lxc|rejectattr('template')|list|length }}</span></a>
+  <a href="?tab=qemu&live=0" class="{{ 'active' if tab == 'qemu' }}">VMs <span class="badge">{{ vms|rejectattr('template')|list|length }}</span></a>
+  <a href="?tab=nodes&live=0" class="{{ 'active' if tab == 'nodes' }}">Nodes &amp; Storage</a>
+  <a href="?tab=jobs&live=0" class="{{ 'active' if tab == 'jobs' }}">Jobs</a>
+</nav>
+
+{% if tab in ('lxc', 'qemu') %}
+{% set guests = (lxc if tab == 'lxc' else vms)|rejectattr('template')|list %}
+<div class="card">
+  <div class="card-head"><h2>{{ 'Container (LXC)' if tab == 'lxc' else 'Virtuelle Maschinen' }}</h2>
+    <input type="search" placeholder="Suchen …" data-filter-list="#guest-table tbody tr" style="max-width:220px"></div>
+  {% if guests %}
+  <div class="table-wrap"><table class="table" id="guest-table">
+    <thead><tr><th>ID</th><th>Name</th><th>Node</th><th>Status</th><th>CPU</th><th>RAM</th>{% if tab == 'lxc' %}<th>Disk</th>{% endif %}<th></th></tr></thead>
+    <tbody>
+    {% for x in guests %}
+      <tr>
+        <td class="mono">{{ x.vmid }}</td>
+        <td><a href="{{ url_for('pve.guest', pve_id=s.id, node=x.node, gtype=x.type, vmid=x.vmid) }}"><strong>{{ x.name }}</strong></a>
+          {% if x.vmid in s.watch_list %}<span class="badge info" title="Überwacht: Warnung, wenn nicht aktiv">überwacht</span>{% endif %}
+          {% if linked.get(x.vmid) %}<a class="badge outline" href="{{ url_for('systems.detail', system_id=linked[x.vmid].id) }}" title="Als System verwaltet">System</a>{% endif %}
+          {% if x.lock %}<span class="badge warning">{{ x.lock }}</span>{% endif %}
+          {% if x.tags %}<span class="sub">{% for t in x.tags.split(';') if t %}#{{ t }} {% endfor %}</span>{% endif %}</td>
+        <td>{{ x.node }}</td>
+        <td class="nowrap"><span class="badge {{ 'success' if x.status == 'running' else ('warning' if x.status == 'paused' else '') }}"><span class="dot"></span>{{ {'running': 'läuft', 'stopped': 'gestoppt', 'paused': 'pausiert'}.get(x.status, x.status) }}</span>
+          {% if x.uptime %}<span class="sub">{{ x.uptime|duration }}</span>{% endif %}</td>
+        <td class="num nowrap">{{ x.cpu }} %<span class="sub">{{ x.maxcpu }} Kern(e)</span></td>
+        <td class="nowrap"><small>{{ x.mem|bytes }} / {{ x.maxmem|bytes }}</small></td>
+        {% if tab == 'lxc' %}<td style="min-width:100px">{% if x.disk_pct is not none %}{{ pct_bar(x.disk_pct) }}<small>{{ x.disk_pct }} %</small>{% endif %}</td>{% endif %}
+        <td class="nowrap text-right">
+          {% if int_can('pve', s.id, 'operate') %}
+            {% for op in (['shutdown', 'reboot'] if x.status == 'running' else (['resume'] if x.status == 'paused' else ['start'])) %}
+            <form method="post" action="{{ url_for('pve.guest_op', pve_id=s.id, node=x.node, gtype=x.type, vmid=x.vmid) }}" class="inline" {% if ops[op].confirm %}data-confirm="{{ x.name }} ({{ x.vmid }}) {{ ops[op].confirm }}?"{% endif %}>{{ csrf() }}
+              <input type="hidden" name="op" value="{{ op }}"><input type="hidden" name="name" value="{{ x.name }}"><input type="hidden" name="stay" value="1">
+              <input type="hidden" name="next" value="{{ url_for('pve.server', pve_id=s.id, tab=tab, live=0) }}">
+              <button class="btn xs">{{ ops[op].label }}</button></form>
+            {% endfor %}
+          {% endif %}
+          <a class="btn xs ghost" href="{{ url_for('pve.guest', pve_id=s.id, node=x.node, gtype=x.type, vmid=x.vmid) }}">Details</a>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody></table></div>
+  {% else %}<div class="card-body">{{ empty('Keine ' ~ ('Container' if tab == 'lxc' else 'VMs') ~ ' vorhanden.') }}</div>{% endif %}
+</div>
+
+{% elif tab == 'nodes' %}
+<div class="stats">
+  {% for n in data.nodes or [] %}
+  <div class="stat {{ 'success' if n.status == 'online' else 'danger' }}">
+    <div class="label">Node {{ n.node }}</div><div class="value" style="font-size:18px">{{ n.status }}</div>
+    <div class="sub">CPU {{ n.cpu }} % von {{ n.maxcpu }} · RAM {{ n.mem_pct }} % ({{ n.mem|bytes }} / {{ n.maxmem|bytes }})<br>Laufzeit {{ n.uptime|duration }}</div>
+  </div>
+  {% endfor %}
+</div>
+<div class="card"><div class="card-head"><h2>Storage</h2></div>
+  <div class="table-wrap"><table class="table compact"><thead><tr><th>Storage</th><th>Node</th><th>Typ</th><th>Inhalt</th><th>Belegung</th><th></th></tr></thead><tbody>
+  {% for st in data.storage or [] %}
+    <tr><td>{{ st.storage }}{% if st.shared %} <span class="badge outline">geteilt</span>{% endif %}</td><td>{{ st.node }}</td><td>{{ st.plugintype }}</td>
+      <td><small>{{ st.content }}</small></td><td style="width:30%">{{ pct_bar(st.pct) }}</td><td class="nowrap"><small>{{ st.disk|bytes }} / {{ st.maxdisk|bytes }}</small></td></tr>
+  {% endfor %}
+  </tbody></table></div></div>
+
+{% else %}
+<div class="card"><div class="table-wrap"><table class="table compact">
+  <thead><tr><th>#</th><th>Job</th><th>Status</th><th>Benutzer</th><th>Gestartet</th></tr></thead><tbody>
+  {% for j in jobs %}<tr><td><a href="{{ url_for('jobs.detail', job_id=j.id) }}">#{{ j.id }}</a></td><td>{{ j.title }}<span class="sub">{{ j.summary|truncate(100) }}</span></td>
+    <td>{{ job_badge(j.status, j.id) }}</td><td>{{ j.user.label if j.user else 'System' }}</td><td class="nowrap"><small>{{ j.created_at|dt }}</small></td></tr>
+  {% else %}<tr><td colspan="5" class="muted">Noch keine Jobs.</td></tr>{% endfor %}
+  </tbody></table></div></div>
+{% endif %}
+{% endblock %}

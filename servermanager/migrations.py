@@ -26,8 +26,16 @@ def add_column_if_missing(conn: Connection, table: str, column: str, ddl: str) -
 
 
 # version -> migration function. Append new steps, never change old ones.
+def _v2(conn: Connection) -> None:
+    # Proxmox/RouterOS/Pangolin integrations (new tables are created by create_all)
+    add_column_if_missing(conn, "systems", "pve_server_id", "INTEGER")
+    add_column_if_missing(conn, "systems", "pve_vmid", "INTEGER")
+    add_column_if_missing(conn, "jobs", "pve_id", "INTEGER REFERENCES pve_servers(id) ON DELETE CASCADE")
+
+
 MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     1: lambda conn: None,  # initial schema
+    2: _v2,
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 

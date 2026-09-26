@@ -338,3 +338,49 @@ details.action.danger > summary { color: var(--danger); }
 .doc blockquote p { margin: 0; }
 .search-hit { padding: 10px 0; border-bottom: 1px solid var(--border); }
 mark { background: var(--warning-soft); color: inherit; padding: 0 2px; border-radius: 3px; }
+
+/* ------------------------------------------------------------------ router analysis */
+.findings { display: flex; flex-direction: column; gap: 8px; }
+.finding { border: 1px solid var(--border); border-left: 4px solid var(--border-strong); border-radius: 8px; padding: 10px 14px; background: var(--surface); }
+.finding.st-ok { border-left-color: var(--success, #16a34a); }
+.finding.st-change { border-left-color: var(--warning, #d97706); }
+.finding.st-missing { border-left-color: var(--danger, #dc2626); }
+.finding.st-check { border-left-color: var(--primary); }
+.finding.crit { box-shadow: 0 0 0 1px var(--danger, #dc2626) inset; }
+.finding-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.finding p { margin: 6px 0 0; }
+.finding pre { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cb-space { display: inline-block; width: 13px; }
+pre.small, .small pre { font-size: 12px; }
+
+/* ------------------------------------------------------------------ charts (Proxmox RRD) */
+.chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 24px; }
+@media (max-width: 1100px) { .chart-grid { grid-template-columns: 1fr; } }
+.chart { margin: 0; --series-1: #2a78d6; --series-2: #eb6834; }
+.chart-title { font-weight: 600; margin-bottom: 4px; }
+.chart-legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.chart-legend .key { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 6px; border-radius: 2px; }
+.chart-legend .key.s1 { background: var(--series-1); }
+.chart-legend .key.s2 { background: var(--series-2); }
+.chart-box { position: relative; }
+.chart svg { width: 100%; height: 190px; display: block; overflow: visible; }
+.chart .grid { stroke: var(--border); stroke-width: 1; }
+.chart .tick { fill: var(--muted); font-size: 10px; }
+.chart .end-label { fill: var(--text); font-size: 10px; }
+.chart .line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.chart .line.s1 { stroke: var(--series-1); }
+.chart .line.s2 { stroke: var(--series-2); }
+.chart .crosshair { stroke: var(--muted); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.chart .hit { fill: transparent; cursor: crosshair; }
+.chart-tip { position: absolute; top: 4px; pointer-events: none; background: var(--surface); border: 1px solid var(--border-strong);
+             border-radius: 6px; padding: 6px 9px; font-size: 12px; box-shadow: 0 4px 12px rgba(0,0,0,.12); white-space: nowrap; }
+.chart-tip .t { color: var(--muted); margin-bottom: 2px; }
+.chart-tip .row { display: flex; align-items: center; gap: 6px; }
+.chart-tip .row strong { color: var(--text); }
+.chart-tip .row i { width: 12px; height: 2px; display: inline-block; }
+.chart-tip .row i.s1 { background: var(--series-1); }
+.chart-tip .row i.s2 { background: var(--series-2); }
+.chart-table summary { font-size: 12px; color: var(--muted); cursor: pointer; margin-top: 4px; }
+@media (prefers-color-scheme: dark) {
+  .chart { --series-1: #3987e5; --series-2: #d95926; }
+}

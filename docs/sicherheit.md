@@ -23,5 +23,13 @@
 - Das Repository-Token (privates Repository) liegt nur für root lesbar in
   `/etc/servermanager/git-credentials`, wird an `sm-helper` ausschließlich über stdin übergeben und nie
   angezeigt (nur die letzten vier Zeichen). Es sollte nur Leserechte auf dieses eine Repository haben.
+- API-Verbindungen zu Proxmox, RouterOS und Pangolin: Tokens/Passwörter verschlüsselt in der Datenbank;
+  selbstsignierte Zertifikate werden per SHA-256-Fingerabdruck gepinnt statt die Prüfung abzuschalten;
+  Anfragen gehen nie über einen Proxy aus der Umgebung. Empfohlen: eigene API-Benutzer mit minimalen
+  Rechten und Zugriff nur aus dem Management-Netz.
+- Die RouterOS-Analyse ändert Firewall, IP-Dienste und Benutzer nie selbst (nur Skriptvorschlag), legt
+  vor Änderungen eine Sicherung auf dem Router an und protokolliert jede Änderung im Audit-Log.
+- Nur Administratoren können Systeme mit Proxmox-Gästen verknüpfen (die Verknüpfung erlaubt
+  Start/Stopp über die Systemrechte).
 - Enrollment-Tokens sind zufällig, nur gehasht gespeichert, zeitlich begrenzt und auf eine Anzahl
   Verwendungen beschränkt.

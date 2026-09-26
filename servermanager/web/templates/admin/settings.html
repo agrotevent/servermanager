@@ -31,8 +31,11 @@
           {{ field('SSH-Timeout (Sekunden)', 'ssh__connect_timeout', v['ssh.connect_timeout'], type='number') }}
           {{ field('Max. parallele Jobs', 'jobs__max_parallel', v['jobs.max_parallel'], type='number', help='Wirksam nach Neustart des Workers') }}
           {{ field('Job-Logs aufbewahren (Tage)', 'jobs__log_retention_days', v['jobs.log_retention_days'], type='number') }}
+          {{ field('API-Verbindungen abfragen alle (Minuten)', 'integrations__poll_min', v['integrations.poll_min'], type='number', help='Proxmox, RouterOS, Pangolin: Status und Warnungen. 0 = aus') }}
+          {{ field('Warnung ab Belegung (%)', 'integrations__disk_alert_pct', v['integrations.disk_alert_pct'], type='number', help='Container-Dateisysteme und Proxmox-Storages. 0 = aus') }}
           <div class="full">
             {{ checkbox('Paketlisten automatisch aktualisieren (apt-get update)', 'checks__apt_refresh', v['checks.apt_refresh']) }}
+            {{ checkbox('Warnungen der API-Verbindungen per E-Mail melden (neu/behoben)', 'integrations__notify', v['integrations.notify']) }}
             {{ checkbox('Docker-Images regelmäßig auf neue Versionen prüfen (lädt Images per docker pull)', 'checks__docker_image_check', v['checks.docker_image_check']) }}
           </div>
         </div>

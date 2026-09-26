@@ -1,0 +1,86 @@
+{# configuration analysis of a RouterOS device (included in routers/detail.html) #}
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>1. Konfiguration einlesen</h2></div><div class="card-body">
+    {% if snap.menus %}<p>Stand: <strong>{{ r.snapshot_at|dt }}</strong> aus {{ 'der API' if r.snapshot_source == 'api' else 'einem Export' }}{% if snap.version %} · RouterOS {{ snap.version }}{% endif %}.
+      {% if snap.errors %}<br><small class="muted">Nicht lesbar: {{ snap.errors.keys()|join(', ') }}</small>{% endif %}</p>
+    {% else %}<p class="muted">Noch keine Konfiguration eingelesen.</p>{% endif %}
+    {% if int_can('router', r.id, 'full') %}
+    <form method="post" action="{{ url_for('routers.import_config', router_id=r.id) }}" class="inline">{{ csrf() }}
+      <input type="hidden" name="source" value="api"><button class="btn primary"><svg class="icon"><use href="#i-download"/></svg>Vom Router einlesen (API)</button>
+      <label class="check" style="display:inline-flex"><input type="checkbox" name="redetect" value="1"> Sollwerte neu erkennen</label></form>
+    <details class="mt-1"><summary>Stattdessen <code>/export</code> einfügen (offline prüfen)</summary>
+      <form method="post" action="{{ url_for('routers.import_config', router_id=r.id) }}" enctype="multipart/form-data" class="mt-1">{{ csrf() }}
+        <input type="hidden" name="source" value="export">
+        <textarea name="export" rows="8" class="mono" placeholder="/export hide-sensitive  (Ausgabe hier einfügen)"></textarea>
+        <div class="flex mt-1" style="gap:8px"><input type="file" name="export_file" accept=".rsc,.txt"><label class="check"><input type="checkbox" name="redetect" value="1"> Sollwerte neu erkennen</label>
+          <button class="btn">Export prüfen</button></div>
+      </form></details>
+    {% endif %}
+  </div></div>
+
+  <div class="card"><div class="card-head"><h2>2. Sollwerte</h2></div><div class="card-body">
+    {% if target %}
+    <form method="post" action="{{ url_for('routers.save_target', router_id=r.id) }}">{{ csrf() }}
+      <div class="form-grid">
+        {{ field('WAN-Interface (öffentliche IP)', 'wan_interface', target.wan_interface) }}
+        {{ field('LAN-Interface / Bridge', 'lan_interface', target.lan_interface) }}
+        {{ field('Router-Adresse im LAN', 'lan_address', target.lan_address, help='z. B. 10.20.0.1/24') }}
+        {{ field('DHCP-Bereich', 'dhcp_range', target.dhcp_range) }}
+        {{ field('Upstream-DNS', 'dns_servers', target.dns_servers) }}
+        {{ field('NTP-Server', 'ntp_servers', target.ntp_servers) }}
+        {{ field('Management-Adressen', 'mgmt_addresses', target.mgmt_addresses, help='Netze/IPs, die Router-Dienste nutzen dürfen (WireGuard-Management, Admin-IP)', cls='full') }}
+        {{ field('Routing-Tabelle für Internet', 'routing_table', target.routing_table) }}
+        <div class="field"><label>&nbsp;</label>
+          {{ checkbox('Policy-Routing (Mangle)', 'policy_routing', target.policy_routing, 'LAN-Verkehr ins Internet markieren und über eigene Tabelle zum WAN routen') }}
+          {{ checkbox('MSS-Clamping für Tunnel', 'mss_clamp', target.mss_clamp) }}</div>
+      </div>
+      {% if int_can('router', r.id, 'full') %}<button class="btn mt-1">Sollwerte speichern</button>{% endif %}
+    </form>
+    {% else %}<p class="muted">Werden beim ersten Einlesen aus der vorhandenen Konfiguration erkannt.</p>{% endif %}
+  </div></div>
+</div>
+
+{% if findings %}
+<div class="stats">
+  <div class="stat success"><div class="label">{{ status_labels.ok }}</div><div class="value">{{ summary.counts.ok }}</div></div>
+  <div class="stat warning"><div class="label">{{ status_labels.change }}</div><div class="value">{{ summary.counts.change }}</div></div>
+  <div class="stat danger"><div class="label">{{ status_labels.missing }}</div><div class="value">{{ summary.counts.missing }}</div></div>
+  <div class="stat"><div class="label">{{ status_labels.check }}</div><div class="value">{{ summary.counts.check }}</div></div>
+  <div class="stat {{ 'danger' if summary.crit else 'success' }}"><div class="label">Kritisch</div><div class="value">{{ summary.crit }}</div></div>
+</div>
+
+<form method="post" action="{{ url_for('routers.apply', router_id=r.id) }}" data-confirm="Ausgewählte Änderungen jetzt auf dem Router anwenden?">{{ csrf() }}
+<div class="card">
+  <div class="card-head"><h2>3. Ergebnis</h2>
+    <a class="btn sm" href="{{ url_for('routers.script', router_id=r.id) }}"><svg class="icon"><use href="#i-download"/></svg>Alle Änderungen als Skript (.rsc)</a></div>
+  <div class="card-body">
+    <p class="muted"><small>Punkte mit Häkchen kann der Servermanager selbst per API umsetzen (nur ergänzend, mit Kommentar „servermanager“). Vor dem Anwenden wird die aktuelle Konfiguration neu gelesen und auf dem Router eine Sicherung angelegt. Firewall-, Dienst- und Benutzeränderungen gibt es bewusst nur als Skript – bitte prüfen und selbst einspielen.</small></p>
+    {% for area, label in areas.items() %}{% set items = findings|selectattr('area', 'equalto', area)|list %}{% if items %}
+    <h3 class="mt-2">{{ label }}</h3>
+    <div class="findings">
+    {% for f in items %}
+      {% set cls = {'ok': 'success', 'change': 'warning', 'missing': 'danger', 'check': 'info'}[f.status] %}
+      <div class="finding st-{{ f.status }} {{ 'crit' if f.severity == 'crit' }}">
+        <div class="finding-head">
+          {% if f.applicable and int_can('router', r.id, 'full') %}<input type="checkbox" name="fid" value="{{ f.id }}" {% if f.status in ('missing', 'change') %}checked{% endif %} title="per API anwenden">{% else %}<span class="cb-space"></span>{% endif %}
+          <span class="badge {{ cls }}">{% if f.severity == 'crit' %}<svg class="icon"><use href="#i-alert"/></svg> {% endif %}{{ status_labels[f.status] }}</span>
+          <strong class="grow">{{ f.title }}</strong>
+          {% if f.script and f.status != 'ok' %}<span class="badge outline">{{ 'API' if f.applicable else 'Skript' }}</span>{% endif %}
+        </div>
+        {% if f.detail %}<p>{{ f.detail }}</p>{% endif %}
+        {% if f.current %}<p class="muted"><small>Ist: <span class="mono">{{ f.current }}</span></small></p>{% endif %}
+        {% if f.script and f.status != 'ok' %}<pre class="mono small">{{ f.script|join('\n') }}</pre>{% endif %}
+      </div>
+    {% endfor %}
+    </div>
+    {% endif %}{% endfor %}
+  </div>
+  {% if int_can('router', r.id, 'full') and summary.applicable %}
+  <div class="card-body bulkbar">
+    <label class="check"><input type="checkbox" name="skip_backup" value="1"> ohne Sicherung auf dem Router (nicht empfohlen)</label>
+    <button class="btn primary">Ausgewählte Änderungen anwenden</button>
+  </div>
+  {% endif %}
+</div>
+</form>
+{% endif %}

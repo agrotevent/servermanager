@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% set help_page = "pangolin" %}
+{% from "_macros.html" import csrf, field with context %}
+{% from "integrations/_macros.html" import conn_fields with context %}
+{% block title %}{{ 'Pangolin hinzufügen' if is_new else 'Pangolin bearbeiten' }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>{{ 'Pangolin hinzufügen' if is_new else p.name ~ ' bearbeiten' }}</h1>
+  <p>Anbindung über die Integration-API von Pangolin (in der Pangolin-Konfiguration <code>flags.enable_integration_api: true</code>).</p></div></div>
+<form method="post" autocomplete="off">{{ csrf() }}
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>Verbindung</h2></div><div class="card-body"><div class="form-grid">
+    {{ conn_fields(p, 'API-Adresse', 'https://api.pangolin.example.com/v1', 'Adresse der Integration-API (Standard-Pfad /v1).', 'Bei Let’s-Encrypt-Zertifikat statt Fingerabdruck die CA-Prüfung verwenden.') }}
+  </div></div></div>
+  <div class="card"><div class="card-head"><h2>Zugang</h2></div><div class="card-body"><div class="form-grid">
+    {{ field('Organisations-ID', 'org_id', p.org_id, required=True, placeholder='meine-org') }}
+    {{ field('API-Schlüssel', 'api_key', '', type='password', help=('Hinterlegt – leer lassen, um ihn zu behalten' if p.api_key_enc else 'Pangolin → Organisation → API-Schlüssel; Rechte für Sites, Domains, Resources und Targets'), attrs='autocomplete="new-password"') }}
+    <div class="field"><label>Standard-Site (Newt)</label>
+      {% if sites %}<select name="default_site_id"><option value="">–</option>{% for s in sites %}<option value="{{ s.siteId }}" {% if p.default_site_id == s.siteId %}selected{% endif %}>{{ s.name }}</option>{% endfor %}</select>
+      {% else %}<input type="text" name="default_site_id" value="{{ p.default_site_id or '' }}" placeholder="nach dem Speichern wählbar">{% endif %}</div>
+    <div class="field"><label>Standard-Domain</label>
+      {% if domains %}<select name="default_domain_id"><option value="">–</option>{% for d in domains %}<option value="{{ d.domainId }}" {% if p.default_domain_id == d.domainId %}selected{% endif %}>{{ d.baseDomain }}</option>{% endfor %}</select>
+      {% else %}<input type="text" name="default_domain_id" value="{{ p.default_domain_id or '' }}" placeholder="nach dem Speichern wählbar">{% endif %}</div>
+  </div></div></div>
+</div>
+<div class="actions mt-1"><button class="btn primary">Speichern</button><a class="btn" href="{{ url_for('pangolin.index') if is_new else url_for('pangolin.detail', pg_id=p.id) }}">Abbrechen</a></div>
+</form>
+{% if not is_new %}
+<div class="card danger-zone mt-2"><div class="card-head"><h2>Verbindung entfernen</h2></div><div class="card-body">
+  <form method="post" action="{{ url_for('pangolin.delete', pg_id=p.id) }}" data-confirm="Verbindung {{ p.name }} entfernen?">{{ csrf() }}<button class="btn danger">Entfernen</button></form>
+</div></div>
+{% endif %}
+{% endblock %}

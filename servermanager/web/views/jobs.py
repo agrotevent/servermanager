@@ -7,7 +7,7 @@ from sqlalchemy import select
 from ... import access
 from ...core import audit
 from ...jobs import KIND_LABELS, read_log, request_cancel
-from ...models import JOB_QUEUED, JOB_RUNNING, JOB_STATUSES, LEVEL_OPERATE, Job
+from ...models import JOB_QUEUED, JOB_RUNNING, JOB_STATUSES, KIND_PVE, LEVEL_OPERATE, Job
 from ..auth import can, client_ip, login_required
 
 bp = Blueprint("jobs", __name__, url_prefix="/jobs")
@@ -27,6 +27,8 @@ def _can_cancel(job: Job) -> bool:
         return False
     if g.user.is_admin or job.user_id == g.user.id:
         return True
+    if job.pve_id and access.has_integration_level(g.db, g.user, KIND_PVE, job.pve_id, LEVEL_OPERATE):
+        return True
     return bool(job.system_id and can(job.system_id, LEVEL_OPERATE))
 
 
@@ -36,7 +38,9 @@ def index():
     q = select(Job).order_by(Job.id.desc())
     ids = access.accessible_system_ids(g.db, g.user)
     if ids is not None:
-        q = q.where((Job.system_id.in_(ids)) | ((Job.system_id.is_(None)) & (Job.user_id == g.user.id)))
+        pve_ids = list((access.integration_levels(g.db, g.user, KIND_PVE) or {}).keys())
+        q = q.where((Job.system_id.in_(ids)) | ((Job.system_id.is_(None)) & (Job.user_id == g.user.id))
+                    | (Job.pve_id.in_(pve_ids)))
     status = request.args.get("status", "")
     if status in JOB_STATUSES:
         q = q.where(Job.status == status)

@@ -10,6 +10,11 @@ einem MikroTik (RouterOS 7)** oder direkt per SSH für bestehende Systeme ohne T
   einmalig, täglich, wöchentlich, monatlich, mit Wartungsfenster, Neustart-Regel und E-Mail-Bericht
 - Enrollment per Skript: neue Geräte fordern ihren WireGuard-Zugang selbst an; der Servermanager
   legt Peer, Routing und Adressliste auf dem MikroTik an und nimmt das Gerät in die Verwaltung auf
+- Proxmox VE über die API: Container/VMs steuern, überwachen und anlegen (inkl. statischer DHCP-Lease
+  und Veröffentlichung über Pangolin)
+- RouterOS (z. B. CHR) über die API: DHCP, NAT, Routing/Mangle, DNS und Konfigurationsanalyse
+  bestehender Router
+- Pangolin: Dienste aus dem internen Netz unter einer Domain veröffentlichen
 - Benutzerverwaltung mit Rollen und Rechten je System, Zwei-Faktor-Anmeldung, Audit-Log
 - Backup/Restore des Servermanagers (optional verschlüsselt) und Konfigurations-Backups der Systeme
 - Update des Servermanagers per Klick aus dem Git-Repository (mit automatischer Sicherung und Rollback)
@@ -59,6 +64,9 @@ dem Code gepflegt und mit jedem Update des Servermanagers aktualisiert.
 - [Update-Übersicht & Wartungsplaner](docs/updates-wartung.md)
 - [WireGuard & MikroTik](docs/wireguard.md)
 - [Benutzer und Rechte](docs/benutzer.md)
+- [Proxmox VE über die API](docs/proxmox.md)
+- [RouterOS (CHR) über die API](docs/routeros.md)
+- [Pangolin: Dienste veröffentlichen](docs/pangolin.md)
 - [Backup und Restore](docs/backup.md)
 - [Update des Servermanagers](docs/servermanager-update.md)
 - [Kommandozeile](docs/cli.md)

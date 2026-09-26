@@ -264,4 +264,53 @@
 
   // expose for inline use
   window.SM = { csrf };
+
+  // ---------------------------------------------------------------- chart crosshair + tooltip
+  document.querySelectorAll("[data-chart] svg[data-points]").forEach((svg) => {
+    let points, labels, classes;
+    try {
+      points = JSON.parse(svg.dataset.points);
+      labels = JSON.parse(svg.dataset.labels);
+      classes = JSON.parse(svg.dataset.classes);
+    } catch (err) { return; }
+    const box = svg.parentElement;
+    const tip = box.querySelector(".chart-tip");
+    const cross = svg.querySelector(".crosshair");
+    const hit = svg.querySelector(".hit");
+    if (!points.length || !tip || !cross || !hit) return;
+    const vb = svg.viewBox.baseVal;
+    function show(evt) {
+      const rect = svg.getBoundingClientRect();
+      const x = (evt.clientX - rect.left) / rect.width * vb.width;
+      let best = points[0];
+      points.forEach((p) => { if (Math.abs(p.x - x) < Math.abs(best.x - x)) best = p; });
+      cross.setAttribute("x1", best.x);
+      cross.setAttribute("x2", best.x);
+      cross.classList.remove("hidden");
+      tip.textContent = "";
+      const t = document.createElement("div");
+      t.className = "t";
+      t.textContent = best.t;
+      tip.appendChild(t);
+      best.v.forEach((v, i) => {
+        const row = document.createElement("div");
+        row.className = "row";
+        const key = document.createElement("i");
+        key.className = classes[i] || "";
+        const val = document.createElement("strong");
+        val.textContent = v;
+        const lab = document.createElement("span");
+        lab.textContent = labels[i] || "";
+        row.append(key, val, lab);
+        tip.appendChild(row);
+      });
+      tip.classList.remove("hidden");
+      const px = best.x / vb.width * rect.width;
+      const left = px + 12 + tip.offsetWidth > rect.width ? px - tip.offsetWidth - 12 : px + 12;
+      tip.style.left = Math.max(0, left) + "px";
+    }
+    function hide() { cross.classList.add("hidden"); tip.classList.add("hidden"); }
+    hit.addEventListener("pointermove", show);
+    hit.addEventListener("pointerleave", hide);
+  });
 })();

@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% set help_page = "proxmox" %}
+{% from "_macros.html" import csrf, field, checkbox with context %}
+{% block title %}Container anlegen · {{ s.name }}{% endblock %}
+{% set posted = f|length > 0 %}
+{% macro chk(label, name, default, help='') -%}{{ checkbox(label, name, (f.get(name) if posted else default), help) }}{%- endmacro %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>Container anlegen</h1>
+  <p>Neuer LXC-Container auf <a href="{{ url_for('pve.server', pve_id=s.id, live=0) }}">{{ s.name }}</a> – optional direkt als System verwalten, DHCP-Lease fixieren und über Pangolin veröffentlichen.</p></div></div>
+
+{% if not nodes %}<div class="alert danger">Kein Node online – Verbindung prüfen.</div>{% endif %}
+<form method="get" class="filters mb-2">
+  <label>Node</label>
+  <select name="node" data-autosubmit>{% for n in nodes %}<option value="{{ n.node }}" {% if n.node == node %}selected{% endif %}>{{ n.node }} (CPU {{ n.cpu }} %, RAM {{ n.mem_pct }} %)</option>{% endfor %}</select>
+  <noscript><button class="btn">Wechseln</button></noscript>
+</form>
+{% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+
+<form method="post" autocomplete="off">{{ csrf() }}
+<input type="hidden" name="node" value="{{ node }}">
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>Allgemein</h2></div><div class="card-body"><div class="form-grid">
+    {{ field('Hostname', 'hostname', f.get('hostname', ''), required=True, placeholder='newt-01', help='wird auch Name des Systems') }}
+    {{ field('VMID', 'vmid', f.get('vmid', nextid), type='number', required=True, attrs='min="100"') }}
+    <div class="field full"><label for="f-template">Vorlage *</label>
+      <select id="f-template" name="template" required>
+        <option value="">– wählen –</option>
+        {% if templates %}<optgroup label="Vorhanden">{% for t in templates %}<option value="{{ t }}" {% if f.get('template') == t %}selected{% endif %}>{{ t.split('/')[-1] }} ({{ t.split(':')[0] }})</option>{% endfor %}</optgroup>{% endif %}
+        {% if appliances %}<optgroup label="Herunterladen">{% for a in appliances %}<option value="download:{{ a.template }}" {% if f.get('template') == 'download:' ~ a.template %}selected{% endif %}>{{ a.template }}{% if a.headline %} – {{ a.headline }}{% endif %}</option>{% endfor %}</optgroup>{% endif %}
+      </select>
+      <span class="help">Empfehlung für Newt/Dienste: aktuelle Debian-Vorlage (debian-13-standard).</span></div>
+    <div class="field"><label>Storage für Downloads</label><select name="template_storage">{% for t in tmpl_storages %}<option {% if f.get('template_storage') == t %}selected{% endif %}>{{ t }}</option>{% endfor %}</select></div>
+    <div class="field"><label>Pool</label><select name="pool"><option value="">– keiner –</option>{% for p in pools %}<option {% if f.get('pool') == p %}selected{% endif %}>{{ p }}</option>{% endfor %}</select></div>
+    {{ field('Tags', 'tags', f.get('tags', ''), placeholder='newt, web', help='Komma-getrennt; werden auch am System gesetzt') }}
+    <div class="field"><label>&nbsp;</label>{{ chk('Überwachen (Warnung, wenn nicht aktiv)', 'watch', True) }}</div>
+    <div class="field full"><label>Beschreibung</label><textarea name="description" rows="2">{{ f.get('description', '') }}</textarea></div>
+  </div></div></div>
+
+  <div class="card"><div class="card-head"><h2>Ressourcen</h2></div><div class="card-body"><div class="form-grid">
+    <div class="field"><label>Root-Storage *</label><select name="storage" required>{% for t in rootfs %}<option {% if f.get('storage') == t %}selected{% endif %}>{{ t }}</option>{% endfor %}</select></div>
+    {{ field('Disk (GB)', 'disk_gb', f.get('disk_gb', 8), type='number', attrs='min="1"') }}
+    {{ field('CPU-Kerne', 'cores', f.get('cores', 1), type='number', attrs='min="1"') }}
+    {{ field('RAM (MB)', 'memory', f.get('memory', 1024), type='number', attrs='min="16"') }}
+    {{ field('Swap (MB)', 'swap', f.get('swap', 512), type='number', attrs='min="0"') }}
+    <div class="full">
+      {{ chk('Unprivilegierter Container (empfohlen)', 'unprivileged', True) }}
+      {{ chk('Nesting aktivieren (für systemd in Debian 12/13 und Docker empfohlen)', 'nesting', True) }}
+      {{ chk('Beim Booten des Hosts starten', 'onboot', True) }}
+      {{ chk('Nach dem Anlegen starten', 'start', True) }}
+    </div>
+  </div></div></div>
+
+  <div class="card"><div class="card-head"><h2>Netzwerk</h2></div><div class="card-body"><div class="form-grid">
+    <div class="field"><label>Bridge *</label><select name="bridge" required>{% for b in bridges %}<option {% if f.get('bridge') == b %}selected{% endif %}>{{ b }}</option>{% endfor %}</select></div>
+    {{ field('VLAN-Tag', 'vlan', f.get('vlan', ''), type='number', placeholder='keins', attrs='min="1" max="4094"') }}
+    <div class="field full"><label>IPv4</label>
+      <label class="check"><input type="radio" name="ip_mode" value="dhcp" {% if f.get('ip_mode', 'dhcp') == 'dhcp' %}checked{% endif %}> DHCP (Adresse vom RouterOS)</label>
+      <label class="check"><input type="radio" name="ip_mode" value="static" {% if f.get('ip_mode') == 'static' %}checked{% endif %}> statisch</label></div>
+    <div class="full form-grid" data-show-for="ip_mode=static">
+      {{ field('Adresse/Präfix', 'ip', f.get('ip', ''), placeholder='10.20.0.50/24') }}
+      {{ field('Gateway', 'gateway', f.get('gateway', ''), placeholder='10.20.0.1') }}
+    </div>
+    <div class="field"><label>IPv6</label><select name="ip6">{% for k, v in {'none': 'aus', 'auto': 'SLAAC', 'dhcp': 'DHCPv6'}.items() %}<option value="{{ k }}" {% if f.get('ip6') == k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></div>
+    {{ field('DNS-Server', 'nameserver', f.get('nameserver', ''), placeholder='vom Host / DHCP', help='Leerzeichen-getrennt') }}
+    {{ field('Suchdomain', 'searchdomain', f.get('searchdomain', '')) }}
+  </div></div></div>
+
+  <div class="card"><div class="card-head"><h2>Anmeldung</h2></div><div class="card-body"><div class="form-grid">
+    {{ field('Root-Passwort', 'password', '', type='password', help='optional, mind. 8 Zeichen', attrs='autocomplete="new-password"') }}
+    <div class="field"><label>&nbsp;</label>{{ chk('SSH-Schlüssel des Servermanagers hinterlegen', 'add_sm_key', True) }}{% if not sm_key %}<small class="muted">Kein Servermanager-Schlüssel vorhanden.</small>{% endif %}</div>
+    <div class="field full"><label>Weitere SSH-Schlüssel</label><textarea name="ssh_keys" rows="3" placeholder="ssh-ed25519 AAAA… admin@laptop">{{ f.get('ssh_keys', '') }}</textarea></div>
+  </div></div></div>
+
+  <div class="card"><div class="card-head"><h2>Integration</h2></div><div class="card-body">
+    {{ chk('Als System im Servermanager verwalten (Updates, Überwachung, Wartungsplaner)', 'register', True, 'Anmeldung als root mit dem Servermanager-Schlüssel; der Container wird dem System zugeordnet (Start/Stopp auch auf der System-Seite).') }}
+    {% if router %}{{ chk('DHCP-Lease auf „' ~ router.name ~ '“ statisch machen', 'static_lease', True, 'Die per DHCP vergebene IP bleibt dem Container dauerhaft zugeordnet – wichtig für Pangolin-Ziele.') }}
+    {% else %}<p class="muted"><small>Kein RouterOS zugeordnet – Leases können nicht automatisch fixiert werden (Proxmox-Verbindung bearbeiten).</small></p>{% endif %}
+    {% if pangolin %}
+      {{ chk('Dienst über Pangolin „' ~ pangolin.name ~ '“ veröffentlichen', 'publish', False) }}
+      {% if pg_error %}<div class="alert danger">{{ pg_error }}</div>{% endif %}
+      <div class="form-grid mt-1" data-show-for="publish=1">
+        {{ field('Subdomain', 'pub_subdomain', f.get('pub_subdomain', ''), placeholder='app', help='leer = Basisdomain') }}
+        <div class="field"><label>Domain</label><select name="pub_domain">{% for d in pg_domains %}<option value="{{ d.domainId }}" {% if (f.get('pub_domain') or pangolin.default_domain_id) == d.domainId %}selected{% endif %}>{{ d.baseDomain }}</option>{% endfor %}</select></div>
+        <div class="field"><label>Site (Newt)</label><select name="pub_site">{% for x in pg_sites %}<option value="{{ x.siteId }}" {% if (f.get('pub_site') or pangolin.default_site_id)|string == x.siteId|string %}selected{% endif %}>{{ x.name }}{% if not x.online %} (offline){% endif %}</option>{% endfor %}</select></div>
+        {{ field('Port des Dienstes im Container', 'pub_port', f.get('pub_port', 80), type='number', attrs='min="1" max="65535"') }}
+        <div class="field"><label>Ziel-Protokoll</label><select name="pub_method"><option value="http">http</option><option value="https" {% if f.get('pub_method') == 'https' %}selected{% endif %}>https</option></select></div>
+        <div class="field"><label>&nbsp;</label>{{ chk('Pangolin-Anmeldung (SSO) vorschalten', 'pub_sso', True) }}</div>
+      </div>
+    {% endif %}
+  </div></div>
+</div>
+<div class="actions mt-1"><button class="btn primary">Container anlegen</button><a class="btn" href="{{ url_for('pve.server', pve_id=s.id, live=0) }}">Abbrechen</a></div>
+</form>
+{% endblock %}

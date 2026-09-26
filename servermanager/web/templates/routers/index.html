@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% set help_page = "routeros" %}
+{% from "_macros.html" import pct_bar, empty with context %}
+{% from "integrations/_macros.html" import int_status with context %}
+{% block title %}RouterOS{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>RouterOS</h1><p>MikroTik-Router (z. B. CHR mit öffentlicher IP) über die REST-API: DHCP, NAT, Routing, DNS und Konfigurationsanalyse.</p></div>
+  {% if user.is_admin %}<div class="actions"><a class="btn primary" href="{{ url_for('routers.new') }}"><svg class="icon"><use href="#i-plus"/></svg>Router hinzufügen</a></div>{% endif %}
+</div>
+{% if routers %}
+<div class="card"><div class="table-wrap"><table class="table">
+  <thead><tr><th>Router</th><th>Status</th><th>Version</th><th>CPU</th><th>RAM</th><th>Interfaces</th><th>DHCP-Leases</th><th>Warnungen</th></tr></thead>
+  <tbody>{% for r in routers %}{% set d = r.data %}
+    <tr><td><a href="{{ url_for('routers.detail', router_id=r.id) }}"><strong>{{ r.name }}</strong></a><span class="sub">{{ d.identity or '' }} · {{ r.api_url }}</span></td>
+      <td>{{ int_status(r) }}<span class="sub">{{ r.last_poll|ago }}</span></td>
+      <td>{{ d.version or '–' }}<span class="sub">{{ d.board or '' }}</span></td>
+      <td style="min-width:100px">{% if d.cpu_load is defined %}{{ pct_bar(d.cpu_load) }}<small>{{ d.cpu_load }} %</small>{% endif %}</td>
+      <td style="min-width:100px">{% if d.mem_pct is defined %}{{ pct_bar(d.mem_pct) }}<small>{{ d.mem_used|bytes }} / {{ d.mem_total|bytes }}</small>{% endif %}</td>
+      <td>{{ d.interfaces_running or 0 }} / {{ d.interfaces or 0 }} <small class="muted">aktiv</small></td>
+      <td>{{ d.leases or 0 }}{% if d.leases_dynamic %} <small class="muted">({{ d.leases_dynamic }} dynamisch)</small>{% endif %}</td>
+      <td>{% if r.alert_list %}<span class="badge danger" title="{{ r.alert_list|map(attribute='text')|join('\n') }}">{{ r.alert_list|length }}</span>{% else %}<span class="badge success">keine</span>{% endif %}</td></tr>
+  {% endfor %}</tbody></table></div></div>
+{% else %}
+<div class="card"><div class="card-body">{{ empty('Noch kein Router eingerichtet.', 'i-shield') }}</div></div>
+{% endif %}
+{% endblock %}

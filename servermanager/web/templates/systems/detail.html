@@ -45,6 +45,27 @@
 </nav>
 
 {# ------------------------------------------------------------------ overview #}
+{% if tab == 'overview' and pve_guest %}
+{% set pg = pve_guest.guest %}
+<div class="card">
+  <div class="card-head"><h2>Proxmox-Gast</h2>
+    {% if int_can('pve', pve_guest.server.id, 'view') and pg %}<a class="btn sm ghost" href="{{ url_for('pve.guest', pve_id=pve_guest.server.id, node=pg.node, gtype=pg.type, vmid=pg.vmid) }}">Details</a>{% endif %}</div>
+  <div class="card-body flex" style="gap:14px;flex-wrap:wrap;align-items:center">
+    {% if pg %}
+      <span>{{ 'CT' if pg.type == 'lxc' else 'VM' }} {{ pg.vmid }} auf {{ pve_guest.server.name }}/{{ pg.node }}</span>
+      <span class="badge {{ 'success' if pg.status == 'running' else '' }}"><span class="dot"></span>{{ {'running': 'läuft', 'stopped': 'gestoppt'}.get(pg.status, pg.status) }}</span>
+      <small class="muted">CPU {{ pg.cpu }} % · RAM {{ pg.mem|bytes }} / {{ pg.maxmem|bytes }}{% if pg.disk_pct is not none %} · Disk {{ pg.disk_pct }} %{% endif %} · Stand {{ pve_guest.server.last_poll|ago }}</small>
+      <span class="grow"></span>
+      {% if can(system.id, 'operate') %}
+        {% for op, label, conf in ([('shutdown', 'Herunterfahren', 'herunterfahren'), ('reboot', 'Neu starten', 'neu starten'), ('stop', 'Hart stoppen', 'hart stoppen')] if pg.status == 'running' else [('start', 'Starten', '')]) %}
+        <form method="post" action="{{ url_for('pve.system_op', system_id=system.id) }}" class="inline" {% if conf %}data-confirm="{{ system.name }} über Proxmox {{ conf }}?"{% endif %}>{{ csrf() }}
+          <input type="hidden" name="op" value="{{ op }}"><button class="btn sm {{ 'danger-outline' if op == 'stop' }}">{{ label }}</button></form>
+        {% endfor %}
+      {% endif %}
+    {% else %}<span class="muted">Gast {{ system.pve_vmid }} in {{ pve_guest.server.name }} nicht gefunden (noch nicht abgefragt oder gelöscht).</span>{% endif %}
+  </div>
+</div>
+{% endif %}
 {% if tab == 'overview' %}
 <div class="grid grid-2">
   <div class="card">

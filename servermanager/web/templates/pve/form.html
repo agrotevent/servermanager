@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% set help_page = "proxmox" %}
+{% from "_macros.html" import csrf, field, checkbox with context %}
+{% from "integrations/_macros.html" import conn_fields with context %}
+{% block title %}{{ 'Proxmox hinzufügen' if is_new else 'Proxmox bearbeiten' }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>{{ 'Proxmox hinzufügen' if is_new else s.name ~ ' bearbeiten' }}</h1>
+  <p>Zugriff über die Proxmox-API mit einem API-Token. Ein Cluster wird über einen beliebigen Node angebunden.</p></div></div>
+<form method="post" autocomplete="off">{{ csrf() }}
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>Verbindung</h2></div><div class="card-body"><div class="form-grid">
+    {{ conn_fields(s, 'API-Adresse', 'https://pve.example.lan:8006', 'Port 8006 wird ergänzt, wenn er fehlt. Über das WireGuard-Management-Netz oder direkt erreichbar.', 'Proxmox nutzt standardmäßig ein selbstsigniertes Zertifikat.') }}
+  </div></div></div>
+  <div class="card"><div class="card-head"><h2>API-Token</h2></div><div class="card-body"><div class="form-grid">
+    {{ field('Token-ID', 'token_id', s.token_id, placeholder='servermanager@pve!sm', help='Format benutzer@realm!tokenname', cls='full') }}
+    {{ field('Token-Secret', 'token_secret', '', type='password', help=('Hinterlegt – leer lassen, um es zu behalten' if s.token_secret_enc else 'UUID, wird verschlüsselt gespeichert'), attrs='autocomplete="new-password"', cls='full') }}
+    <div class="full help">
+      Token auf dem Proxmox-Host anlegen (Rechte-Trennung aus, Rolle PVEAdmin auf /):
+      <pre class="mono small">pveum user add servermanager@pve
+pveum acl modify / --users servermanager@pve --roles PVEAdmin
+pveum user token add servermanager@pve sm --privsep 0</pre>
+      Oder automatisch: Proxmox-Host als System verknüpfen, speichern und „Token per SSH einrichten“ klicken.
+    </div>
+  </div></div></div>
+  <div class="card"><div class="card-head"><h2>Verknüpfungen</h2></div><div class="card-body"><div class="form-grid">
+    <div class="field full"><label>Proxmox-Host als System (SSH)</label>
+      <select name="system_id"><option value="">– keins –</option>{% for x in pve_systems %}<option value="{{ x.id }}" {% if s.system_id == x.id %}selected{% endif %}>{{ x.name }} ({{ x.host }}){% if x.has_type('proxmox') %} · Proxmox{% endif %}</option>{% endfor %}</select>
+      <span class="help">Für die automatische Token-Einrichtung und Updates des Hosts per SSH.</span></div>
+    <div class="field"><label>RouterOS (DHCP im Container-Netz)</label>
+      <select name="router_id"><option value="">– keiner –</option>{% for x in routers %}<option value="{{ x.id }}" {% if s.router_id == x.id %}selected{% endif %}>{{ x.name }}</option>{% endfor %}</select>
+      <span class="help">Neue Container: DHCP-Lease automatisch statisch machen.</span></div>
+    <div class="field"><label>Pangolin (Veröffentlichung)</label>
+      <select name="pangolin_id"><option value="">– keins –</option>{% for x in pangolins %}<option value="{{ x.id }}" {% if s.pangolin_id == x.id %}selected{% endif %}>{{ x.name }}</option>{% endfor %}</select>
+      <span class="help">Neue Container: Dienst direkt unter einer Domain veröffentlichen.</span></div>
+  </div></div></div>
+</div>
+<div class="actions mt-1"><button class="btn primary">Speichern</button><a class="btn" href="{{ url_for('pve.index') if is_new else url_for('pve.server', pve_id=s.id) }}">Abbrechen</a></div>
+</form>
+{% if not is_new %}
+<div class="grid grid-2 mt-2">
+  <div class="card"><div class="card-head"><h2>Token per SSH einrichten</h2></div><div class="card-body">
+    {% if s.system_id %}
+    <p>Legt auf dem verknüpften Host den Benutzer <code>servermanager@pve</code> und ein neues API-Token an, speichert es verschlüsselt und pinnt das Zertifikat des Hosts.</p>
+    <form method="post" action="{{ url_for('pve.token_setup', pve_id=s.id) }}" class="inline-form" data-confirm="Neues API-Token auf dem Proxmox-Host anlegen?">{{ csrf() }}
+      <div class="field"><label>Rolle</label><select name="role"><option value="PVEAdmin">PVEAdmin (empfohlen)</option><option value="Administrator">Administrator</option></select></div>
+      <button class="btn">Token einrichten</button></form>
+    {% else %}<p class="muted">Dafür oben einen Proxmox-Host (System mit SSH-Zugang) verknüpfen.</p>{% endif %}
+  </div></div>
+  <div class="card danger-zone"><div class="card-head"><h2>Verbindung entfernen</h2></div><div class="card-body">
+    <p>Entfernt nur die Verbindung im Servermanager – Container und VMs bleiben unverändert.</p>
+    <form method="post" action="{{ url_for('pve.delete', pve_id=s.id) }}" data-confirm="Proxmox-Verbindung {{ s.name }} entfernen?">{{ csrf() }}<button class="btn danger">Entfernen</button></form>
+  </div></div>
+</div>
+{% endif %}
+{% endblock %}

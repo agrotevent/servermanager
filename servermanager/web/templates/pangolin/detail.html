@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% set help_page = "pangolin" %}
+{% from "_macros.html" import csrf, empty with context %}
+{% from "integrations/_macros.html" import int_status, alerts_box with context %}
+{% block title %}{{ p.name }} · Pangolin{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>{{ p.name }} {{ int_status(p) }}</h1><p>{{ p.api_url }} · Organisation {{ p.org_id }}</p></div>
+  <div class="actions">
+    {% if int_can('pangolin', p.id, 'full') %}<a class="btn primary" href="{{ url_for('pangolin.publish', pg_id=p.id) }}"><svg class="icon"><use href="#i-cloud"/></svg>Dienst veröffentlichen</a>{% endif %}
+    {% if user.is_admin %}<a class="btn ghost" href="{{ url_for('pangolin.edit', pg_id=p.id) }}"><svg class="icon"><use href="#i-edit"/></svg>Bearbeiten</a>{% endif %}
+  </div>
+</div>
+{% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+{{ alerts_box(p) }}
+<div class="stats">
+  {% for s in sites %}
+  <div class="stat {{ 'success' if s.online else 'danger' }}"><div class="label">Site {{ s.name }}</div>
+    <div class="value" style="font-size:18px">{{ 'online' if s.online else 'offline' }}</div>
+    <div class="sub">{{ s.type or '' }}{% if s.subnet %} · {{ s.subnet }}{% endif %}</div></div>
+  {% endfor %}
+</div>
+<div class="card"><div class="card-head"><h2>Veröffentlichte Dienste</h2><input type="search" placeholder="Suchen …" data-filter-list="#res-table tbody tr" style="max-width:220px"></div>
+  {% if resources %}
+  <div class="table-wrap"><table class="table" id="res-table">
+    <thead><tr><th>Dienst</th><th>Adresse</th><th>Schutz</th><th>Status</th><th></th></tr></thead><tbody>
+    {% for r in resources %}
+      <tr><td><a href="{{ url_for('pangolin.resource', pg_id=p.id, rid=r.resourceId) }}"><strong>{{ r.name }}</strong></a></td>
+        <td>{% if r.http %}<a href="{{ 'https' if r.ssl else 'http' }}://{{ r.fullDomain }}" target="_blank" rel="noopener" class="mono">{{ r.fullDomain }}</a>
+            {% else %}<span class="mono">{{ r.protocol|upper }} :{{ r.proxyPort }}</span>{% endif %}</td>
+        <td>{% if r.http %}{% if r.sso %}<span class="badge success">Anmeldung</span>{% else %}<span class="badge warning">öffentlich</span>{% endif %}{% endif %}</td>
+        <td>{% if r.enabled is sameas false %}<span class="badge">aus</span>{% else %}<span class="badge success">aktiv</span>{% endif %}</td>
+        <td class="text-right"><a class="btn xs ghost" href="{{ url_for('pangolin.resource', pg_id=p.id, rid=r.resourceId) }}">Details</a></td></tr>
+    {% endfor %}</tbody></table></div>
+  {% else %}<div class="card-body">{{ empty('Noch keine Dienste veröffentlicht.', 'i-cloud') }}</div>{% endif %}
+</div>
+{% endblock %}

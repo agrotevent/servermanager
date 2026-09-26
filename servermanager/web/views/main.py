@@ -75,8 +75,21 @@ def dashboard():
         if not settings.get(g.db, "wg.enabled"):
             warnings.append("Das WireGuard-Management-Netz ist noch nicht eingerichtet (Menü WireGuard). "
                             "Systeme können bis dahin nur direkt per SSH verwaltet werden.")
+    int_alerts = []
+    from ... import integrations
+    endpoints = {"pve": "pve.server", "router": "routers.detail", "pangolin": "pangolin.detail"}
+    params = {"pve": "pve_id", "router": "router_id", "pangolin": "pg_id"}
+    for kind, model in integrations.MODELS.items():
+        levels = access.integration_levels(g.db, g.user, kind)
+        for obj in g.db.execute(select(model).order_by(model.name)).scalars():
+            if levels is not None and obj.id not in levels:
+                continue
+            for a in obj.alert_list:
+                int_alerts.append({"name": obj.name, "text": a["text"], "severity": a["severity"],
+                                   "since": a.get("since"),
+                                   "url": url_for(endpoints[kind], **{params[kind]: obj.id})})
     return render_template("dashboard.html", stats=stats, problems=problems, jobs=jobs, running=running,
-                           failed=failed, upcoming=upcoming, warnings=warnings)
+                           failed=failed, upcoming=upcoming, warnings=warnings, int_alerts=int_alerts)
 
 
 # --------------------------------------------------------------------------

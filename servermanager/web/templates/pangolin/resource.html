@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% set help_page = "pangolin" %}
+{% from "_macros.html" import csrf with context %}
+{% block title %}{{ res.name }} · Pangolin{% endblock %}
+{% macro rdo(action, label, cls='btn sm', confirm='', extra={}) -%}
+  <form method="post" action="{{ url_for('pangolin.resource_do', pg_id=p.id, rid=res.resourceId) }}" class="inline" {% if confirm %}data-confirm="{{ confirm }}"{% endif %}>{{ csrf() }}
+    <input type="hidden" name="action" value="{{ action }}">{% for k, v in extra.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+    <button class="{{ cls }}">{{ label }}</button></form>
+{%- endmacro %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>{{ res.name }}</h1>
+    <p>{% if res.http %}<a href="{{ 'https' if res.ssl else 'http' }}://{{ res.fullDomain }}" target="_blank" rel="noopener" class="mono">{{ res.fullDomain }}</a>{% else %}{{ res.protocol|upper }} Port {{ res.proxyPort }}{% endif %}
+      · <a href="{{ url_for('pangolin.detail', pg_id=p.id) }}">{{ p.name }}</a></p></div>
+  <div class="actions">
+    {% if int_can('pangolin', p.id, 'operate') %}{{ rdo('toggle', 'Deaktivieren' if res.enabled is not sameas false else 'Aktivieren', 'btn', 'Dienst deaktivieren?' if res.enabled is not sameas false else '', {'enabled': '0' if res.enabled is not sameas false else '1'}) }}{% endif %}
+    {% if res.http and int_can('pangolin', p.id, 'full') %}{{ rdo('sso', 'Anmeldung abschalten (öffentlich)' if res.sso else 'Pangolin-Anmeldung aktivieren', 'btn', 'Dienst ohne Anmeldung öffentlich machen?' if res.sso else '', {'sso': '0' if res.sso else '1'}) }}{% endif %}
+    {% if int_can('pangolin', p.id, 'full') %}{{ rdo('delete', 'Veröffentlichung entfernen', 'btn danger-outline', 'Veröffentlichung ' ~ res.name ~ ' in Pangolin löschen?') }}{% endif %}
+  </div>
+</div>
+<div class="card"><div class="card-head"><h2>Ziele im internen Netz</h2></div>
+  <div class="table-wrap"><table class="table compact"><thead><tr><th>Ziel</th><th>Protokoll</th><th>Site</th><th>Status</th><th></th></tr></thead><tbody>
+  {% for t in targets %}<tr><td class="mono">{{ t.ip }}:{{ t.port }}</td><td>{{ t.method or res.protocol }}</td><td>{{ t.siteId or '' }}</td>
+    <td>{% if t.enabled is sameas false %}<span class="badge">aus</span>{% else %}<span class="badge success">aktiv</span>{% endif %}</td>
+    <td class="text-right">{% if int_can('pangolin', p.id, 'full') %}{{ rdo('delete_target', 'Entfernen', 'btn xs danger-outline', 'Ziel entfernen?', {'target_id': t.targetId}) }}{% endif %}</td></tr>
+  {% else %}<tr><td colspan="5" class="muted">Keine Ziele – der Dienst ist nicht erreichbar.</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% if int_can('pangolin', p.id, 'full') %}
+  <div class="card-body"><form method="post" action="{{ url_for('pangolin.resource_do', pg_id=p.id, rid=res.resourceId) }}" class="inline-form">{{ csrf() }}
+    <input type="hidden" name="action" value="add_target">
+    <div class="field"><label>IP</label><input type="text" name="ip" required></div>
+    <div class="field"><label>Port</label><input type="number" name="port" required min="1" max="65535"></div>
+    {% if res.http %}<div class="field"><label>Protokoll</label><select name="method"><option>http</option><option>https</option></select></div>{% endif %}
+    <div class="field"><label>Site-ID</label><input type="number" name="site_id" value="{{ res.siteId or p.default_site_id or '' }}"></div>
+    <button class="btn">Ziel hinzufügen</button></form>
+    <small class="muted">Mehrere Ziele werden reihum angesprochen (Lastverteilung).</small></div>
+  {% endif %}
+</div>
+{% if systems %}<div class="card"><div class="card-head"><h2>Zugehörige Systeme</h2></div><div class="card-body">
+  {% for s in systems %}<a class="btn sm" href="{{ url_for('systems.detail', system_id=s.id) }}"><svg class="icon"><use href="#i-server"/></svg>{{ s.name }} ({{ s.host }})</a> {% endfor %}</div></div>{% endif %}
+{% endblock %}

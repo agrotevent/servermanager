@@ -18,16 +18,24 @@ from typing import Optional
 import requests
 from sqlalchemy import select, update
 
-from . import inventory, schedules, settings, sshkeys, sysbackup
+from . import access, integrations, inventory, pve, schedules, security, settings, sshkeys, sysbackup
 from .core import audit, bootstrap, setup_logging
 from .db import session_scope
 from .jobs import log_path
-from .models import (AUTH_KEY, JOB_CANCELLED, JOB_FAILED, JOB_FINAL, JOB_QUEUED, JOB_RUNNING, JOB_SKIPPED,
-                     JOB_SUCCESS, STATUS_ERROR, STATUS_ONLINE, STATUS_PENDING, Job, ScheduleRun, System, utcnow)
+from .models import (AUTH_KEY, CONN_DIRECT, JOB_CANCELLED, JOB_FAILED, JOB_FINAL, JOB_QUEUED, JOB_RUNNING,
+                     JOB_SKIPPED, JOB_SUCCESS, LEVEL_FULL, STATUS_ERROR, STATUS_ONLINE, STATUS_PENDING, Job,
+                     PangolinServer, PveServer, RouterDevice, ScheduleRun, System, User, utcnow)
 from .modules import ParamError, resolve_action
 from .ssh import DETACHED_DIED, CancelledError, Connection, SSHError, target_from_system
+from .mikrotik import MikroTikError
+from .pangolin import PangolinError
+from .pveapi import PveError
 
 log = logging.getLogger("servermanager.worker")
+
+
+def sshquote(s: str) -> str:
+    return "'" + s.replace("'", "'\\''") + "'"
 
 POLL_LIMIT = 256 * 1024
 
@@ -42,6 +50,12 @@ class JobSkipped(Exception):
 
 class Interrupted(Exception):
     """Worker shutdown while a detached remote process is still running."""
+
+
+def resumable(remote: Optional[dict]) -> bool:
+    """Job state that survives a worker restart (remote process, reboot wait, Proxmox task)."""
+    remote = remote or {}
+    return bool(remote.get("detached") or remote.get("reboot") or remote.get("pve_task") or remote.get("phase"))
 
 
 # --------------------------------------------------------------------------
@@ -107,6 +121,7 @@ class Worker:
         self._last_periodic = 0.0
         self._last_daily: Optional[str] = None
         self._last_ispc = 0.0
+        self.polling: set[tuple[str, int]] = set()
 
     # ------------------------------------------------------------------ main
     def run_forever(self) -> None:
@@ -131,8 +146,7 @@ class Worker:
     def recover(self) -> None:
         with session_scope() as db:
             for job in db.execute(select(Job).where(Job.status == JOB_RUNNING)).scalars():
-                remote = job.remote or {}
-                if remote.get("detached") or remote.get("reboot"):
+                if resumable(job.remote):
                     log.info("job %s: resuming after worker restart", job.id)
                     job.status = JOB_QUEUED  # will be claimed again and resumed
                 else:
@@ -158,7 +172,7 @@ class Worker:
             for job in queued:
                 if free <= 0:
                     break
-                resuming = bool((job.remote or {}).get("detached") or (job.remote or {}).get("reboot"))
+                resuming = resumable(job.remote)
                 if job.not_after and now > job.not_after and not resuming:
                     job.status = JOB_SKIPPED
                     job.finished_at = now
@@ -192,7 +206,7 @@ class Worker:
                 job = db.get(Job, job_id)
                 kind, payload = job.kind, dict(job.payload or {})
                 system_id = job.system_id
-                resumed = bool((job.remote or {}).get("detached") or (job.remote or {}).get("reboot"))
+                resumed = resumable(job.remote)
             if resumed:
                 ctx.say("Worker neu gestartet - verbinde mich wieder mit dem laufenden Prozess ...")
             else:
@@ -218,7 +232,7 @@ class Worker:
         except CancelledError:
             status, summary = JOB_CANCELLED, "Abgebrochen"
             ctx.say("Job abgebrochen.")
-        except (JobFailed, SSHError, ParamError, ValueError) as exc:
+        except (JobFailed, SSHError, ParamError, ValueError, PveError, MikroTikError, PangolinError) as exc:
             status, summary = JOB_FAILED, str(exc)
             ctx.say(f"FEHLER: {exc}")
         except Exception as exc:  # noqa: BLE001
@@ -237,7 +251,7 @@ class Worker:
                 job.summary = (summary or "")[:2000]
                 job.exit_code = exit_code if exit_code is not None else job.exit_code
                 job.finished_at = utcnow()
-                job.remote = {k: v for k, v in (job.remote or {}).items() if k != "detached"}
+                job.remote = {k: v for k, v in (job.remote or {}).items() if k not in ("detached", "pve_task", "phase")}
         ctx.close()
 
     # ------------------------------------------------------------------ helpers
@@ -625,6 +639,327 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
                 types = ", ".join(s.type_list)
         return f"System erreichbar, erkannte Typen: {types}"
 
+    # ------------------------------------------------------------------ Proxmox API jobs
+    def _pve_server(self, job_id: int) -> tuple[PveServer, dict]:
+        with session_scope() as db:
+            job = db.get(Job, job_id)
+            server = db.get(PveServer, job.pve_id) if job.pve_id else None
+            if server is None:
+                raise JobFailed("Proxmox-Verbindung existiert nicht mehr")
+            state = dict(job.remote or {})
+            db.expunge(server)
+            return server, state
+
+    def _pve_task(self, ctx: JobContext, api, upid: Optional[str], state: dict, node: str = "") -> str:
+        """Follow a Proxmox task (log + status) until it has finished; resumable via state['pve_task']."""
+        if upid:
+            if not isinstance(upid, str) or not upid.startswith("UPID:"):
+                ctx.say("Aufgabe ohne Task-ID abgeschlossen.")
+                return "OK"
+            from .pveapi import upid_node
+            state["pve_task"] = {"node": upid_node(upid) or node, "upid": upid, "n": 0}
+            ctx.save_remote(state)
+        task = state.get("pve_task")
+        if not task:
+            return "OK"
+        cancel_sent = False
+        errors = 0
+        while True:
+            if self.stop.is_set():
+                raise Interrupted()
+            try:
+                lines = api.task_log(task["node"], task["upid"], start=task["n"], limit=500)
+                for ln in lines:
+                    if int(ln.get("n", 0)) > task["n"]:
+                        ctx.write(str(ln.get("t", "")) + "\n")
+                        task["n"] = int(ln["n"])
+                if lines:
+                    ctx.save_remote(state)
+                st = api.task_status(task["node"], task["upid"])
+                errors = 0
+            except PveError as exc:
+                errors += 1
+                if errors > 90:
+                    raise JobFailed(f"Proxmox-Task nicht mehr abfragbar: {exc}") from exc
+                ctx.say(f"Abfrage fehlgeschlagen ({exc}) – neuer Versuch")
+                self.stop.wait(10)
+                continue
+            if st.get("status") == "stopped":
+                if len(lines) >= 500:
+                    continue
+                exit_status = st.get("exitstatus", "")
+                state.pop("pve_task", None)
+                ctx.save_remote(state)
+                if cancel_sent:
+                    raise CancelledError("Abgebrochen")
+                if exit_status == "OK" or str(exit_status).startswith("WARNINGS"):
+                    return exit_status
+                raise JobFailed(f"Proxmox-Task fehlgeschlagen: {exit_status}")
+            if not cancel_sent and ctx.cancelled():
+                ctx.say("Abbruch angefordert – stoppe Proxmox-Task")
+                try:
+                    api.task_stop(task["node"], task["upid"])
+                except PveError as exc:
+                    ctx.say(f"Task konnte nicht gestoppt werden: {exc}")
+                cancel_sent = True
+            self.stop.wait(2)
+
+    def job_pve(self, ctx, job_id, system_id, payload) -> str:
+        server, state = self._pve_server(job_id)
+        api = pve.client(server, timeout=60)
+        op = payload["op"]
+        node, gtype, vmid = pve.check_guest_ref(payload["node"], payload["type"], payload["vmid"])
+        params = payload.get("params") or {}
+        label = pve.OPS.get(op, {}).get("label", op)
+        if state.get("pve_task"):
+            ctx.say("Verfolge laufenden Proxmox-Task weiter ...")
+            result = self._pve_task(ctx, api, None, state)
+        else:
+            ctx.say(f"{label}: {'CT' if gtype == 'lxc' else 'VM'} {vmid} auf {node} ({server.name})")
+            upid = pve.start_op(api, op, node, gtype, vmid, params)
+            result = self._pve_task(ctx, api, upid, state, node)
+        if op == "destroy":
+            with session_scope() as db:
+                srv = db.get(PveServer, server.id)
+                if srv and vmid in srv.watch_list:
+                    srv.watch = [v for v in srv.watch_list if v != vmid]
+                for s in db.execute(select(System).where(System.pve_server_id == server.id,
+                                                         System.pve_vmid == vmid)).scalars():
+                    s.pve_server_id = None
+                    s.pve_vmid = None
+        self._pve_refresh(server.id)
+        return f"{label} erfolgreich" + (f" ({result})" if result and result != "OK" else "")
+
+    def _pve_refresh(self, pve_id: int) -> None:
+        try:
+            with session_scope() as db:
+                srv = db.get(PveServer, pve_id)
+                if srv is not None:
+                    integrations.poll(db, srv)
+        except Exception:  # noqa: BLE001
+            log.exception("refreshing proxmox %s failed", pve_id)
+
+    def job_pve_create(self, ctx, job_id, system_id, payload) -> str:
+        server, state = self._pve_server(job_id)
+        api = pve.client(server, timeout=120)
+        p = payload
+        node, vmid = p["node"], int(p["vmid"])
+        phase = state.get("phase") or "download"
+        notes: list[str] = []
+
+        def next_phase(name: str) -> None:
+            state["phase"] = name
+            ctx.save_remote(state)
+
+        if phase == "download":
+            if state.get("pve_task"):
+                self._pve_task(ctx, api, None, state)
+            elif p.get("download"):
+                dl = p["download"]
+                have = [c.get("volid") for c in api.storage_content(node, dl["storage"], "vztmpl")]
+                if p["ostemplate"] in have:
+                    ctx.say(f"Vorlage {dl['template']} ist bereits vorhanden.")
+                else:
+                    ctx.say(f"Lade Vorlage {dl['template']} nach {dl['storage']} herunter ...")
+                    upid = api.post(f"nodes/{node}/aptinfo", storage=dl["storage"], template=dl["template"])
+                    self._pve_task(ctx, api, upid, state, node)
+            next_phase("create")
+            phase = "create"
+        if phase == "create":
+            if state.get("pve_task"):
+                self._pve_task(ctx, api, None, state)
+            else:
+                ctx.say(f"Lege Container {vmid} ({p['hostname']}) auf {node} an ...")
+                upid = api.post(f"nodes/{node}/lxc", **pve.create_params(p))
+                self._pve_task(ctx, api, upid, state, node)
+            with session_scope() as db:
+                job = db.get(Job, job_id)
+                job.payload = {k: v for k, v in (job.payload or {}).items() if k != "password_enc"}
+                if p.get("watch"):
+                    srv = db.get(PveServer, server.id)
+                    srv.watch = sorted(set(srv.watch_list) | {vmid})
+            next_phase("start")
+            phase = "start"
+        if phase == "start":
+            if p.get("start"):
+                if state.get("pve_task"):
+                    self._pve_task(ctx, api, None, state)
+                else:
+                    ctx.say("Starte Container ...")
+                    self._pve_task(ctx, api, api.post(f"nodes/{node}/lxc/{vmid}/status/start"), state, node)
+            next_phase("network")
+            phase = "network"
+        ip = state.get("ip", "")
+        if phase == "network":
+            if p["ip_mode"] == "static":
+                ip = p["ip"].split("/")[0]
+            elif p.get("start"):
+                ctx.say("Warte auf die DHCP-Adresse des Containers ...")
+                deadline = time.monotonic() + 180
+                while time.monotonic() < deadline and not ip:
+                    if self.stop.is_set():
+                        raise Interrupted()
+                    try:
+                        ip = pve.container_ipv4(api, node, vmid)
+                    except PveError as exc:
+                        ctx.say(f"Abfrage der Adresse fehlgeschlagen: {exc}")
+                    if not ip:
+                        self.stop.wait(5)
+                if not ip:
+                    raise JobFailed("Der Container hat innerhalb von 3 Minuten keine IPv4-Adresse erhalten "
+                                    "(DHCP-Server im Netz der Bridge?)")
+            if ip:
+                ctx.say(f"IPv4-Adresse des Containers: {ip}")
+            state["ip"] = ip
+            next_phase("lease")
+            phase = "lease"
+        if phase == "lease":
+            if p.get("static_lease") and ip:
+                notes.append(self._static_lease(ctx, api, server, node, vmid, p["hostname"], ip))
+            next_phase("register")
+            phase = "register"
+        if phase == "register":
+            if p.get("register") and ip:
+                notes.append(self._register_container(ctx, job_id, server, p, ip))
+            next_phase("publish")
+            phase = "publish"
+        if phase == "publish":
+            if p.get("publish") and ip:
+                notes.append(self._publish(ctx, server, p, ip))
+        self._pve_refresh(server.id)
+        return f"Container {vmid} ({p['hostname']}) angelegt" + (f", IP {ip}" if ip else "") + \
+            "".join(f"; {n}" for n in notes if n)
+
+    def _static_lease(self, ctx, api, server: PveServer, node: str, vmid: int, hostname: str, ip: str) -> str:
+        if not server.router_id:
+            ctx.say("Kein RouterOS für DHCP zugeordnet – Lease bleibt dynamisch.")
+            return "Lease dynamisch (kein Router zugeordnet)"
+        with session_scope() as db:
+            router = db.get(RouterDevice, server.router_id)
+            if router is None:
+                return "Lease dynamisch (Router gelöscht)"
+            db.expunge(router)
+        mac = pve.net0_mac(api.guest_config(node, "lxc", vmid))
+        mt = integrations.router_client(router)
+        for _ in range(12):
+            leases = [le for le in mt.get("ip/dhcp-server/lease")
+                      if (mac and str(le.get("mac-address", "")).upper() == mac) or le.get("address") == ip]
+            if leases:
+                le = leases[0]
+                if le.get("dynamic") == "true":
+                    mt.command("ip/dhcp-server/lease/make-static", {".id": le[".id"]})
+                mt.patch("ip/dhcp-server/lease", le[".id"], {"comment": f"servermanager: {hostname} (CT {vmid})"})
+                ctx.say(f"DHCP-Lease {le.get('address')} ({mac or 'MAC ?'}) auf {router.name} statisch gesetzt.")
+                return f"Lease {le.get('address')} statisch"
+            self.stop.wait(5)
+        ctx.say(f"Keine DHCP-Lease für {mac or ip} auf {router.name} gefunden – bitte manuell prüfen.")
+        return "Lease nicht gefunden"
+
+    def _register_container(self, ctx, job_id: int, server: PveServer, p: dict, ip: str) -> str:
+        with session_scope() as db:
+            job = db.get(Job, job_id)
+            system = db.execute(select(System).where(System.pve_server_id == server.id,
+                                                     System.pve_vmid == int(p["vmid"]))).scalar_one_or_none()
+            if system is None:
+                system = System(name=p["hostname"], hostname=p["hostname"], host=ip, port=22, username="root",
+                                auth_method=AUTH_KEY, connection=CONN_DIRECT, types=["debian"],
+                                tags=",".join(p.get("tags") or []), created_by=job.user_id,
+                                pve_server_id=server.id, pve_vmid=int(p["vmid"]),
+                                description=f"LXC {p['vmid']} auf {server.name}/{p['node']}")
+                db.add(system)
+                db.flush()
+                user = db.get(User, job.user_id) if job.user_id else None
+                if user is not None and not user.is_admin:
+                    access.grant(db, user.id, system.id, LEVEL_FULL)
+            else:
+                system.host = ip
+            sid = system.id
+        ctx.say(f"Als System aufgenommen (#{sid}) – warte auf SSH ...")
+        system = self._system(sid)
+        deadline = time.monotonic() + 180
+        conn = None
+        while time.monotonic() < deadline:
+            if self.stop.is_set():
+                raise Interrupted()
+            try:
+                conn = inventory.connect(system, timeout=10)
+                break
+            except SSHError as exc:
+                ctx.say(f"SSH noch nicht erreichbar ({exc}) – neuer Versuch in 10 s")
+                self.stop.wait(10)
+        if conn is None:
+            return f"System #{sid} angelegt, SSH aber noch nicht erreichbar"
+        with conn:
+            with session_scope() as db:
+                s = db.get(System, sid)
+                inventory.deep_check(conn, db, s, ctx.write, manual=True, detect=True)
+                s.status = STATUS_ONLINE
+        return f"als System #{sid} aufgenommen"
+
+    def _publish(self, ctx, server: PveServer, p: dict, ip: str) -> str:
+        pub = p["publish"]
+        if not server.pangolin_id:
+            ctx.say("Keine Pangolin-Instanz zugeordnet – Dienst wird nicht veröffentlicht.")
+            return "nicht veröffentlicht (kein Pangolin zugeordnet)"
+        with session_scope() as db:
+            pg = db.get(PangolinServer, server.pangolin_id)
+            if pg is None:
+                return "nicht veröffentlicht (Pangolin gelöscht)"
+            db.expunge(pg)
+        client = integrations.pangolin_client(pg)
+        res = client.publish(p["hostname"], "http", pub["site_id"], ip, pub["port"], pub["method"],
+                             pub.get("subdomain", ""), pub["domain_id"], sso=pub.get("sso", False))
+        domain = res.get("fullDomain") or pub.get("subdomain", "")
+        ctx.say(f"In Pangolin veröffentlicht: {domain} → {ip}:{pub['port']} (Resource {res.get('resourceId')})")
+        with session_scope() as db:
+            audit(db, None, "pangolin.publish", pg.name, f"{domain} -> {ip}:{pub['port']}")
+        return f"veröffentlicht als {domain}"
+
+    def job_pve_token(self, ctx, job_id, system_id, payload) -> str:
+        """Create an API token for the servermanager on a Proxmox host via SSH."""
+        server, _state = self._pve_server(job_id)
+        system = self._system(system_id)
+        role = payload.get("role") or "PVEAdmin"
+        if role not in ("PVEAdmin", "Administrator"):
+            raise JobFailed("Ungültige Rolle")
+        token_name = "sm" + time.strftime("%Y%m%d%H%M%S")
+        with self._connect(ctx, system) as conn:
+            ctx.say("Lege Benutzer servermanager@pve und API-Token an ...")
+            script = (
+                "set -e\n"
+                "pveum user list --output-format json | grep -q '\"userid\":\"servermanager@pve\"' || "
+                "pveum user add servermanager@pve --comment 'Servermanager API' >/dev/null\n"
+                f"pveum acl modify / --users servermanager@pve --roles {role} >/dev/null\n"
+                f"pveum user token add servermanager@pve {token_name} --privsep 0 --comment Servermanager "
+                "--output-format json\n")
+            res = conn.exec(f"bash -c {sshquote(script)}", root=True, timeout=60)
+            if not res.ok:
+                raise JobFailed("pveum fehlgeschlagen: " + (res.stderr or res.stdout).strip()[:500])
+            import json as _json
+            try:
+                data = _json.loads(res.stdout.strip().splitlines()[-1])
+            except (ValueError, IndexError) as exc:
+                raise JobFailed("Unerwartete Ausgabe von pveum") from exc
+            token_id, secret = data.get("full-tokenid", ""), data.get("value", "")
+            if not token_id or not secret:
+                raise JobFailed("pveum hat kein Token zurückgegeben")
+            fp = conn.exec("for f in /etc/pve/local/pveproxy-ssl.pem /etc/pve/local/pve-ssl.pem; do "
+                           "[ -f $f ] && { openssl x509 -in $f -noout -fingerprint -sha256; break; }; done",
+                           root=True, timeout=30).stdout.strip()
+        fingerprint = fp.split("=", 1)[-1].strip().upper() if "=" in fp else ""
+        with session_scope() as db:
+            srv = db.get(PveServer, server.id)
+            srv.token_id = token_id
+            srv.token_secret_enc = security.encrypt(secret)
+            if fingerprint:
+                srv.fingerprint = fingerprint
+            if not srv.api_url:
+                srv.api_url = f"https://{system.host}:8006"
+            audit(db, None, "pve.token_created", srv.name, token_id)
+        ctx.say(f"Token {token_id} gespeichert" + (f", Zertifikat {fingerprint[:23]}… gepinnt" if fingerprint else ""))
+        self._pve_refresh(server.id)
+        return f"API-Token {token_id} eingerichtet"
+
     # ------------------------------------------------------------------ periodic
     def periodic(self) -> None:
         with session_scope() as db:
@@ -646,6 +981,7 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
                     self._submit_check(s.id, deep=True)
                 elif status_min > 0 and (s.last_check is None or now - s.last_check > timedelta(minutes=status_min)):
                     self._submit_check(s.id, deep=False)
+        self._poll_integrations()
         if time.monotonic() - self._last_ispc > 6 * 3600:
             self._last_ispc = time.monotonic()
             self._fetch_ispconfig_latest()
@@ -678,6 +1014,33 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
         finally:
             with self.lock:
                 self.checking.discard(system_id)
+
+    def _poll_integrations(self) -> None:
+        with session_scope() as db:
+            interval = int(settings.get(db, "integrations.poll_min") or 0)
+            due = []
+            for kind, model in integrations.MODELS.items():
+                for obj in db.execute(select(model)).scalars():
+                    if integrations.due(obj, interval):
+                        due.append((kind, obj.id))
+        for key in due:
+            with self.lock:
+                if key in self.polling:
+                    continue
+                self.polling.add(key)
+            self.check_pool.submit(self._poll_one, key)
+
+    def _poll_one(self, key: tuple[str, int]) -> None:
+        try:
+            with session_scope() as db:
+                obj = integrations.get(db, *key)
+                if obj is not None:
+                    integrations.poll(db, obj)
+        except Exception:  # noqa: BLE001
+            log.exception("polling %s failed", key)
+        finally:
+            with self.lock:
+                self.polling.discard(key)
 
     def _fetch_ispconfig_latest(self) -> None:
         with session_scope() as db:

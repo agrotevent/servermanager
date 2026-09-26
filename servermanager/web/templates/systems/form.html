@@ -74,6 +74,18 @@
     </div>
   </div>
 
+  {% if user.is_admin and pve_servers %}
+  <div class="card">
+    <div class="card-head"><h2>Proxmox-Gast</h2></div>
+    <div class="card-body form-grid">
+      <div class="field"><label>Proxmox-Verbindung</label><select name="pve_server_id"><option value="">– keine –</option>
+        {% for p in pve_servers %}<option value="{{ p.id }}" {% if system.pve_server_id == p.id %}selected{% endif %}>{{ p.name }}</option>{% endfor %}</select></div>
+      {{ field('VMID', 'pve_vmid', system.pve_vmid or '', type='number', help='Container/VM, in dem dieses System läuft') }}
+      <p class="full help">Benutzer mit dem Recht „Bedienen“ auf dieses System können den Gast dann auch über die Proxmox-API starten, herunterfahren und neu starten.</p>
+    </div>
+  </div>
+  {% endif %}
+
   {% if is_new %}
   <div class="card"><div class="card-body">
     {{ checkbox('Nach dem Speichern Verbindung prüfen und Komponenten erkennen', 'check', True) }}

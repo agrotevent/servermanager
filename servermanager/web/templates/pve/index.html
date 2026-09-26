@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% set help_page = "proxmox" %}
+{% from "_macros.html" import csrf, pct_bar, empty with context %}
+{% from "integrations/_macros.html" import int_status with context %}
+{% block title %}Proxmox{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>Proxmox VE</h1><p>Proxmox-Server und -Cluster über die API: Container und VMs steuern, überwachen und anlegen.</p></div>
+  {% if user.is_admin %}<div class="actions"><a class="btn primary" href="{{ url_for('pve.new') }}"><svg class="icon"><use href="#i-plus"/></svg>Proxmox hinzufügen</a></div>{% endif %}
+</div>
+{% if servers %}
+<div class="card"><div class="table-wrap"><table class="table">
+  <thead><tr><th>Verbindung</th><th>Status</th><th>Nodes</th><th>Container</th><th>VMs</th><th>CPU</th><th>RAM</th><th>Warnungen</th></tr></thead>
+  <tbody>
+  {% for s in servers %}{% set d = s.data %}
+    {% set lxc = (d.guests or [])|selectattr('type', 'equalto', 'lxc')|rejectattr('template')|list %}
+    {% set vms = (d.guests or [])|selectattr('type', 'equalto', 'qemu')|rejectattr('template')|list %}
+    {% set nodes = d.nodes or [] %}
+    {% set cpu = ((nodes|sum(attribute='cpu')) / (nodes|length))|round(1) if nodes else 0 %}
+    {% set mem = nodes|sum(attribute='mem') %}{% set maxmem = nodes|sum(attribute='maxmem') %}
+    <tr>
+      <td><a href="{{ url_for('pve.server', pve_id=s.id) }}"><strong>{{ s.name }}</strong></a>
+        <span class="sub">{{ s.api_url }}{% if d.cluster %} · Cluster {{ d.cluster.name }}{% endif %}{% if d.version %} · PVE {{ d.version }}{% endif %}</span></td>
+      <td>{{ int_status(s) }}<span class="sub">{{ s.last_poll|ago }}</span></td>
+      <td>{{ nodes|selectattr('status', 'equalto', 'online')|list|length }} / {{ nodes|length }}</td>
+      <td>{{ lxc|selectattr('status', 'equalto', 'running')|list|length }} / {{ lxc|length }} <small class="muted">laufen</small></td>
+      <td>{{ vms|selectattr('status', 'equalto', 'running')|list|length }} / {{ vms|length }} <small class="muted">laufen</small></td>
+      <td style="min-width:110px">{{ pct_bar(cpu|int) }}<small>{{ cpu }} %</small></td>
+      <td style="min-width:110px">{% set mp = ((mem * 100 / maxmem) if maxmem else 0)|round|int %}{{ pct_bar(mp) }}<small>{{ mem|bytes }} / {{ maxmem|bytes }}</small></td>
+      <td>{% if s.alert_list %}<span class="badge danger" title="{{ s.alert_list|map(attribute='text')|join('\n') }}">{{ s.alert_list|length }}</span>{% else %}<span class="badge success">keine</span>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody></table></div></div>
+{% else %}
+  <div class="card"><div class="card-body">{{ empty('Noch keine Proxmox-Verbindung eingerichtet.', 'i-server') }}
+    {% if user.is_admin %}<p class="text-center"><a class="btn primary" href="{{ url_for('pve.new') }}">Proxmox hinzufügen</a></p>{% endif %}</div></div>
+{% endif %}
+{% endblock %}
