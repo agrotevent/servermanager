@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% set help_page = "telefonie" %}
+{% from "_macros.html" import empty with context %}
+{% from "integrations/_macros.html" import int_status with context %}
+{% block title %}Telefonie{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>Telefonie</h1><p>Asterisk/FreePBX: Trunks, Nebenstellen und Erreichbarkeit. Weboberfläche über Pangolin, SIP/RTP über eine Portweiterleitung.</p></div>
+  {% if user.is_admin %}<div class="actions"><a class="btn primary" href="{{ url_for('pbx.new') }}"><svg class="icon"><use href="#i-plus"/></svg>Telefonanlage hinzufügen</a></div>{% endif %}
+</div>
+{% if items %}
+<div class="card"><div class="table-wrap"><table class="table">
+  <thead><tr><th>Anlage</th><th>Status</th><th>Version</th><th>Trunks</th><th>Nebenstellen</th><th>Gespräche</th><th>Warnungen</th></tr></thead>
+  <tbody>{% for p in items %}{% set d = p.data %}
+    <tr><td><a href="{{ url_for('pbx.detail', pbx_id=p.id, live=0) }}"><strong>{{ p.name }}</strong></a><span class="sub">{{ p.public_url or p.sip_internal_ip }}</span></td>
+      <td>{{ int_status(p) }}<span class="sub">{{ p.last_poll|ago }}</span></td>
+      <td>{% if d.version %}Asterisk {{ d.version }}{% if d.freepbx %}<span class="sub">FreePBX {{ d.freepbx }}</span>{% endif %}{% else %}–{% endif %}</td>
+      <td>{% set regs = d.registrations or [] %}{% if regs %}{{ regs|selectattr('ok')|list|length }}/{{ regs|length }} registriert{% else %}–{% endif %}</td>
+      <td>{% if d.extensions is defined %}{{ d.extensions_online }}/{{ (d.extensions or [])|length }} angemeldet{% else %}–{% endif %}</td>
+      <td>{{ d.calls if d.calls is defined else '–' }}</td>
+      <td>{% if p.alert_list %}<span class="badge danger" title="{{ p.alert_list|map(attribute='text')|join('\n') }}">{{ p.alert_list|length }}</span>{% else %}<span class="badge success">keine</span>{% endif %}</td></tr>
+  {% endfor %}</tbody></table></div></div>
+{% else %}<div class="card"><div class="card-body">{{ empty('Noch keine Telefonanlage eingerichtet. Systeme mit Asterisk werden bei der Prüfung automatisch erkannt.', 'i-phone') }}</div></div>{% endif %}
+{% endblock %}

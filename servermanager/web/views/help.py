@@ -31,6 +31,7 @@ PAGES: list[tuple[str, str, str]] = [
     ("routeros", "RouterOS (CHR) über die API", "Infrastruktur"),
     ("pangolin", "Pangolin: Dienste veröffentlichen", "Infrastruktur"),
     ("apps", "Nextcloud, Mailcow & SSO", "Infrastruktur"),
+    ("telefonie", "Telefonie: Asterisk & FreePBX", "Infrastruktur"),
     ("backup", "Backup und Restore", "Betrieb"),
     ("servermanager-update", "Update des Servermanagers", "Betrieb"),
     ("installation", "Installation", "Betrieb"),

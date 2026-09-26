@@ -1,6 +1,7 @@
 """Registry of all system modules."""
 from __future__ import annotations
 
+from .asterisk import AsteriskModule
 from .base import Action, Module, Param, ParamError  # noqa: F401
 from .debian import DebianModule
 from .docker import DockerModule
@@ -10,7 +11,8 @@ from .nextcloud import NextcloudModule
 from .proxmox import ProxmoxModule
 
 MODULES: dict[str, Module] = {m.key: m for m in (
-    DebianModule(), NextcloudModule(), DockerModule(), ISPConfigModule(), ProxmoxModule(), NewtModule())}
+    DebianModule(), NextcloudModule(), DockerModule(), ISPConfigModule(), ProxmoxModule(), NewtModule(),
+    AsteriskModule())}
 
 TYPE_LABELS = {k: m.label for k, m in MODULES.items()}
 TYPE_LABELS["debian"] = "Debian"

@@ -41,3 +41,15 @@ Docker-Container `fosrl/newt` läuft.
 - **Aktionen:** *Newt neu starten* (Bedienen), *Newt aktualisieren* (Vollzugriff; lädt die neueste
   Version von GitHub, nur bei der vom Servermanager eingerichteten systemd-Installation).
 - Einrichtung und Zuordnung zu einem Pangolin-Server: siehe [Pangolin](pangolin.md).
+
+### Asterisk/FreePBX
+
+Wird erkannt, wenn `asterisk` installiert ist; FreePBX zusätzlich an `fwconsole`.
+
+- **Anzeige:** Status, Laufzeit, Versionen (Asterisk, FreePBX), aktive Gespräche, Trunk-Registrierungen,
+  angemeldete Nebenstellen.
+- **Aktionen:** *Konfiguration neu laden* (Bedienen), *FreePBX-Module aktualisieren* und *Asterisk neu
+  starten* (Vollzugriff; trennt laufende Gespräche). Alle drei sind im Wartungsplaner verwendbar.
+- **Update-Prüfung:** verfügbare FreePBX-Modul-Updates (`fwconsole ma showupgrades`) erscheinen in der
+  Update-Übersicht. Asterisk-Pakete des Betriebssystems laufen über die normalen Debian-Updates.
+- Überwachung, Nebenstellen und SIP-Erreichbarkeit: siehe [Telefonie](telefonie.md).

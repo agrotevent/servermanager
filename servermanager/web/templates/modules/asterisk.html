@@ -1,0 +1,15 @@
+{% from "_macros.html" import empty with context %}
+{% include "modules/_panel_head.html" %}
+{% if data.version is defined %}
+  <dl class="kv">
+    <dt>Status</dt><dd><span class="badge {{ 'success' if data.active else 'danger' }}"><span class="dot"></span>{{ 'läuft' if data.active else 'gestoppt' }}</span>{% if data.uptime %} <small class="muted">seit {{ (data.uptime // 3600) }} h</small>{% endif %}</dd>
+    <dt>Version</dt><dd>Asterisk {{ data.version or '?' }}{% if data.freepbx %} · FreePBX {{ data.freepbx }}{% endif %}</dd>
+    <dt>Gespräche</dt><dd>{{ data.calls }} aktiv · {{ data.processed }} seit Start</dd>
+    <dt>Nebenstellen</dt><dd>{{ data.extensions_online }} von {{ data.extensions|length }} angemeldet</dd>
+  </dl>
+  {% if data.registrations %}
+  <h4 class="mt-1">Trunk-Registrierungen</h4>
+  <ul class="list-plain">{% for r in data.registrations %}<li><span class="badge {{ 'success' if r.ok else 'danger' }}">{{ r.status }}</span> <span class="mono">{{ r.name }}</span> <small class="muted">{{ r.uri }}</small></li>{% endfor %}</ul>
+  {% endif %}
+  {% if data.upgrades %}<p class="mt-1"><span class="badge warning">{{ data.upgrades|length }} Modul-Update(s)</span> <small class="muted">{{ data.upgrades|map(attribute='module')|join(', ') }}</small></p>{% endif %}
+{% endif %}

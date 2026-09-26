@@ -40,7 +40,7 @@ SNAPSHOT_MENUS = [
     "ip/dhcp-server", "ip/dhcp-server/network", "ip/dhcp-server/lease",
     "ip/dns", "ip/dns/static",
     "ip/firewall/filter", "ip/firewall/nat", "ip/firewall/mangle", "ip/firewall/address-list",
-    "routing/table", "routing/rule",
+    "ip/firewall/service-port", "routing/table", "routing/rule",
     "ip/service", "ip/neighbor/discovery-settings", "tool/mac-server", "tool/mac-server/mac-winbox",
     "user", "user/group",
 ]
@@ -504,6 +504,15 @@ def op_add(path: str, data: dict) -> dict:
 def op_set(path: str, data: dict, item_id: str = "", find: str = "") -> dict:
     """item_id empty: singleton menu (POST <path>/set)."""
     return {"m": "set", "path": path, "id": item_id, "find": find, "data": data}
+
+
+def direct_op_allowed(op: dict) -> bool:
+    """Operations a confirmed optimization may send without a full analysis: additions of addresses, NAT rules
+    and address-list entries, and switching off the SIP helper."""
+    if op.get("m") == "add":
+        return op.get("path") in ("ip/address", "ip/firewall/nat", "ip/firewall/address-list")
+    return (op.get("m") == "set" and op.get("path") == "ip/firewall/service-port" and bool(op.get("id"))
+            and op.get("data") == {"disabled": "yes"})
 
 
 def op_to_cli(op: dict) -> str:

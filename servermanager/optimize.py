@@ -20,7 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import discovery, integrations, pve, routeros, settings
-from .models import MailcowServer, PangolinServer, PveServer, RouterDevice, SsoClient, SsoServer, System
+from .models import MailcowServer, PangolinServer, PbxServer, PveServer, RouterDevice, SsoClient, SsoServer, System
 from .pveapi import PveError
 
 HTTP_PORTS = {80: "http", 8080: "http", 8000: "http", 3000: "http", 443: "https", 8443: "https"}
@@ -83,6 +83,11 @@ def scan(db: Session, log=lambda _m: None) -> dict:
             out += scan_mail(db, mc)
         except integrations.ApiError as exc:
             errors[f"Mail-IP {mc.name}"] = str(exc)
+    for p in db.execute(select(PbxServer).order_by(PbxServer.id)).scalars():
+        try:
+            out += scan_pbx(db, p)
+        except integrations.ApiError as exc:
+            errors[f"Telefonie {p.name}"] = str(exc)
     return {"at": datetime.now().isoformat(timespec="seconds"), "proposals": out, "errors": errors}
 
 
@@ -243,8 +248,8 @@ def scan_router(db: Session, router: RouterDevice, published: set, published_ips
             continue
         port = int(port_s)
         proto = r.get("protocol", "tcp")
-        if _is_mail_forward(db, r):
-            continue  # mail protocols on the own public IP of Mailcow are an intended exception
+        if _is_mail_forward(db, r) or _is_pbx_forward(db, r):
+            continue  # mail and SIP/RTP need real port forwarding - an intended exception
         text = routeros._rule_text(r)
         if (ip, port) in published:
             out.append(proposal(f"router:{router.id}:fwd-off:{r.get('.id')}", "goal", o,
@@ -422,6 +427,14 @@ def _is_mail_forward(db: Session, r: dict) -> bool:
     return False
 
 
+def _is_pbx_forward(db: Session, r: dict) -> bool:
+    for p in db.execute(select(PbxServer)).scalars():
+        if p.sip_internal_ip and r.get("to-addresses") == p.sip_internal_ip and \
+                r.get("protocol", "") in ("udp", "tcp"):
+            return True
+    return False
+
+
 def _host_port(url: str, default_port: int = 443) -> tuple[str, int, str]:
     from urllib.parse import urlsplit
     parts = urlsplit(url if "://" in url else "https://" + url)
@@ -439,6 +452,8 @@ def scan_apps(db: Session, pangolins: list[PangolinServer], services: dict) -> l
         apps.append(("sso", srv, srv.public_url, srv.api_url, f"authentik {srv.name}"))
     for mc in db.execute(select(MailcowServer)).scalars():
         apps.append(("mailcow", mc, mc.public_url, mc.api_url, f"Mailcow {mc.name}"))
+    for p in db.execute(select(PbxServer)).scalars():
+        apps.append(("pbx", p, p.public_url, p.web_url, f"Telefonanlage {p.name}"))
     for cl in db.execute(select(SsoClient).where(SsoClient.target_kind == "nextcloud")).scalars():
         system = db.get(System, cl.target_id)
         if system:
@@ -522,6 +537,105 @@ def scan_mail(db: Session, mc: MailcowServer) -> list[dict]:
                         f"Hetzner Robot), MX und A-Record von {mc.mail_hostname or 'mail.…'} → {ip}, SPF mit "
                         f"ip4:{ip}, DKIM und DMARC. Die Weboberfläche läuft unter einem eigenen Namen über "
                         "Pangolin.", severity="info"))
+    return out
+
+
+PBX_TAG = "servermanager: SIP"
+
+
+def pbx_router_ops(p: PbxServer, snap: dict, wan: str) -> list[dict]:
+    """RouterOS changes for SIP/RTP to the PBX: allowed peers, dst-nat, own public IP (+ src-nat)."""
+    ops: list[dict] = []
+    internal = p.sip_internal_ip
+    list_name = f"sm-sip-{p.id}"
+    if p.sip_public_ip and not any(str(a.get("address", "")).split("/")[0] == p.sip_public_ip
+                                   for a in routeros.items(snap, "ip/address")):
+        ops.append(routeros.op_add("ip/address", {"address": f"{p.sip_public_ip}/32", "interface": wan,
+                                                  "comment": f"{PBX_TAG} {p.name}"}))
+    have = {(a.get("list"), a.get("address")) for a in routeros.items(snap, "ip/firewall/address-list")}
+    for src in p.source_list:
+        if (list_name, src) not in have:
+            ops.append(routeros.op_add("ip/firewall/address-list", {"list": list_name, "address": src,
+                                                                    "comment": f"{PBX_TAG} {p.name}"}))
+    nat = [r for r in routeros.items(snap, "ip/firewall/nat") if r.get("chain") == "dstnat" and routeros.enabled(r)
+           and r.get("to-addresses") == internal]
+
+    def covered(proto: str, port: str) -> bool:
+        return any(r.get("protocol") == proto and port in str(r.get("dst-port", "")).split(",") for r in nat)
+    wanted = [("udp", str(p.sip_port), True), ("tcp", str(p.sip_port), True)]
+    if p.sip_tls_port:
+        wanted.append(("tcp", str(p.sip_tls_port), True))
+    wanted.append(("udp", f"{p.rtp_start}-{p.rtp_end}", False))
+    for proto, port, signalling in wanted:
+        if covered(proto, port):
+            continue
+        data = {"chain": "dstnat", "action": "dst-nat", "protocol": proto, "dst-port": port,
+                "to-addresses": internal, "comment": f"{PBX_TAG} {p.name}"}
+        if p.sip_public_ip:
+            data["dst-address"] = p.sip_public_ip
+        else:
+            data["in-interface"] = wan
+        if signalling and p.source_list:
+            data["src-address-list"] = list_name
+        ops.append(routeros.op_add("ip/firewall/nat", data))
+    if p.sip_public_ip:
+        snat = [r for r in routeros.items(snap, "ip/firewall/nat") if r.get("chain") == "srcnat"
+                and r.get("action") == "src-nat" and routeros.enabled(r)
+                and r.get("src-address") in (internal, f"{internal}/32") and r.get("to-addresses") == p.sip_public_ip]
+        if not snat:
+            nat_all = routeros.items(snap, "ip/firewall/nat")
+            first_masq = next((r for r in nat_all if r.get("chain") == "srcnat" and r.get("action") == "masquerade"),
+                              None)
+            data = {"chain": "srcnat", "action": "src-nat", "src-address": internal, "out-interface": wan,
+                    "to-addresses": p.sip_public_ip, "comment": f"{PBX_TAG} {p.name} ausgehend"}
+            if first_masq and first_masq.get(".id"):
+                data["place-before"] = first_masq[".id"]
+            ops.append(routeros.op_add("ip/firewall/nat", data))
+    return ops
+
+
+def scan_pbx(db: Session, p: PbxServer) -> list[dict]:
+    """SIP/RTP to the PBX: port forwarding on the router, SIP-ALG off, restricted peers, Asterisk NAT settings."""
+    out = []
+    o = _obj("pbx", p)
+    if not p.router_id or not p.sip_internal_ip:
+        out.append(proposal(f"pbx:{p.id}:cfg", "router", o, f"{p.name}: kein Router/keine interne Adresse",
+                            "Für Weiterleitung und Prüfung RouterOS und interne IP der Telefonanlage angeben.",
+                            severity="info"))
+        return out
+    router = db.get(RouterDevice, p.router_id)
+    if router is None:
+        return out
+    mt = integrations.router_client(router)
+    snap = routeros.snapshot_from_api(mt)
+    target, _e = routeros.validate_target(router.target_cfg or routeros.detect_target(snap))
+    wan = target["wan_interface"]
+    sip_helper = next((sp for sp in routeros.items(snap, "ip/firewall/service-port") if sp.get("name") == "sip"),
+                      None)
+    if sip_helper and not routeros.yes(sip_helper.get("disabled")):
+        out.append(proposal(f"pbx:{p.id}:alg", "router", o, f"{router.name}: SIP-Helper (SIP-ALG) abschalten",
+                            "Der SIP-Helper von RouterOS schreibt SIP-Pakete um und verursacht einseitige Audio, "
+                            "abbrechende Registrierungen und verlorene Anrufe. Asterisk regelt NAT selbst.",
+                            action="router_direct_ops",
+                            params={"router_id": router.id, "ops": [routeros.op_set(
+                                "ip/firewall/service-port", {"disabled": "yes"}, item_id=sip_helper.get(".id", ""),
+                                find="name=sip")]}))
+    ops = pbx_router_ops(p, snap, wan)
+    if ops:
+        out.append(proposal(f"pbx:{p.id}:router", "router", o,
+                            f"{p.name}: SIP/RTP-Weiterleitung auf {router.name} einrichten",
+                            f"{len(ops)} Änderung(en) – " + "; ".join(routeros.op_to_cli(x) for x in ops),
+                            action="router_direct_ops", params={"router_id": router.id, "ops": ops}))
+    if not p.source_list:
+        out.append(proposal(f"pbx:{p.id}:open", "router", o, f"{p.name}: SIP-Port für alle Absender offen",
+                            "Unter Telefonie → Bearbeiten die Adressen des SIP-Providers als erlaubte Gegenstellen "
+                            "eintragen; die Weiterleitung wird dann darauf beschränkt. Externe Telefone besser per "
+                            "VPN anbinden.", severity="warn"))
+    nat = (p.data or {}).get("nat") or {}
+    if p.data and not (nat.get("external_media_address") or nat.get("external_signaling_address")):
+        out.append(proposal(f"pbx:{p.id}:extaddr", "router", o, f"{p.name}: externe Adresse in Asterisk fehlt",
+                            "FreePBX → Einstellungen → Asterisk SIP Settings: External Address und Local Networks "
+                            "setzen, sonst fehlt bei Gesprächen von außen der Ton.", severity="warn"))
     return out
 
 

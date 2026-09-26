@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% set help_page = "telefonie" %}
+{% from "_macros.html" import csrf, empty with context %}
+{% from "integrations/_macros.html" import int_status, alerts_box with context %}
+{% block title %}{{ p.name }} · Telefonie{% endblock %}
+{% macro act(action, label, cls='xs', confirm='', extra={}) -%}
+  <form method="post" action="{{ url_for('pbx.do', pbx_id=p.id) }}" class="inline" {% if confirm %}data-confirm="{{ confirm }}"{% endif %}>{{ csrf() }}
+    <input type="hidden" name="action" value="{{ action }}">{% for k, v in extra.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+    <button class="btn {{ cls }}">{{ label }}</button></form>
+{%- endmacro %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>{{ p.name }} {{ int_status(p) }}</h1>
+    <p>{% if d.version %}Asterisk {{ d.version }}{% if d.freepbx %} · FreePBX {{ d.freepbx }}{% endif %} · {% endif %}{% if system %}System <a href="{{ url_for('systems.detail', system_id=system.id) }}">{{ system.name }}</a>{% endif %}{% if p.public_url %} · <a href="{{ p.public_url }}" target="_blank" rel="noopener">{{ p.public_url }}</a>{% endif %}</p></div>
+  <div class="actions">
+    {% if int_can('pbx', p.id, 'operate') %}{{ act('reload', 'Neu laden', 'ghost', 'Konfiguration der Telefonanlage neu laden?') }}{% endif %}
+    {% if user.is_admin %}<a class="btn ghost" href="{{ url_for('pbx.edit', pbx_id=p.id) }}"><svg class="icon"><use href="#i-edit"/></svg>Bearbeiten</a>{% endif %}
+  </div>
+</div>
+{{ alerts_box(p) }}
+{% if error %}<div class="alert warning">{{ error }}</div>{% endif %}
+<nav class="tabs">{% for k, v in tabs.items() %}<a href="?tab={{ k }}" class="{{ 'active' if tab == k }}">{{ v }}</a>{% endfor %}</nav>
+
+{% if tab == 'overview' %}
+<div class="stats">
+  <div class="stat"><div class="label">Asterisk</div><div class="value">{% if d.active %}<span class="badge success">läuft</span>{% elif d.version is defined %}<span class="badge danger">gestoppt</span>{% else %}–{% endif %}</div><div class="sub">{% if d.uptime %}seit {{ d.uptime // 86400 }} T {{ (d.uptime % 86400) // 3600 }} h{% endif %}</div></div>
+  <div class="stat"><div class="label">Gespräche</div><div class="value">{{ d.calls if d.calls is defined else '–' }}</div><div class="sub">{{ d.processed or 0 }} seit Start</div></div>
+  <div class="stat"><div class="label">Trunks</div><div class="value">{% set regs = d.registrations or [] %}{{ regs|selectattr('ok')|list|length }}/{{ regs|length }}</div><div class="sub">registriert</div></div>
+  <div class="stat"><div class="label">Nebenstellen</div><div class="value">{{ d.extensions_online or 0 }}/{{ (d.extensions or [])|length }}</div><div class="sub">angemeldet</div></div>
+</div>
+{% if system and system.upd.asterisk and system.upd.asterisk.modules %}
+<div class="alert warning">{{ system.upd.asterisk.modules|length }} FreePBX-Modul-Update(s): {{ system.upd.asterisk.modules|map(attribute='module')|join(', ') }} – auf der <a href="{{ url_for('systems.detail', system_id=system.id) }}">System-Seite</a> unter „FreePBX-Module aktualisieren“ oder im Wartungsplaner.</div>
+{% endif %}
+
+{% elif tab == 'extensions' %}
+<div class="card"><div class="card-head"><h2>Nebenstellen</h2><input type="search" placeholder="Suchen …" data-filter-list="#ext tbody tr" style="max-width:220px"></div>
+  {% if not d.is_freepbx and d.version is defined %}<div class="card-body"><div class="alert info">Reines Asterisk ohne FreePBX: Nebenstellen werden in den Konfigurationsdateien gepflegt; hier wird nur der Anmeldestatus angezeigt.</div></div>{% endif %}
+  <div class="table-wrap"><table class="table compact" id="ext">
+    <thead><tr><th>Nebenstelle</th><th>Name</th><th>Technik</th><th>Status</th><th>Gerät</th><th></th></tr></thead><tbody>
+    {% for e in d.extensions or [] %}
+      <tr><td class="mono"><strong>{{ e.ext }}</strong></td><td>{{ e.name }}</td><td><small>{{ e.tech }}{% if e.voicemail %} · Voicemail{% endif %}</small></td>
+        <td>{% if e.online %}<span class="badge success">angemeldet</span>{% else %}<span class="badge">nicht angemeldet</span>{% endif %}</td>
+        <td><small class="mono">{{ e.contact.ip or '' }}{% if e.contact.rtt %} · {{ e.contact.rtt }} ms{% endif %}</small></td>
+        <td class="nowrap text-right">
+          {% if int_can('pbx', p.id, 'operate') %}{{ act('ext_secret', 'Neues SIP-Passwort', 'xs', 'Neues SIP-Passwort für ' ~ e.ext ~ ' setzen? Das Telefon muss danach neu eingerichtet werden.', {'ext': e.ext}) }}{% endif %}
+          {% if int_can('pbx', p.id, 'full') %}{{ act('ext_delete', 'Löschen', 'xs danger-outline', 'Nebenstelle ' ~ e.ext ~ ' (' ~ e.name ~ ') löschen?', {'ext': e.ext}) }}{% endif %}
+        </td></tr>
+    {% else %}<tr><td colspan="6" class="muted">Keine Nebenstellen gefunden.</td></tr>{% endfor %}</tbody></table></div>
+  {% if int_can('pbx', p.id, 'full') and d.is_freepbx %}
+  <div class="card-body"><h4>Nebenstelle anlegen (PJSIP)</h4>
+    <form method="post" action="{{ url_for('pbx.do', pbx_id=p.id) }}" class="inline-form" autocomplete="off">{{ csrf() }}<input type="hidden" name="action" value="ext_add">
+      <div class="field"><label>Nebenstelle</label><input type="text" name="ext" required pattern="[0-9]{2,8}" placeholder="201" style="max-width:110px"></div>
+      <div class="field"><label>Name</label><input type="text" name="name" required maxlength="80" placeholder="Max Muster"></div>
+      <div class="field"><label>SIP-Passwort</label><input type="password" name="secret" placeholder="leer = zufällig" autocomplete="new-password"></div>
+      <div class="field"><label>Voicemail an E-Mail</label><input type="email" name="email" placeholder="optional"></div>
+      <div class="field"><label>Voicemail-PIN</label><input type="text" name="pin" pattern="[0-9]{4,10}" placeholder="optional" style="max-width:110px"></div>
+      <button class="btn primary">Anlegen</button></form>
+    <small class="muted">Benötigt das FreePBX-Modul „Bulk Handler“. Ohne Voicemail-Angaben wird keine Mailbox angelegt.</small>
+  </div>
+  {% endif %}
+</div>
+
+{% elif tab == 'trunks' %}
+<div class="card"><div class="card-head"><h2>Registrierungen</h2></div>
+  <div class="table-wrap"><table class="table compact"><thead><tr><th>Trunk</th><th>Server</th><th>Benutzer</th><th>Status</th></tr></thead><tbody>
+    {% for r in d.registrations or [] %}<tr><td class="mono">{{ r.name }}</td><td class="mono"><small>{{ r.uri }}</small></td><td class="mono"><small>{{ r.auth }}</small></td>
+      <td><span class="badge {{ 'success' if r.ok else 'danger' }}">{{ r.status }}</span></td></tr>
+    {% else %}<tr><td colspan="4" class="muted">Keine ausgehenden Registrierungen (Trunks ohne Registrierung stehen unten).</td></tr>{% endfor %}</tbody></table></div></div>
+<div class="card"><div class="card-head"><h2>Trunks und weitere Endpunkte</h2></div>
+  <div class="table-wrap"><table class="table compact"><thead><tr><th>Endpunkt</th><th>Zustand</th><th>Kanäle</th><th>Gegenstelle</th></tr></thead><tbody>
+    {% for t in d.trunks or [] %}<tr><td class="mono">{{ t.name }}</td><td><span class="badge {{ 'success' if t.ok else 'danger' }}">{{ t.state }}</span></td><td>{{ t.channels }}</td>
+      <td><small class="mono">{{ t.contact.uri or '' }}{% if t.contact.rtt %} · {{ t.contact.rtt }} ms{% endif %}</small></td></tr>
+    {% else %}<tr><td colspan="4" class="muted">Keine.</td></tr>{% endfor %}</tbody></table></div></div>
+
+{% elif tab == 'network' %}
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>SIP & RTP</h2></div><div class="card-body">
+    <dl class="kv">
+      <dt>Öffentlich</dt><dd class="mono">{{ p.sip_public_ip or wan_ip or 'WAN-Adresse des Routers' }}</dd>
+      <dt>Intern</dt><dd class="mono">{{ p.sip_internal_ip or '–' }}</dd>
+      <dt>SIP</dt><dd class="mono">{{ p.sip_port }}/udp+tcp{% if p.sip_tls_port %}, {{ p.sip_tls_port }}/tls{% endif %}</dd>
+      <dt>RTP</dt><dd class="mono">{{ p.rtp_start }}–{{ p.rtp_end }}/udp</dd>
+      <dt>Gegenstellen</dt><dd class="mono">{{ p.sip_sources or 'alle' }}</dd>
+      <dt>RouterOS</dt><dd>{% if router %}<a href="{{ url_for('routers.detail', router_id=router.id, tab='nat') }}">{{ router.name }}</a>{% else %}–{% endif %}</dd>
+    </dl>
+    <p class="mt-1"><small>SIP und RTP lassen sich nicht über den Pangolin-Tunnel führen – sie sind die bewusste Ausnahme vom Ziel „eine Public-IP über Pangolin“. Weiterleitung, Absender-Beschränkung und das Abschalten des SIP-Helpers (SIP-ALG) auf dem Router schlagen die <a href="{{ url_for('optimize.index') }}">Optimierungen</a> vor.</small></p>
+  </div></div>
+  <div class="card"><div class="card-head"><h2>Prüfung der Anlage</h2></div><div class="card-body">
+    <ul class="list-plain">{% for c in checks %}<li><span class="badge {{ 'success' if c.ok else 'warning' }}">{{ 'OK' if c.ok else 'prüfen' }}</span> <span class="grow"><strong>{{ c.title }}</strong>{% if c.detail %}<br><small class="muted">{{ c.detail }}</small>{% endif %}</span></li>{% endfor %}</ul>
+  </div></div>
+  <div class="card"><div class="card-head"><h2>Weboberfläche über Pangolin</h2></div><div class="card-body">
+    <p>{% if p.public_url %}<span class="mono">{{ p.public_url }}</span> → intern <span class="mono">{{ publish.ip }}:{{ publish.port }}</span>{% else %}<span class="muted">Keine öffentliche Adresse hinterlegt.</span>{% endif %}</p>
+    {% if pangolin and publish.ip %}<a class="btn" href="{{ url_for('pangolin.publish', pg_id=pangolin.id, **publish) }}"><svg class="icon"><use href="#i-cloud"/></svg>Über {{ pangolin.name }} veröffentlichen</a>{% endif %}
+    <p class="mt-1"><small>Mit Pangolin-Anmeldung (SSO) veröffentlichen – die Verwaltungsoberfläche der Anlage gehört nicht ungeschützt ins Internet. Für Provisionierung der Telefone (HTTP) ggf. eine eigene Resource ohne Anmeldung, beschränkt auf den Pfad.</small></p>
+  </div></div>
+</div>
+{% endif %}
+{% endblock %}

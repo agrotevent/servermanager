@@ -2,6 +2,19 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.8.0 – 26.09.2026
+
+### Neu
+
+- **Telefonie (Asterisk/FreePBX)** unter *Infrastruktur*: Status, Gespräche, Trunk-Registrierungen,
+  Nebenstellen mit Anmeldestatus; Nebenstellen anlegen, löschen und neue SIP-Passwörter setzen
+  (FreePBX); Überwachung mit Warnungen bei gestopptem Asterisk und nicht registrierten Trunks.
+- Systemmodul *Asterisk/FreePBX*: Neu laden, FreePBX-Module aktualisieren, Neustart; Modul-Updates in
+  der Update-Übersicht.
+- Optimierungen für Telefonanlagen: SIP-Helper (SIP-ALG) abschalten, SIP/RTP-Weiterleitung auf die
+  Adressen des SIP-Providers beschränkt, optional eigene Public-IP; Prüfung von External Address,
+  Local Networks und RTP-Bereich; Weboberfläche über Pangolin.
+
 ## 1.7.1 – 26.09.2026
 
 ### Verbessert

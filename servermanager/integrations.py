@@ -10,19 +10,22 @@ from . import notify, pve, security, settings
 from .mikrotik import MikroTik, MikroTikError
 from .authentik import Authentik, AuthentikError
 from .mailcow import Mailcow, MailcowError
-from .models import (KIND_MAILCOW, KIND_PANGOLIN, KIND_PVE, KIND_ROUTER, KIND_SSO, STATUS_ERROR, STATUS_ONLINE,
-                     MailcowServer, PangolinServer, PveServer, RouterDevice, SsoServer, utcnow)
+from .models import (KIND_MAILCOW, KIND_PANGOLIN, KIND_PBX, KIND_PVE, KIND_ROUTER, KIND_SSO, STATUS_ERROR,
+                     STATUS_ONLINE, MailcowServer, PangolinServer, PbxServer, PveServer, RouterDevice, SsoServer,
+                     System, utcnow)
 from .pangolin import Pangolin, PangolinError
+from .pbx import PbxError
 from .pveapi import PveError
+from .ssh import SSHError
 
 log = logging.getLogger(__name__)
 
 MODELS = {KIND_PVE: PveServer, KIND_ROUTER: RouterDevice, KIND_PANGOLIN: PangolinServer,
-          KIND_MAILCOW: MailcowServer, KIND_SSO: SsoServer}
+          KIND_MAILCOW: MailcowServer, KIND_SSO: SsoServer, KIND_PBX: PbxServer}
 LABELS = {KIND_PVE: "Proxmox", KIND_ROUTER: "RouterOS", KIND_PANGOLIN: "Pangolin", KIND_MAILCOW: "Mailcow",
-          KIND_SSO: "SSO"}
-Integration = Union[PveServer, RouterDevice, PangolinServer, MailcowServer, SsoServer]
-ApiError = (PveError, MikroTikError, PangolinError, MailcowError, AuthentikError, ValueError)
+          KIND_SSO: "SSO", KIND_PBX: "Telefonie"}
+Integration = Union[PveServer, RouterDevice, PangolinServer, MailcowServer, SsoServer, PbxServer]
+ApiError = (PveError, MikroTikError, PangolinError, MailcowError, AuthentikError, PbxError, SSHError, ValueError)
 
 
 def kind_of(obj: Integration) -> str:
@@ -133,6 +136,13 @@ def poll(db: Session, obj: Integration) -> list[dict]:
                 if quota and disk_pct and used * 100 / quota >= disk_pct:
                     alerts.append({"key": f"quota:{b.get('username')}", "severity": "warn",
                                    "text": f"Postfach {b.get('username')} zu {round(used * 100 / quota)} % voll"})
+        elif kind == KIND_PBX:
+            from . import pbx
+            system = db.get(System, obj.system_id) if obj.system_id else None
+            if system is None:
+                raise PbxError("Kein System (SSH) zugeordnet")
+            data = pbx.status(system)
+            alerts = pbx.alerts(data)
         elif kind == KIND_SSO:
             au = sso_client(obj)
             data = {"version": au.version(), "applications": len(au.applications())}

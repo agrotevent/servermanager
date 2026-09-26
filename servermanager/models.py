@@ -363,8 +363,9 @@ KIND_ROUTER = "router"
 KIND_PANGOLIN = "pangolin"
 KIND_MAILCOW = "mailcow"
 KIND_SSO = "sso"
+KIND_PBX = "pbx"
 INTEGRATION_KINDS = {KIND_PVE: "Proxmox VE", KIND_ROUTER: "RouterOS", KIND_PANGOLIN: "Pangolin",
-                     KIND_MAILCOW: "Mailcow", KIND_SSO: "SSO (authentik)"}
+                     KIND_MAILCOW: "Mailcow", KIND_SSO: "SSO (authentik)", KIND_PBX: "Telefonie (Asterisk/FreePBX)"}
 MAIL_PORTS_DEFAULT = "25,465,587,143,993,110,995,4190,80"
 PANGOLIN_ROLES = {"primary": "Primär", "backup": "Backup-Weg"}
 PVE_HOSTING = {"local": "Lokal (gemeinsames Netz)", "hetzner": "Hetzner (vSwitch)"}
@@ -474,6 +475,30 @@ class MailcowServer(IntegrationMixin, Base):
     @property
     def port_list(self) -> list[int]:
         return [int(p) for p in (self.mail_ports or "").replace(" ", "").split(",") if p.isdigit()]
+
+
+class PbxServer(IntegrationMixin, Base):
+    """Asterisk/FreePBX on a managed system (SSH). Web UI via Pangolin, SIP/RTP via port forwarding."""
+
+    __tablename__ = "pbx_servers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    system_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    web_url: Mapped[str] = mapped_column(String(255), default="")        # internal, e.g. https://10.20.0.40
+    public_url: Mapped[str] = mapped_column(String(255), default="")     # web UI via Pangolin
+    sip_public_ip: Mapped[str] = mapped_column(String(64), default="")   # empty: WAN address of the router
+    sip_internal_ip: Mapped[str] = mapped_column(String(64), default="")
+    sip_port: Mapped[int] = mapped_column(Integer, default=5060)         # public UDP/TCP port
+    sip_tls_port: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    rtp_start: Mapped[int] = mapped_column(Integer, default=10000)
+    rtp_end: Mapped[int] = mapped_column(Integer, default=20000)
+    sip_sources: Mapped[str] = mapped_column(Text, default="")           # allowed SIP peers (provider), empty = all
+    router_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    @property
+    def source_list(self) -> list[str]:
+        import re as _re
+        return [x for x in _re.split(r"[,\s]+", self.sip_sources or "") if x]
 
 
 class SsoServer(IntegrationMixin, Base):

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% set help_page = "telefonie" %}
+{% from "_macros.html" import csrf, field, checkbox with context %}
+{% block title %}{{ 'Telefonanlage hinzufügen' if is_new else 'Telefonanlage bearbeiten' }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>{{ 'Telefonanlage hinzufügen' if is_new else p.name ~ ' bearbeiten' }}</h1>
+  <p>Die Anlage wird über ihr System (SSH) abgefragt – dafür muss sie als System verwaltet werden. Auf Systemen mit Asterisk wird das Modul „Asterisk/FreePBX“ automatisch erkannt.</p></div></div>
+<form method="post" autocomplete="off">{{ csrf() }}
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>Anlage</h2></div><div class="card-body"><div class="form-grid">
+    {{ field('Name', 'name', p.name, required=True) }}
+    <div class="field"><label>System (SSH)</label><select name="system_id" required><option value="">– bitte wählen –</option>
+      {% for x in systems %}<option value="{{ x.id }}" {% if p.system_id == x.id %}selected{% endif %}>{{ x.name }}{% if x in suggested %} (Asterisk erkannt){% endif %}</option>{% endfor %}</select></div>
+    {{ field('Interne Weboberfläche', 'web_url', p.web_url, placeholder='https://10.20.0.40', help='Ziel für die Veröffentlichung über Pangolin; leer = http://<System-Adresse>') }}
+    {{ field('Öffentliche Weboberfläche (über Pangolin)', 'public_url', p.public_url, placeholder='https://pbx.example.com') }}
+    {{ field('Beschreibung', 'description', p.description, cls='full') }}
+    {{ checkbox('Überwachen (Trunks, Asterisk-Status, Warnungen per Mail)', 'monitor', p.monitor) }}
+  </div></div></div>
+  <div class="card"><div class="card-head"><h2>SIP & RTP (Portweiterleitung)</h2></div><div class="card-body"><div class="form-grid">
+    {{ field('Interne IP der Anlage', 'sip_internal_ip', p.sip_internal_ip, placeholder='aus dem System') }}
+    {{ field('Eigene Public-IP für SIP', 'sip_public_ip', p.sip_public_ip, placeholder='leer = WAN-Adresse des Routers') }}
+    {{ field('SIP-Port (UDP/TCP)', 'sip_port', p.sip_port or 5060, type='number') }}
+    {{ field('SIP-TLS-Port', 'sip_tls_port', p.sip_tls_port or '', type='number', placeholder='z. B. 5061, leer = kein TLS') }}
+    {{ field('RTP von', 'rtp_start', p.rtp_start or 10000, type='number') }}
+    {{ field('RTP bis', 'rtp_end', p.rtp_end or 20000, type='number') }}
+    {{ field('Erlaubte SIP-Gegenstellen', 'sip_sources', p.sip_sources, placeholder='IP-Adressen/Netze des SIP-Providers', help='Nur diese Absender erreichen den SIP-Port. Leer = alle (nicht empfohlen).', cls='full') }}
+    <div class="field"><label>RouterOS (Weiterleitung)</label><select name="router_id"><option value="">– keiner –</option>{% for r in routers %}<option value="{{ r.id }}" {% if p.router_id == r.id %}selected{% endif %}>{{ r.name }}</option>{% endfor %}</select></div>
+  </div></div></div>
+</div>
+<div class="actions mt-1"><button class="btn primary">Speichern</button><a class="btn" href="{{ url_for('pbx.index') if is_new else url_for('pbx.detail', pbx_id=p.id) }}">Abbrechen</a></div>
+</form>
+{% if not is_new %}
+<div class="card danger-zone mt-2"><div class="card-head"><h2>Telefonanlage entfernen</h2></div><div class="card-body">
+  <form method="post" action="{{ url_for('pbx.delete', pbx_id=p.id) }}" data-confirm="{{ p.name }} aus dem Servermanager entfernen?">{{ csrf() }}<button class="btn danger">Entfernen</button></form>
+</div></div>
+{% endif %}
+{% endblock %}

@@ -96,6 +96,11 @@ elif command -v docker >/dev/null 2>&1 && docker ps -a --format '{{.Image}}' 2>/
     kv newt_version "docker"
     kv newt_active "$(docker ps --format '{{.Image}}' 2>/dev/null | grep -q 'fosrl/newt' && echo active || echo inactive)"
 fi
+if command -v asterisk >/dev/null 2>&1; then
+    kv asterisk_version "$(asterisk -V 2>/dev/null | head -n 1)"
+    kv asterisk_active "$(pgrep -x asterisk >/dev/null 2>&1 && echo active || echo inactive)"
+    command -v fwconsole >/dev/null 2>&1 && kv freepbx yes
+fi
 ispc=/usr/local/ispconfig/server/lib/config.inc.php
 if [ -f "$ispc" ]; then
     kv ispconfig_version "$(grep -oE "ISPC_APP_VERSION', *'[^']+" "$ispc" | sed "s/.*'//")"

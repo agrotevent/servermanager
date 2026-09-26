@@ -1204,7 +1204,7 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
                     raise JobFailed("Router existiert nicht mehr")
                 db.expunge(router)
             ops = p["ops"]
-            if any(op.get("m") != "add" or op.get("path") not in ("ip/address", "ip/firewall/nat") for op in ops):
+            if not all(routeros.direct_op_allowed(op) for op in ops):
                 raise JobFailed("Unzulässige Router-Operation")
             mt = integrations.router_client(router, timeout=30)
             if router.id not in backed_up:
