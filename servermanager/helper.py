@@ -7,7 +7,9 @@ from .config import get_config
 
 
 class HelperError(Exception):
-    pass
+    def __init__(self, message: str, returncode: int = 1):
+        super().__init__(message)
+        self.returncode = returncode
 
 
 def run_helper(*args: str, timeout: int = 120, check: bool = True, stdin: str | None = None) -> str:
@@ -22,5 +24,8 @@ def run_helper(*args: str, timeout: int = 120, check: bool = True, stdin: str | 
     except subprocess.TimeoutExpired as exc:
         raise HelperError(f"Zeitüberschreitung bei sm-helper {' '.join(args)}") from exc
     if check and res.returncode != 0:
-        raise HelperError((res.stderr or res.stdout).strip() or f"sm-helper {args[0]} fehlgeschlagen")
+        if res.returncode < 0:
+            raise HelperError(f"sm-helper {args[0]} wurde durch Signal {-res.returncode} beendet", res.returncode)
+        raise HelperError((res.stderr or res.stdout).strip() or f"sm-helper {args[0]} fehlgeschlagen "
+                          f"(Exit-Code {res.returncode})", res.returncode)
     return res.stdout

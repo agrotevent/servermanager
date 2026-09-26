@@ -230,7 +230,11 @@ def backups_restore_confirm():
         backup.stage_restore(path, passphrase)
         audit(g.db, g.user, "backup.restore", name, f"Sicherung des alten Stands: {safety.name}", ip=client_ip())
         g.db.commit()
-        run_helper("restore", timeout=60)
+        try:
+            run_helper("restore", timeout=60)
+        except HelperError as exc:
+            if exc.returncode >= 0:  # killed by a signal: the restore is already stopping this service
+                raise
     except (backup.BackupError, HelperError, OSError) as exc:
         flash(f"Wiederherstellung fehlgeschlagen: {exc}", "danger")
         return redirect(url_for("admin.backups"))
@@ -309,7 +313,13 @@ def update_start():
             flash(f"Sicherung vor dem Update: {path.name}", "info")
         audit(g.db, g.user, "update.start", "", ip=client_ip())
         g.db.commit()
-        selfupdate.start()
+        try:
+            selfupdate.start()
+        except HelperError as exc:
+            # killed by a signal: the update already runs and is restarting this service (older helpers
+            # waited for the whole update) - show the progress page instead of an error
+            if exc.returncode >= 0:
+                raise
     except (HelperError, backup.BackupError, OSError) as exc:
         flash(f"Update konnte nicht gestartet werden: {exc}", "danger")
         return redirect(url_for("admin.update_page"))

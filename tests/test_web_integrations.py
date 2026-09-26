@@ -231,3 +231,26 @@ def test_update_branch_missing_and_switch(app, db, monkeypatch):
     assert "Update-Branch ist jetzt" in r.text and ("set-branch", "stable") in calls
     r = c.post("/update/branch", data={"branch": "bad;rm", "csrf_token": c.csrf}, follow_redirects=True)
     assert "Ungültiger Branch-Name" in r.text
+
+
+def test_update_start_survives_service_restart(app, db, monkeypatch):
+    """Older helpers waited for the whole update; the restart of the web service killed them (signal)."""
+    from servermanager import selfupdate, settings
+    from servermanager.helper import HelperError
+    settings.set(db, "backup.before_update", False)
+    db.commit()
+    c = login(app, "i-admin")
+
+    def killed():
+        raise HelperError("sm-helper self-update wurde durch Signal 15 beendet", -15)
+    monkeypatch.setattr(selfupdate, "start", killed)
+    r = c.post("/update/start", data={"csrf_token": c.csrf})
+    assert r.status_code == 200 and "Update läuft" in r.text
+
+    def failed():
+        raise HelperError("Update-Dienst konnte nicht gestartet werden (systemd-run)", 1)
+    monkeypatch.setattr(selfupdate, "start", failed)
+    r = c.post("/update/start", data={"csrf_token": c.csrf}, follow_redirects=True)
+    assert "Update konnte nicht gestartet werden: Update-Dienst" in r.text
+    settings.set(db, "backup.before_update", True)
+    db.commit()

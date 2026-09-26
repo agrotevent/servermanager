@@ -2,6 +2,15 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.5.2 – 26.09.2026
+
+### Behoben
+
+- „Update konnte nicht gestartet werden: sm-helper self-update fehlgeschlagen“: Der Helfer wartete auf
+  das Ende des gesamten Updates und wurde beim Neustart der Weboberfläche mit beendet. Update und
+  Wiederherstellung werden jetzt ohne Warten gestartet (`systemd-run --no-block`); ein beim Neustart
+  abgebrochener Aufruf gilt nicht mehr als Fehler. Fehlermeldungen des Helfers enthalten den Exit-Code.
+
 ## 1.5.1 – 26.09.2026
 
 ### Behoben

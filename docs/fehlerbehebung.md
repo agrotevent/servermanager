@@ -16,3 +16,10 @@ Der eingestellte Update-Branch existiert im Repository nicht. Unter *Update → 
 vorhandenen Branch wählen. Alternativ als root:
 `sed -i 's|^branch = .*|branch = "main"|' /etc/servermanager/servermanager.conf` und danach
 `systemctl restart servermanager-web`.
+
+## Update: „sm-helper self-update fehlgeschlagen“
+
+Betrifft Versionen bis 1.5.1: Das Update lief trotz der Meldung meist im Hintergrund weiter. Unter
+*Update → Letztes Update-Protokoll* bzw. in `/var/log/servermanager/update.log` nachsehen. Ab 1.5.2 wird
+das Update ohne Warten gestartet und die Meldung tritt nicht mehr auf. Hängt eine Installation auf einem
+alten Stand fest, hilft einmalig als root: `/opt/servermanager/bin/sm-update`.

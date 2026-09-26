@@ -164,15 +164,19 @@ case "$cmd" in
 
     self-update)
         [ -x "$APP_DIR/bin/sm-update" ] || die "$APP_DIR/bin/sm-update fehlt"
-        # run outside of the web service cgroup - the services get restarted
-        systemd-run --unit="servermanager-update-$(date +%s)" --collect --property=Type=oneshot \
-            --property=TimeoutStartSec=1800 "$APP_DIR/bin/sm-update" >/dev/null
+        # run outside of the web service cgroup - the services get restarted.
+        # --no-block: do not wait for the (oneshot) update to finish - it restarts the web service,
+        # which would kill this helper while it is still waiting.
+        systemd-run --no-block --unit="servermanager-update-$(date +%s)" --collect --property=Type=oneshot \
+            --property=TimeoutStartSec=1800 "$APP_DIR/bin/sm-update" >/dev/null 2>&1 \
+            || die "Update-Dienst konnte nicht gestartet werden (systemd-run)"
         echo "Update gestartet."
         ;;
 
     restore)
-        systemd-run --unit="servermanager-restore-$(date +%s)" --collect --property=Type=oneshot \
-            "$APP_DIR/bin/sm-helper" restore-apply >/dev/null
+        systemd-run --no-block --unit="servermanager-restore-$(date +%s)" --collect --property=Type=oneshot \
+            "$APP_DIR/bin/sm-helper" restore-apply >/dev/null 2>&1 \
+            || die "Wiederherstellung konnte nicht gestartet werden (systemd-run)"
         echo "Wiederherstellung gestartet."
         ;;
 
