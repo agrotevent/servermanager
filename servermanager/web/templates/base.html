@@ -56,6 +56,8 @@
       {% if 'pve' in ni %}<a href="{{ url_for('pve.index') }}" class="{{ 'active' if bp == 'pve' }}"><svg class="icon"><use href="#i-cube"/></svg>Proxmox</a>{% endif %}
       {% if 'router' in ni %}<a href="{{ url_for('routers.index') }}" class="{{ 'active' if bp == 'routers' }}"><svg class="icon"><use href="#i-router"/></svg>RouterOS</a>{% endif %}
       {% if 'pangolin' in ni %}<a href="{{ url_for('pangolin.index') }}" class="{{ 'active' if bp == 'pangolin' }}"><svg class="icon"><use href="#i-globe"/></svg>Pangolin</a>{% endif %}
+      {% if 'mailcow' in ni %}<a href="{{ url_for('mailcow.index') }}" class="{{ 'active' if bp == 'mailcow' }}"><svg class="icon"><use href="#i-archive"/></svg>Mailcow</a>{% endif %}
+      {% if 'sso' in ni %}<a href="{{ url_for('sso.index') }}" class="{{ 'active' if bp == 'sso' }}"><svg class="icon"><use href="#i-user"/></svg>SSO</a>{% endif %}
       {% if user.is_admin %}<a href="{{ url_for('optimize.index') }}" class="{{ 'active' if bp == 'optimize' }}"><svg class="icon"><use href="#i-check"/></svg>Optimierungen</a>{% endif %}
       {% endif %}
       {% if user.can_add_systems %}

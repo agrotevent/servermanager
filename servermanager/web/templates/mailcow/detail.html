@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% set help_page = "apps" %}
+{% from "_macros.html" import csrf, field, empty with context %}
+{% from "integrations/_macros.html" import int_status, alerts_box with context %}
+{% block title %}{{ m.name }} · Mailcow{% endblock %}
+{% macro act(action, label, cls='xs', confirm='', extra={}) -%}
+  <form method="post" action="{{ url_for('mailcow.do', mc_id=m.id) }}" class="inline" {% if confirm %}data-confirm="{{ confirm }}"{% endif %}>{{ csrf() }}
+    <input type="hidden" name="action" value="{{ action }}">{% for k, v in extra.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+    <button class="btn {{ cls }}">{{ label }}</button></form>
+{%- endmacro %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>{{ m.name }} {{ int_status(m) }}{% if sso %} <span class="badge info">SSO aktiv</span>{% endif %}</h1>
+    <p>{% if m.public_url %}<a href="{{ m.public_url }}" target="_blank" rel="noopener">{{ m.public_url }}</a> · {% endif %}Mail: {{ m.mail_hostname or '–' }} ({{ m.mail_public_ip or 'keine eigene IP' }}) · Mailcow {{ m.data.version or '?' }}</p></div>
+  <div class="actions">{% if user.is_admin %}<a class="btn ghost" href="{{ url_for('mailcow.edit', mc_id=m.id) }}"><svg class="icon"><use href="#i-edit"/></svg>Bearbeiten</a>{% endif %}</div>
+</div>
+{{ alerts_box(m) }}
+<nav class="tabs">{% for k, v in tabs.items() %}<a href="?tab={{ k }}" class="{{ 'active' if tab == k }}">{{ v }}</a>{% endfor %}</nav>
+{% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+
+{% if tab == 'mailboxes' and not error %}
+<div class="card"><div class="card-head"><h2>Postfächer</h2><input type="search" placeholder="Suchen …" data-filter-list="#mb tbody tr" style="max-width:220px"></div>
+  <div class="table-wrap"><table class="table compact" id="mb">
+    <thead><tr><th>Adresse</th><th>Name</th><th>Belegung</th><th>Status</th><th></th></tr></thead><tbody>
+    {% for b in mailboxes %}{% set active = b.active|string in ('1', 'True', 'true') %}
+      {% set q = (b.quota or 0)|int %}{% set u = (b.quota_used or 0)|int %}
+      <tr class="{{ 'muted' if not active }}"><td class="mono">{{ b.username }}</td><td>{{ b.name }}</td>
+        <td class="nowrap"><small>{{ u|bytes }} / {{ q|bytes if q else '∞' }}</small></td>
+        <td>{% if active %}<span class="badge success">aktiv</span>{% else %}<span class="badge">inaktiv</span>{% endif %}</td>
+        <td class="nowrap text-right">
+          {% if int_can('mailcow', m.id, 'operate') %}
+            {{ act('mb_active', 'Deaktivieren' if active else 'Aktivieren', 'xs', (b.username ~ ' deaktivieren?') if active else '', {'address': b.username, 'active': '0' if active else '1'}) }}
+            {{ act('mb_password', 'Neues Passwort', 'xs', 'Neues Passwort für ' ~ b.username ~ ' setzen?', {'address': b.username}) }}
+          {% endif %}
+          {% if int_can('mailcow', m.id, 'full') %}{{ act('mb_delete', 'Löschen', 'xs danger-outline', 'Postfach ' ~ b.username ~ ' mit allen Mails löschen?', {'address': b.username}) }}{% endif %}
+        </td></tr>
+    {% else %}<tr><td colspan="5" class="muted">Keine Postfächer.</td></tr>{% endfor %}</tbody></table></div>
+  {% if int_can('mailcow', m.id, 'full') %}
+  <div class="card-body"><h4>Postfach anlegen</h4>
+    <form method="post" action="{{ url_for('mailcow.do', mc_id=m.id) }}" class="inline-form" autocomplete="off">{{ csrf() }}<input type="hidden" name="action" value="mb_add">
+      <div class="field"><label>Adresse</label><input type="text" name="local" required placeholder="max.muster" style="max-width:160px"></div>
+      <div class="field"><label>Domain</label><select name="domain">{% for d in domains %}<option>{{ d.domain_name }}</option>{% endfor %}</select></div>
+      <div class="field"><label>Name</label><input type="text" name="name"></div>
+      <div class="field"><label>Quota (MB)</label><input type="number" name="quota" value="3072" min="0" style="max-width:110px"></div>
+      <div class="field"><label>Passwort</label><input type="password" name="password" placeholder="leer = zufällig" autocomplete="new-password"></div>
+      <label class="check"><input type="checkbox" name="force_pw_update" value="1"> Passwort bei erster Anmeldung ändern</label>
+      <button class="btn primary">Anlegen</button></form>
+    {% if sso %}<small class="muted">Mit SSO melden sich Benutzer über authentik an; für IMAP/SMTP-Programme bleibt das Postfach-Passwort bzw. App-Passwort nötig.</small>{% endif %}
+  </div>
+  {% endif %}
+</div>
+
+{% elif tab == 'aliases' and not error %}
+<div class="card"><div class="card-head"><h2>Aliase</h2></div>
+  <div class="table-wrap"><table class="table compact"><thead><tr><th>Alias</th><th>Ziel</th><th></th></tr></thead><tbody>
+    {% for a in aliases %}<tr><td class="mono">{{ a.address }}</td><td class="mono"><small>{{ a.goto }}</small></td>
+      <td class="text-right">{% if int_can('mailcow', m.id, 'full') %}{{ act('alias_delete', 'Löschen', 'xs danger-outline', 'Alias ' ~ a.address ~ ' löschen?', {'id': a.id, 'address': a.address}) }}{% endif %}</td></tr>
+    {% else %}<tr><td colspan="3" class="muted">Keine Aliase.</td></tr>{% endfor %}</tbody></table></div>
+  {% if int_can('mailcow', m.id, 'full') %}
+  <div class="card-body"><form method="post" action="{{ url_for('mailcow.do', mc_id=m.id) }}" class="inline-form">{{ csrf() }}<input type="hidden" name="action" value="alias_add">
+    <div class="field"><label>Alias-Adresse</label><input type="text" name="address" required placeholder="info@example.com"></div>
+    <div class="field"><label>Ziel(e)</label><input type="text" name="goto" required placeholder="max@example.com, eva@example.com"></div>
+    <button class="btn">Anlegen</button></form></div>
+  {% endif %}
+</div>
+
+{% elif tab == 'domains' and not error %}
+<div class="card"><div class="table-wrap"><table class="table compact"><thead><tr><th>Domain</th><th>Postfächer</th><th>Aliase</th><th>Status</th></tr></thead><tbody>
+  {% for d in domains %}<tr><td class="mono">{{ d.domain_name }}</td><td>{{ d.mboxes_in_domain }}{% if d.max_num_mboxes_for_domain %} / {{ d.max_num_mboxes_for_domain }}{% endif %}</td><td>{{ d.aliases_in_domain }}</td>
+    <td>{% if d.active|string in ('1', 'True', 'true') %}<span class="badge success">aktiv</span>{% else %}<span class="badge">inaktiv</span>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="4" class="muted">Keine Domains.</td></tr>{% endfor %}</tbody></table></div></div>
+
+{% elif tab == 'mail' %}
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>IMAP/SMTP über eigene Public-IP</h2></div><div class="card-body">
+    <dl class="kv"><dt>Mail-Hostname</dt><dd class="mono">{{ m.mail_hostname or '–' }}</dd><dt>Public-IP</dt><dd class="mono">{{ m.mail_public_ip or '–' }}</dd>
+      <dt>Intern</dt><dd class="mono">{{ m.mail_internal_ip or '–' }}</dd><dt>Ports</dt><dd class="mono">{{ m.mail_ports }}</dd>
+      <dt>RouterOS</dt><dd>{% if router %}<a href="{{ url_for('routers.detail', router_id=router.id, tab='nat') }}">{{ router.name }}</a>{% else %}–{% endif %}</dd></dl>
+    <p class="mt-1"><small>Die Einrichtung auf dem Router (IP am WAN, Weiterleitung der Mail-Ports, ausgehende Mails über die Mail-IP) schlagen die <a href="{{ url_for('optimize.index') }}">Optimierungen</a> vor. Diese Portfreigaben sind die bewusste Ausnahme vom Ziel „eine Public-IP über Pangolin“.</small></p>
+  </div></div>
+  <div class="card"><div class="card-head"><h2>Weboberfläche über Pangolin</h2></div><div class="card-body">
+    <p>{% if m.public_url %}<span class="mono">{{ m.public_url }}</span> → intern <span class="mono">{{ publish.ip }}:{{ publish.port }}</span>{% else %}<span class="muted">Keine öffentliche Adresse hinterlegt.</span>{% endif %}</p>
+    {% if pangolin and publish.ip %}<a class="btn" href="{{ url_for('pangolin.publish', pg_id=pangolin.id, **publish) }}"><svg class="icon"><use href="#i-cloud"/></svg>Über {{ pangolin.name }} veröffentlichen</a>{% endif %}
+    <p class="mt-1"><small>Ohne Pangolin-Anmeldung veröffentlichen – Mailcow meldet selbst an (bzw. über SSO), ActiveSync/CalDAV-Clients müssen durchkommen.</small></p>
+    <h4 class="mt-2">SSO</h4>
+    {% if sso %}<p><span class="badge success">verbunden</span> <a href="{{ url_for('sso.detail', sso_id=sso.sso_id) }}">SSO-Verbindung</a></p>{% else %}<p class="muted">Nicht verbunden – unter <a href="{{ url_for('sso.index') }}">SSO</a> per Klick verbinden.</p>{% endif %}
+  </div></div>
+</div>
+{% endif %}
+{% endblock %}

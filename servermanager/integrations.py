@@ -8,16 +8,21 @@ from sqlalchemy.orm import Session
 
 from . import notify, pve, security, settings
 from .mikrotik import MikroTik, MikroTikError
-from .models import (KIND_PANGOLIN, KIND_PVE, KIND_ROUTER, STATUS_ERROR, STATUS_ONLINE, PangolinServer,
-                     PveServer, RouterDevice, utcnow)
+from .authentik import Authentik, AuthentikError
+from .mailcow import Mailcow, MailcowError
+from .models import (KIND_MAILCOW, KIND_PANGOLIN, KIND_PVE, KIND_ROUTER, KIND_SSO, STATUS_ERROR, STATUS_ONLINE,
+                     MailcowServer, PangolinServer, PveServer, RouterDevice, SsoServer, utcnow)
 from .pangolin import Pangolin, PangolinError
 from .pveapi import PveError
 
 log = logging.getLogger(__name__)
 
-MODELS = {KIND_PVE: PveServer, KIND_ROUTER: RouterDevice, KIND_PANGOLIN: PangolinServer}
-Integration = Union[PveServer, RouterDevice, PangolinServer]
-ApiError = (PveError, MikroTikError, PangolinError, ValueError)
+MODELS = {KIND_PVE: PveServer, KIND_ROUTER: RouterDevice, KIND_PANGOLIN: PangolinServer,
+          KIND_MAILCOW: MailcowServer, KIND_SSO: SsoServer}
+LABELS = {KIND_PVE: "Proxmox", KIND_ROUTER: "RouterOS", KIND_PANGOLIN: "Pangolin", KIND_MAILCOW: "Mailcow",
+          KIND_SSO: "SSO"}
+Integration = Union[PveServer, RouterDevice, PangolinServer, MailcowServer, SsoServer]
+ApiError = (PveError, MikroTikError, PangolinError, MailcowError, AuthentikError, ValueError)
 
 
 def kind_of(obj: Integration) -> str:
@@ -30,6 +35,17 @@ def kind_of(obj: Integration) -> str:
 def router_client(router: RouterDevice, timeout: int = 15) -> MikroTik:
     return MikroTik(router.api_url, router.username, security.decrypt(router.password_enc),
                     verify_tls=bool(router.verify_ca), timeout=timeout, fingerprint=router.fingerprint or "")
+
+
+def mailcow_client(mc: MailcowServer, timeout: int = 20) -> Mailcow:
+    return Mailcow(mc.api_url, security.decrypt(mc.api_key_enc), fingerprint=mc.fingerprint or "",
+                   verify_ca=bool(mc.verify_ca) or not mc.fingerprint, timeout=timeout)
+
+
+def sso_client(s: SsoServer, timeout: int = 20) -> Authentik:
+    return Authentik(s.api_url, security.decrypt(s.token_enc), public_url=s.public_url,
+                     fingerprint=s.fingerprint or "", verify_ca=bool(s.verify_ca) or not s.fingerprint,
+                     timeout=timeout)
 
 
 def pangolin_client(p: PangolinServer, timeout: int = 20) -> Pangolin:
@@ -82,6 +98,19 @@ def poll(db: Session, obj: Integration) -> list[dict]:
                 alerts.append({"key": "cpu", "severity": "warn", "text": f"CPU-Last {data['cpu_load']} %"})
             if data["mem_pct"] >= 90:
                 alerts.append({"key": "mem", "severity": "warn", "text": f"Arbeitsspeicher zu {data['mem_pct']} % belegt"})
+        elif kind == KIND_MAILCOW:
+            mc = mailcow_client(obj)
+            boxes = mc.mailboxes()
+            data = {"version": mc.version(), "domains": len(mc.domains()), "mailboxes": len(boxes),
+                    "inactive": sum(1 for b in boxes if str(b.get("active")) in ("0", "False", "false"))}
+            for b in boxes:
+                quota, used = int(b.get("quota") or 0), int(b.get("quota_used") or 0)
+                if quota and disk_pct and used * 100 / quota >= disk_pct:
+                    alerts.append({"key": f"quota:{b.get('username')}", "severity": "warn",
+                                   "text": f"Postfach {b.get('username')} zu {round(used * 100 / quota)} % voll"})
+        elif kind == KIND_SSO:
+            au = sso_client(obj)
+            data = {"version": au.version(), "applications": len(au.applications())}
         else:
             data = pangolin_overview(pangolin_client(obj))
             others = [p for p in db.query(PangolinServer).filter(PangolinServer.id != obj.id).all()
@@ -118,7 +147,7 @@ def _alert_changes(db: Session, obj: Integration, alerts: list[dict]) -> None:
     resolved = [a for k, a in before.items() if k not in {x["key"] for x in current}]
     obj.alerts = current
     if (new or resolved) and settings.get(db, "integrations.notify"):
-        label = {KIND_PVE: "Proxmox", KIND_ROUTER: "RouterOS", KIND_PANGOLIN: "Pangolin"}[kind_of(obj)]
+        label = LABELS[kind_of(obj)]
         lines = [f"{label}: {obj.name}", ""]
         lines += [f"NEU: {a['text']}" for a in new]
         lines += [f"BEHOBEN: {a['text']}" for a in resolved]

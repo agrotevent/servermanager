@@ -2,6 +2,22 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.5.0 – 26.09.2026
+
+### Neu
+
+- **Nextcloud-Benutzer** per `occ`: anlegen (mit Gruppen, Quota, Zufallspasswort), sperren, neues
+  Passwort, löschen.
+- **Mailcow** über die API: Postfächer, Aliase, Domains, Überwachung. Weboberfläche über Pangolin,
+  **IMAP/SMTP über eine eigene Public-IP**. Die Optimierungen richten auf dem RouterOS Mail-IP,
+  Weiterleitung der Mail-Ports und Source-NAT für ausgehende Mails ein; die Mail-Ports gelten als
+  erlaubte Ausnahme.
+- **SSO mit authentik:** interne API, öffentliche Anmeldeseite über Pangolin, Benutzerverwaltung
+  (optional mit Postfach). **Nextcloud (user_oidc) und Mailcow (Generic OIDC) per Klick verbinden**
+  bzw. trennen, mit Rückbau bei Fehlern.
+- Optimierungen: Weboberflächen von authentik, Mailcow und SSO-verbundenen Nextclouds über Pangolin
+  veröffentlichen (ohne Pangolin-Anmeldung).
+
 ## 1.4.0 – 26.09.2026
 
 ### Neu

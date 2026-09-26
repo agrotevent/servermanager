@@ -29,7 +29,8 @@ erreichbar gemacht – mit einem **Backup-Weg** über einen zweiten Pangolin-Ser
   beim Ausfall eines Hosts ein Weg erhalten bleibt.
 - **Hetzner:** Die Hosts sind über einen vSwitch (VLAN 4000–4091, MTU 1400) verbunden, sodass lokale IPs
   zwischen den Hosts funktionieren. **Lokal:** Die Hosts hängen in einem gemeinsamen Netz.
-- Portfreigaben auf der öffentlichen IP werden durch Pangolin-Veröffentlichungen ersetzt.
+- Portfreigaben auf der öffentlichen IP werden durch Pangolin-Veröffentlichungen ersetzt. **Ausnahme:**
+  Mailcow bekommt für IMAP/SMTP eine eigene Public-IP (siehe [Nextcloud, Mailcow & SSO](apps.md)).
 
 ## 1. Schnittstellen anbinden und Daten importieren
 
@@ -80,6 +81,7 @@ Das Einlesen ändert nichts an den Geräten.
 | Proxmox | Autostart fehlt; Guest-Agent aus; privilegierter Container; in keinem Sicherungsjob; Disk voll; Gast nicht verwaltet; **vSwitch nicht eingebunden**, MTU ≠ 1400 im vSwitch | Konfiguration setzen; Sicherungsjob „servermanager“ (02:30, Snapshot, 7 täglich/4 wöchentlich); Disk vergrößern; Bestand übernehmen; VLAN-Interface + Bridge anlegen und aktivieren |
 | RouterOS | Ergebnisse der Konfigurationsanalyse (NAT, Policy-Routing, DHCP, DNS …); genutzte IP mit dynamischer Lease | nur unkritische, ergänzende Änderungen mit Sicherung vorab; Firewall/Dienste nur als Skript |
 | Pangolin | Dienst ohne Anmeldung | Pangolin-Anmeldung aktivieren |
+| Anwendungen | Weboberfläche von authentik, Mailcow oder SSO-verbundener Nextcloud nicht veröffentlicht; Mail-IP von Mailcow nicht eingerichtet; DNS für Mailversand | Veröffentlichung ohne Pangolin-Anmeldung; IP am WAN, Mail-Ports weiterleiten, Source-NAT vor Masquerade |
 
 Liegen die Newt-Container beider Pangolin-Server auf demselben Host:
 

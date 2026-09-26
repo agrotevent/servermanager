@@ -104,3 +104,66 @@ class NextcloudModule(Module):
         if nc.get("apps"):
             parts.append(f"{len(nc['apps'])} App(s)")
         return {"count": count, "text": ", ".join(parts), "severity": "warn"}
+
+
+# --------------------------------------------------------------------------
+# user management and SSO (synchronous occ calls)
+# --------------------------------------------------------------------------
+UID_RE = re.compile(r"^[A-Za-z0-9._@-]{1,64}$")
+GROUP_RE = re.compile(r"^[A-Za-z0-9 ._@-]{1,64}$")
+QUOTA_RE = re.compile(r"^(none|default|[0-9]+(\.[0-9]+)? ?(B|KB|MB|GB|TB))$", re.I)
+
+
+def occ_task(conn, system: System, task: str, extra: Optional[dict] = None, timeout: int = 180) -> str:
+    from . import get_module
+    mod = get_module("nextcloud")
+    env = dict(mod.env(system), SM_TASK=task, **(extra or {}))
+    return run_module_script(conn, mod, "nextcloud.sh", env, timeout=timeout)
+
+
+def _json_after(text: str, marker: str, end: Optional[str] = None):
+    if marker not in text:
+        return None
+    part = text.split(marker, 1)[1]
+    if end and end in part:
+        part = part.split(end, 1)[0]
+    m = re.search(r"[\[{].*[\]}]", part, re.S)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(0))
+    except ValueError:
+        return None
+
+
+def parse_users(text: str) -> tuple[list[dict], list[str]]:
+    data = _json_after(text, "__USERS__", "__GROUPS__") or {}
+    groups = _json_after(text, "__GROUPS__") or {}
+    users = []
+    for uid, info in (data.items() if isinstance(data, dict) else []):
+        if isinstance(info, dict):
+            users.append({"uid": uid, "display": info.get("display_name") or info.get("displayname") or "",
+                          "email": info.get("email") or "", "enabled": info.get("enabled", True) is not False,
+                          "groups": info.get("groups") or [], "quota": info.get("quota") or "",
+                          "last_seen": info.get("last_seen") or info.get("lastLogin") or "",
+                          "backend": info.get("backend") or ""})
+        else:
+            users.append({"uid": uid, "display": str(info), "email": "", "enabled": True, "groups": [],
+                          "quota": "", "last_seen": "", "backend": ""})
+    users.sort(key=lambda u: u["uid"].lower())
+    group_names = sorted(groups.keys()) if isinstance(groups, dict) else []
+    return users, group_names
+
+
+def validate_user(uid: str, email: str = "", groups: str = "", quota: str = "") -> dict:
+    if not UID_RE.match(uid or ""):
+        raise ValueError("Ungültige Benutzer-ID (Buchstaben, Ziffern, . _ @ -)")
+    if email and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        raise ValueError("Ungültige E-Mail-Adresse")
+    gl = [g.strip() for g in (groups or "").split(",") if g.strip()]
+    for g in gl:
+        if not GROUP_RE.match(g):
+            raise ValueError(f"Ungültige Gruppe {g}")
+    if quota and not QUOTA_RE.match(quota.strip()):
+        raise ValueError("Quota z. B. 10 GB, none oder default")
+    return {"SM_UID": uid, "SM_EMAIL": email, "SM_GROUPS": ",".join(gl), "SM_QUOTA": quota.strip()}

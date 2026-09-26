@@ -16,6 +16,7 @@ einem MikroTik (RouterOS 7)** oder direkt per SSH für bestehende Systeme ohne T
   bestehender Router
 - Pangolin: Dienste aus dem internen Netz unter einer Domain veröffentlichen, mit Backup-Weg über einen
   zweiten Pangolin-Server und Newt-Tunnel-Containern auf verschiedenen Hosts
+- Nextcloud, Mailcow & SSO (authentik): Benutzer und Postfächer anlegen, SSO per Klick anbinden
 - Bestand übernehmen & Optimierungen: vorhandene Geräte einlesen, Management-Zugänge anlegen,
   Verbesserungen nach Bestätigung umsetzen (Ziel: eine Public-IP)
 - Benutzerverwaltung mit Rollen und Rechten je System, Zwei-Faktor-Anmeldung, Audit-Log
@@ -69,6 +70,7 @@ dem Code gepflegt und mit jedem Update des Servermanagers aktualisiert.
 - [Benutzer und Rechte](docs/benutzer.md)
 - [Bestand übernehmen & Optimierungen](docs/bestand.md)
 - [Proxmox VE über die API](docs/proxmox.md)
+- [Nextcloud, Mailcow & SSO](docs/apps.md)
 - [RouterOS (CHR) über die API](docs/routeros.md)
 - [Pangolin: Dienste veröffentlichen](docs/pangolin.md)
 - [Backup und Restore](docs/backup.md)

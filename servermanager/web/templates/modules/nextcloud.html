@@ -2,6 +2,7 @@
 {% include "modules/_panel_head.html" %}
 {% set nc = data.nc or {} %}
 {% if nc %}
+<p><a class="btn sm" href="{{ url_for('ncusers.users', system_id=system.id) }}"><svg class="icon"><use href="#i-users"/></svg>Benutzer verwalten</a></p>
 <div class="stats">
   <div class="stat"><div class="label">Version</div><div class="value" style="font-size:20px">{{ nc.installed or '?' }}</div><div class="sub mono">{{ data.path or 'occ-Befehl' }}</div></div>
   <div class="stat {{ 'warning' if nc.core else 'success' }}"><div class="label">Core-Update</div><div class="value" style="font-size:20px">{{ nc.core or 'aktuell' }}</div></div>

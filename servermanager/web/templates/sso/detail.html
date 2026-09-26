@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% set help_page = "apps" %}
+{% from "_macros.html" import csrf, field, empty with context %}
+{% from "integrations/_macros.html" import int_status, alerts_box with context %}
+{% block title %}{{ s.name }} · SSO{% endblock %}
+{% macro uact(action, label, u, cls='xs', confirm='', extra={}) -%}
+  <form method="post" action="{{ url_for('sso.user_action', sso_id=s.id) }}" class="inline" {% if confirm %}data-confirm="{{ confirm }}"{% endif %}>{{ csrf() }}
+    <input type="hidden" name="action" value="{{ action }}"><input type="hidden" name="pk" value="{{ u.pk }}"><input type="hidden" name="username" value="{{ u.username }}">
+    {% for k, v in extra.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+    <button class="btn {{ cls }}">{{ label }}</button></form>
+{%- endmacro %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>{{ s.name }} {{ int_status(s) }}</h1>
+    <p><a href="{{ s.public_url }}" target="_blank" rel="noopener">{{ s.public_url }}</a> · intern {{ s.api_url }} · authentik {{ s.data.version or '?' }}</p></div>
+  <div class="actions">
+    {% if pangolin and publish.ip %}<a class="btn" href="{{ url_for('pangolin.publish', pg_id=pangolin.id, **publish) }}"><svg class="icon"><use href="#i-cloud"/></svg>Anmeldeseite über Pangolin veröffentlichen</a>{% endif %}
+    {% if user.is_admin %}<a class="btn ghost" href="{{ url_for('sso.edit', sso_id=s.id) }}"><svg class="icon"><use href="#i-edit"/></svg>Bearbeiten</a>{% endif %}
+  </div>
+</div>
+{{ alerts_box(s) }}
+<nav class="tabs">{% for k, v in tabs.items() %}<a href="?tab={{ k }}" class="{{ 'active' if tab == k }}">{{ v }}</a>{% endfor %}</nav>
+{% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+
+{% if tab == 'apps' %}
+<div class="card"><div class="card-head"><h2>Verbundene Anwendungen</h2></div>
+  <div class="table-wrap"><table class="table compact"><thead><tr><th>Anwendung</th><th>Anmeldung über</th><th>authentik</th><th></th></tr></thead><tbody>
+  {% for c, t in clients %}
+    <tr><td><strong>{{ 'Nextcloud' if c.target_kind == 'nextcloud' else 'Mailcow' }} {{ t.name if t else '(gelöscht)' }}</strong></td>
+      <td class="mono"><a href="{{ c.app_url }}" target="_blank" rel="noopener">{{ c.app_url }}</a></td>
+      <td class="mono"><small>{{ c.slug }} · {{ c.client_id[:12] }}…</small></td>
+      <td class="text-right">{% if int_can('sso', s.id, 'full') %}
+        <form method="post" action="{{ url_for('sso.disconnect', sso_id=s.id, client_id=c.id) }}" class="inline" data-confirm="SSO für {{ t.name if t else c.slug }} trennen? Die Anwendung und der Provider in authentik werden entfernt.">{{ csrf() }}<button class="btn xs danger-outline">Trennen</button></form>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="4" class="muted">Noch keine Anwendung verbunden.</td></tr>{% endfor %}
+  </tbody></table></div>
+</div>
+{% if int_can('sso', s.id, 'full') %}
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>Nextcloud verbinden</h2></div><div class="card-body">
+    {% if nextclouds %}
+    <form method="post" action="{{ url_for('sso.connect', sso_id=s.id) }}" class="form-grid" data-confirm="SSO für die Nextcloud einrichten?">{{ csrf() }}<input type="hidden" name="kind" value="nextcloud">
+      <div class="field full"><label>Nextcloud</label><select name="target_id">{% for x in nextclouds %}<option value="{{ x.id }}">{{ x.name }} ({{ x.host }})</option>{% endfor %}</select></div>
+      {{ field('Öffentliche Adresse der Nextcloud', 'app_url', '', required=True, placeholder='https://cloud.example.com', help='über Pangolin erreichbar', cls='full') }}
+      <div class="full"><button class="btn primary">Per Klick verbinden</button></div>
+    </form>
+    <p class="mt-1"><small>Legt in authentik Provider und Anwendung an und richtet in der Nextcloud die App <code>user_oidc</code> ein. Die lokale Anmeldung bleibt möglich; SSO-Benutzer werden beim ersten Login angelegt (Benutzername = authentik-Benutzername).</small></p>
+    {% else %}<p class="muted">Keine (weitere) Nextcloud mit Vollzugriff vorhanden.</p>{% endif %}
+  </div></div>
+  <div class="card"><div class="card-head"><h2>Mailcow verbinden</h2></div><div class="card-body">
+    {% if mailcows %}
+    <form method="post" action="{{ url_for('sso.connect', sso_id=s.id) }}" class="form-grid" data-confirm="SSO für Mailcow einrichten?">{{ csrf() }}<input type="hidden" name="kind" value="mailcow">
+      <div class="field full"><label>Mailcow</label><select name="target_id">{% for x in mailcows %}<option value="{{ x.id }}">{{ x.name }} ({{ x.public_url or 'keine öffentliche Adresse' }})</option>{% endfor %}</select></div>
+      {{ field('Öffentliche Adresse (leer = aus der Mailcow-Verbindung)', 'app_url', '', placeholder='https://webmail.example.com', cls='full') }}
+      <div class="full"><button class="btn primary">Per Klick verbinden</button></div>
+    </form>
+    <p class="mt-1"><small>Setzt in Mailcow den Identity Provider „Generic OIDC“ (Mailcow ab 2025-03). Postfächer werden beim ersten SSO-Login angelegt, wenn die Domain in Mailcow existiert.</small></p>
+    {% else %}<p class="muted">Keine (weitere) Mailcow mit Vollzugriff vorhanden.</p>{% endif %}
+  </div></div>
+</div>
+{% endif %}
+{% if apps %}
+<div class="card"><div class="card-head"><h2>Alle Anwendungen in authentik</h2></div><div class="table-wrap"><table class="table compact">
+  <tbody>{% for a in apps %}<tr><td><strong>{{ a.name }}</strong><span class="sub">{{ a.slug }}</span></td><td><small>{{ a.meta_launch_url or '' }}</small></td></tr>{% endfor %}</tbody></table></div></div>
+{% endif %}
+
+{% elif tab == 'users' and not error %}
+<div class="card"><div class="card-head"><h2>Benutzer</h2><input type="search" placeholder="Suchen …" data-filter-list="#su tbody tr" style="max-width:220px"></div>
+  <div class="table-wrap"><table class="table compact" id="su"><thead><tr><th>Benutzer</th><th>E-Mail</th><th>Gruppen</th><th>Status</th><th></th></tr></thead><tbody>
+  {% for u in users %}
+    <tr class="{{ 'muted' if not u.is_active }}"><td><strong>{{ u.username }}</strong><span class="sub">{{ u.name }}</span></td><td><small>{{ u.email }}</small></td>
+      <td><small>{{ (u.groups_obj or [])|map(attribute='name')|join(', ') }}</small></td>
+      <td>{% if u.is_active %}<span class="badge success">aktiv</span>{% else %}<span class="badge">deaktiviert</span>{% endif %}{% if u.is_superuser %} <span class="badge warning">Admin</span>{% endif %}</td>
+      <td class="nowrap text-right">
+        {% if int_can('sso', s.id, 'operate') %}
+          {{ uact('active', 'Deaktivieren' if u.is_active else 'Aktivieren', u, 'xs', (u.username ~ ' deaktivieren?') if u.is_active else '', {'active': '0' if u.is_active else '1'}) }}
+          {{ uact('password', 'Neues Passwort', u, 'xs', 'Neues Passwort für ' ~ u.username ~ ' setzen?') }}
+        {% endif %}
+        {% if int_can('sso', s.id, 'full') and not u.is_superuser %}{{ uact('delete', 'Löschen', u, 'xs danger-outline', u.username ~ ' löschen?') }}{% endif %}
+      </td></tr>
+  {% else %}<tr><td colspan="5" class="muted">Keine Benutzer.</td></tr>{% endfor %}</tbody></table></div>
+  {% if int_can('sso', s.id, 'full') %}
+  <div class="card-body"><h4>Benutzer anlegen</h4>
+    <form method="post" action="{{ url_for('sso.user_action', sso_id=s.id) }}" class="form-grid" autocomplete="off">{{ csrf() }}<input type="hidden" name="action" value="add">
+      {{ field('Benutzername', 'username', '', required=True) }}
+      {{ field('Name', 'name', '') }}
+      {{ field('E-Mail', 'email', '', type='email', help='wird auch die Mail-Adresse, falls ein Postfach angelegt wird') }}
+      {{ field('Passwort', 'password', '', type='password', help='leer = zufällig, wird einmal angezeigt', attrs='autocomplete="new-password"') }}
+      {% if groups %}<div class="field full"><label>Gruppen</label><div class="flex" style="gap:12px;flex-wrap:wrap">{% for gp in groups %}<label class="check"><input type="checkbox" name="groups" value="{{ gp.pk }}"> {{ gp.name }}</label>{% endfor %}</div></div>{% endif %}
+      {% if all_mailcows %}<div class="field"><label>Postfach anlegen auf</label><select name="mailbox_mailcow"><option value="">– kein Postfach –</option>{% for x in all_mailcows %}<option value="{{ x.id }}">{{ x.name }}</option>{% endfor %}</select></div>
+      {{ field('Postfach-Quota (MB)', 'quota', 3072, type='number') }}{% endif %}
+      <div class="full"><button class="btn primary">Anlegen</button></div>
+    </form>
+    <small class="muted">In verbundenen Nextclouds entsteht das Konto automatisch beim ersten Login über SSO.</small></div>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% set help_page = "apps" %}
+{% from "_macros.html" import csrf, field with context %}
+{% from "integrations/_macros.html" import conn_fields with context %}
+{% block title %}{{ 'Mailcow hinzufügen' if is_new else 'Mailcow bearbeiten' }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>{{ 'Mailcow hinzufügen' if is_new else m.name ~ ' bearbeiten' }}</h1>
+  <p>Die API wird intern angesprochen (in Mailcow unter <em>Konfiguration → Zugang → API</em> die IP des Servermanagers erlauben).</p></div></div>
+<form method="post" autocomplete="off">{{ csrf() }}
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>API (intern)</h2></div><div class="card-body"><div class="form-grid">
+    {{ conn_fields(m, 'Interne Adresse', 'https://10.20.0.30', 'Direkte Adresse im internen Netz', 'Mailcow nutzt intern oft ein Zertifikat für den öffentlichen Namen – Fingerabdruck pinnen.') }}
+    {{ field('API-Schlüssel', 'api_key', '', type='password', help=('Hinterlegt – leer lassen, um ihn zu behalten' if m.api_key_enc else 'Lese-/Schreib-API-Schlüssel'), attrs='autocomplete="new-password"', cls='full') }}
+  </div></div></div>
+  <div class="card"><div class="card-head"><h2>Erreichbarkeit</h2></div><div class="card-body"><div class="form-grid">
+    {{ field('Weboberfläche (über Pangolin)', 'public_url', m.public_url, placeholder='https://webmail.example.com', help='Für Webmail/SOGo, Verwaltung und SSO-Anmeldung', cls='full') }}
+    {{ field('Mail-Hostname (MX/IMAP/SMTP)', 'mail_hostname', m.mail_hostname, placeholder='mail.example.com', help='zeigt auf die eigene Mail-IP – anderer Name als die Weboberfläche') }}
+    {{ field('Eigene Public-IP für Mail', 'mail_public_ip', m.mail_public_ip, placeholder='5.9.10.11') }}
+    {{ field('Interne Mailcow-Adresse', 'mail_internal_ip', m.mail_internal_ip, placeholder='aus der API-Adresse') }}
+    {{ field('Mail-Ports', 'mail_ports', m.mail_ports or default_ports, help='80 wird für das Let’s-Encrypt-Zertifikat des Mail-Hostnamens benötigt') }}
+    <div class="field"><label>RouterOS (NAT für die Mail-IP)</label><select name="router_id"><option value="">– keiner –</option>{% for r in routers %}<option value="{{ r.id }}" {% if m.router_id == r.id %}selected{% endif %}>{{ r.name }}</option>{% endfor %}</select></div>
+    <div class="field"><label>System (SSH)</label><select name="system_id"><option value="">– keins –</option>{% for x in systems %}<option value="{{ x.id }}" {% if m.system_id == x.id %}selected{% endif %}>{{ x.name }}</option>{% endfor %}</select></div>
+  </div></div></div>
+</div>
+<div class="actions mt-1"><button class="btn primary">Speichern</button><a class="btn" href="{{ url_for('mailcow.index') if is_new else url_for('mailcow.detail', mc_id=m.id) }}">Abbrechen</a></div>
+</form>
+{% if not is_new %}
+<div class="card danger-zone mt-2"><div class="card-head"><h2>Verbindung entfernen</h2></div><div class="card-body">
+  <form method="post" action="{{ url_for('mailcow.delete', mc_id=m.id) }}" data-confirm="Verbindung {{ m.name }} entfernen?">{{ csrf() }}<button class="btn danger">Entfernen</button></form>
+</div></div>
+{% endif %}
+{% endblock %}

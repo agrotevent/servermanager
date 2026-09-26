@@ -30,6 +30,9 @@ from .ssh import DETACHED_DIED, CancelledError, Connection, SSHError, target_fro
 from .mikrotik import MikroTikError
 from .pangolin import PangolinError
 from .pveapi import PveError
+from .authentik import AuthentikError
+from .mailcow import MailcowError
+from .sso import SsoError
 
 log = logging.getLogger("servermanager.worker")
 
@@ -232,7 +235,8 @@ class Worker:
         except CancelledError:
             status, summary = JOB_CANCELLED, "Abgebrochen"
             ctx.say("Job abgebrochen.")
-        except (JobFailed, SSHError, ParamError, ValueError, PveError, MikroTikError, PangolinError) as exc:
+        except (JobFailed, SSHError, ParamError, ValueError, PveError, MikroTikError, PangolinError,
+                AuthentikError, MailcowError, SsoError) as exc:
             status, summary = JOB_FAILED, str(exc)
             ctx.say(f"FEHLER: {exc}")
         except Exception as exc:  # noqa: BLE001
@@ -1139,6 +1143,22 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
                 srv = db.get(PveServer, int(p["pve_id"]))
                 srv.watch = sorted(set(srv.watch_list) | {int(p["vmid"])})
             return "wird überwacht"
+        if a == "router_direct_ops":
+            from .models import RouterDevice as _RD
+            with session_scope() as db:
+                router = db.get(_RD, int(p["router_id"]))
+                if router is None:
+                    raise JobFailed("Router existiert nicht mehr")
+                db.expunge(router)
+            ops = p["ops"]
+            if any(op.get("m") != "add" or op.get("path") not in ("ip/address", "ip/firewall/nat") for op in ops):
+                raise JobFailed("Unzulässige Router-Operation")
+            mt = integrations.router_client(router, timeout=30)
+            if router.id not in backed_up:
+                ctx.say(f"Sicherung auf dem Router: {routeros.backup_before_change(mt)}.backup")
+                backed_up.add(router.id)
+            routeros.apply_ops(mt, ops, lambda line: ctx.write(f"  {line}\n"))
+            return f"{len(ops)} Änderung(en) auf {router.name}"
         if a in ("router_finding", "router_nat_disable", "router_lease_static"):
             with session_scope() as db:
                 router = db.get(RouterDevice, obj["id"])
@@ -1244,6 +1264,71 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
             job.payload = {**(job.payload or {}), "newt": {k: v for k, v in payload["newt"].items()
                                                           if k != "secret_enc"}}
         return msg
+
+    # ------------------------------------------------------------------ SSO
+    def _sso_env(self, ctx, kind: str, target_id: int):
+        """Callables to configure the target (occ via SSH for Nextcloud, API for Mailcow)."""
+        from .models import MailcowServer
+        from .modules.nextcloud import occ_task
+        if kind == "nextcloud":
+            system = self._system(target_id)
+            holder: dict = {}
+
+            def occ(task: str, env: dict) -> str:
+                if "conn" not in holder:
+                    holder["conn"] = self._connect(ctx, system)
+                return occ_task(holder["conn"], system, task, env, timeout=600)
+            return system, occ, None, holder
+        with session_scope() as db:
+            mc = db.get(MailcowServer, target_id)
+            if mc is None:
+                raise JobFailed("Mailcow-Verbindung existiert nicht mehr")
+            db.expunge(mc)
+        return mc, None, integrations.mailcow_client(mc), {}
+
+    def job_sso_connect(self, ctx, job_id, system_id, payload) -> str:
+        from . import sso
+        from .models import SsoClient, SsoServer
+        with session_scope() as db:
+            srv = db.get(SsoServer, int(payload["sso_id"]))
+            if srv is None:
+                raise JobFailed("SSO-Verbindung existiert nicht mehr")
+            db.expunge(srv)
+        kind, target_id = payload["kind"], int(payload["target_id"])
+        target, occ, mc, holder = self._sso_env(ctx, kind, target_id)
+        try:
+            data = sso.connect(integrations.sso_client(srv), srv, kind, target, payload["app_url"], ctx.say,
+                               nextcloud_occ=occ, mailcow=mc)
+        finally:
+            if holder.get("conn"):
+                holder["conn"].close()
+        with session_scope() as db:
+            db.add(SsoClient(sso_id=srv.id, target_kind=kind, target_id=target_id, status="active", **data))
+            audit(db, None, "sso.connect", srv.name, f"{kind} {target.name}")
+        return f"{target.name} ist mit {srv.name} verbunden (Anmeldung über {data['app_url']})"
+
+    def job_sso_disconnect(self, ctx, job_id, system_id, payload) -> str:
+        from . import sso
+        from .models import SsoClient, SsoServer
+        with session_scope() as db:
+            client = db.get(SsoClient, int(payload["client_id"]))
+            if client is None:
+                return "bereits entfernt"
+            srv = db.get(SsoServer, client.sso_id)
+            db.expunge(client)
+            db.expunge(srv)
+        target, occ, mc, holder = self._sso_env(ctx, client.target_kind, client.target_id)
+        try:
+            sso.disconnect(integrations.sso_client(srv), srv, client, ctx.say, nextcloud_occ=occ, mailcow=mc)
+        finally:
+            if holder.get("conn"):
+                holder["conn"].close()
+        with session_scope() as db:
+            row = db.get(SsoClient, client.id)
+            if row is not None:
+                db.delete(row)
+            audit(db, None, "sso.disconnect", srv.name, f"{client.target_kind} {client.target_id}")
+        return "SSO-Anbindung entfernt"
 
     def job_pve_token(self, ctx, job_id, system_id, payload) -> str:
         """Create an API token for the servermanager on a Proxmox host via SSH."""

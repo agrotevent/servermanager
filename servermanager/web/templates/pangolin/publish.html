@@ -13,7 +13,7 @@
     <div class="full form-grid" data-show-for="protocol=http">
       {{ field('Subdomain', 'subdomain', f.get('subdomain', ''), placeholder='cloud', help='leer = Basisdomain selbst') }}
       <div class="field"><label>Domain</label><select name="domain_id">{% for d in domains %}<option value="{{ d.domainId }}" {% if (f.get('domain_id') or p.default_domain_id) == d.domainId %}selected{% endif %}>{{ d.baseDomain }}</option>{% endfor %}</select></div>
-      <div class="full">{{ checkbox('Pangolin-Anmeldung (SSO) vorschalten', 'sso', request.method == 'GET' or f.get('sso'), 'Ohne Anmeldung ist der Dienst für jeden im Internet erreichbar.') }}</div>
+      <div class="full">{{ checkbox('Pangolin-Anmeldung (SSO) vorschalten', 'sso', (request.method == 'GET' and f.get('sso') != '0') or (request.method == 'POST' and f.get('sso')), 'Ohne Anmeldung ist der Dienst für jeden im Internet erreichbar.') }}</div>
     </div>
     <div class="full" data-show-for="protocol=tcp,udp">
       {{ field('Öffentlicher Port', 'proxy_port', f.get('proxy_port', ''), type='number', help='Muss in Pangolin/Gerbil freigegeben sein') }}

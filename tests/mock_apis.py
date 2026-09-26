@@ -30,6 +30,8 @@ PVE_TOKEN = "servermanager@pve!sm"
 PVE_SECRET = "11111111-2222-3333-4444-555555555555"
 ROS_USER, ROS_PASS = "servermanager", "routerpass"
 PG_KEY = "pgkey.secret"
+MC_KEY = "mc-api-key"
+AK_TOKEN = "ak-token"
 PG_ORG = "acme"
 
 EXPORT = (Path(__file__).parent / "data" / "chr_export.rsc").read_text()
@@ -110,6 +112,21 @@ class State:
         self.resources: dict[int, dict] = {}
         self.targets: dict[int, dict] = {}
         self.pg_seq = 1
+        # ---------------- mailcow
+        self.mc_domains = [{"domain_name": "example.com", "active": 1, "mboxes_in_domain": 1, "aliases_in_domain": 0}]
+        self.mc_mailboxes = [{"username": "info@example.com", "name": "Info", "domain": "example.com",
+                              "local_part": "info", "active": 1, "quota": 1073741824, "quota_used": 1024}]
+        self.mc_aliases: list[dict] = []
+        self.mc_idp: dict = {}
+        # ---------------- authentik
+        self.ak_legacy = False
+        self.ak_users = [{"pk": 1, "username": "akadmin", "name": "admin", "email": "", "is_active": True,
+                          "is_superuser": True, "type": "internal", "groups_obj": []}]
+        self.ak_groups = [{"pk": "11111111-aaaa-bbbb-cccc-000000000001", "name": "mitarbeiter", "users": []}]
+        self.ak_providers: dict[int, dict] = {}
+        self.ak_apps: dict[str, dict] = {}
+        self.ak_passwords: dict[int, str] = {}
+        self.ak_seq = 10
 
     @staticmethod
     def _ros_val(v: Any) -> Any:
@@ -165,6 +182,10 @@ class MockApp:
                 resp = self.ros(req, req.path[len("/rest/"):])
             elif req.path.startswith("/v1/"):
                 resp = self.pangolin(req, req.path[len("/v1/"):])
+            elif req.path.startswith("/api/v1/"):
+                resp = self.mailcow(req, req.path[len("/api/v1/"):])
+            elif req.path.startswith("/api/v3/"):
+                resp = self.authentik(req, req.path[len("/api/v3/"):])
             else:
                 resp = Response("not found", 404)
         return resp(environ, start_response)
@@ -498,6 +519,138 @@ class MockApp:
             s.targets.pop(int(p[1]), None)
             return ok(None)
         return err("Not Found", 404)
+
+    # ------------------------------------------------------------------ mailcow
+    def mailcow(self, req: Request, path: str) -> Response:
+        if req.headers.get("X-API-Key") != MC_KEY:
+            return _json({"type": "error", "msg": "authentication failed"}, 401)
+        s = self.s
+        body = req.get_json(silent=True)
+        ok = lambda m: _json([{"type": "success", "log": [], "msg": m}])  # noqa: E731
+        danger = lambda m: _json([{"type": "danger", "log": [], "msg": m}])  # noqa: E731
+        if path == "get/status/version":
+            return _json({"version": "2025-03"})
+        if path == "get/domain/all":
+            return _json(s.mc_domains)
+        if path == "get/mailbox/all":
+            return _json(s.mc_mailboxes)
+        if path == "get/alias/all":
+            return _json(s.mc_aliases)
+        if path == "get/identity-provider":
+            return _json(s.mc_idp)
+        if path == "add/mailbox":
+            addr = f"{body['local_part']}@{body['domain']}"
+            if body["domain"] not in {d["domain_name"] for d in s.mc_domains}:
+                return danger(["domain_not_found", body["domain"]])
+            if any(m["username"] == addr for m in s.mc_mailboxes):
+                return danger(["object_exists", addr])
+            s.mc_mailboxes.append({"username": addr, "name": body.get("name"), "domain": body["domain"],
+                                   "local_part": body["local_part"], "active": int(body.get("active", 1)),
+                                   "quota": int(body.get("quota", 0)) * 1024 * 1024, "quota_used": 0,
+                                   "_password": body["password"]})
+            return ok(["mailbox_added", addr])
+        if path == "edit/mailbox":
+            for m in s.mc_mailboxes:
+                if m["username"] in body["items"]:
+                    attr = body["attr"]
+                    if "active" in attr:
+                        m["active"] = int(attr["active"])
+                    if "password" in attr:
+                        m["_password"] = attr["password"]
+            return ok(["mailbox_modified"])
+        if path == "delete/mailbox":
+            s.mc_mailboxes = [m for m in s.mc_mailboxes if m["username"] not in body]
+            return ok(["mailbox_removed"])
+        if path == "add/alias":
+            s.mc_aliases.append({"id": len(s.mc_aliases) + 1, "address": body["address"], "goto": body["goto"],
+                                 "active": 1})
+            return ok(["alias_added"])
+        if path == "delete/alias":
+            s.mc_aliases = [a for a in s.mc_aliases if str(a["id"]) not in body]
+            return ok(["alias_removed"])
+        if path == "edit/identity-provider":
+            s.mc_idp = dict(body["attr"])
+            return ok(["object_modified"])
+        return _json({"type": "error", "msg": "route not found"}, 404)
+
+    # ------------------------------------------------------------------ authentik
+    def authentik(self, req: Request, path: str) -> Response:
+        if req.headers.get("Authorization") != f"Bearer {AK_TOKEN}":
+            return _json({"detail": "Token invalid/expired"}, 403)
+        s = self.s
+        body = req.get_json(silent=True) or {}
+        p = path.strip("/").split("/")
+
+        def page(items):
+            return _json({"pagination": {"next": 0, "count": len(items)}, "results": items})
+        if path == "admin/version/":
+            return _json({"version_current": "2025.2.1"})
+        if path == "flows/instances/":
+            d = req.args.get("designation")
+            flows = {"authorization": [{"pk": "flow-auth", "slug": "default-provider-authorization-implicit-consent"}],
+                     "invalidation": [] if s.ak_legacy else [{"pk": "flow-inv", "slug": "default-provider-invalidation-flow"}]}
+            return page(flows.get(d, []))
+        if path == "propertymappings/provider/scope/":
+            if s.ak_legacy:
+                return _json({"detail": "Not found."}, 404)
+            return page([{"pk": f"pm-{i}", "managed": m} for i, m in enumerate(
+                ["goauthentik.io/providers/oauth2/scope-openid", "goauthentik.io/providers/oauth2/scope-email",
+                 "goauthentik.io/providers/oauth2/scope-profile", "goauthentik.io/providers/oauth2/scope-offline_access"])])
+        if path == "propertymappings/scope/":
+            return page([{"pk": "pm-old", "managed": "goauthentik.io/providers/oauth2/scope-openid"}])
+        if path == "crypto/certificatekeypairs/":
+            return page([{"pk": "cert-1", "name": "authentik Self-signed Certificate"}])
+        if path == "providers/oauth2/" and req.method == "POST":
+            ru = body.get("redirect_uris")
+            if s.ak_legacy and not isinstance(ru, str):
+                return _json({"redirect_uris": ["Not a valid string."]}, 400)
+            s.ak_seq += 1
+            prov = {"pk": s.ak_seq, **body, "client_id": f"cid{s.ak_seq}", "client_secret": f"csec{s.ak_seq}"}
+            s.ak_providers[s.ak_seq] = prov
+            return _json(prov, 201)
+        if p[:2] == ["providers", "oauth2"] and len(p) == 3 and req.method == "DELETE":
+            if s.ak_providers.pop(int(p[2]), None) is None:
+                return _json({"detail": "Not found."}, 404)
+            return Response(status=204)
+        if path == "core/applications/":
+            if req.method == "POST":
+                s.ak_apps[body["slug"]] = dict(body)
+                return _json(body, 201)
+            return page(list(s.ak_apps.values()))
+        if p[:2] == ["core", "applications"] and len(p) == 3 and req.method == "DELETE":
+            if s.ak_apps.pop(p[2], None) is None:
+                return _json({"detail": "Not found."}, 404)
+            return Response(status=204)
+        if path == "core/users/":
+            if req.method == "POST":
+                if any(u["username"] == body["username"] for u in s.ak_users):
+                    return _json({"username": ["This field must be unique."]}, 400)
+                s.ak_seq += 1
+                u = {"pk": s.ak_seq, **body, "is_superuser": False, "type": "internal", "groups_obj": []}
+                s.ak_users.append(u)
+                return _json(u, 201)
+            return page(s.ak_users)
+        if path == "core/groups/":
+            return page(s.ak_groups)
+        if p[:2] == ["core", "groups"] and len(p) == 4 and p[3] == "add_user":
+            g = next(x for x in s.ak_groups if x["pk"] == p[2])
+            g["users"].append(body["pk"])
+            return Response(status=204)
+        if p[:2] == ["core", "users"] and len(p) >= 3:
+            pk = int(p[2])
+            u = next((x for x in s.ak_users if x["pk"] == pk), None)
+            if u is None:
+                return _json({"detail": "Not found."}, 404)
+            if len(p) == 4 and p[3] == "set_password":
+                s.ak_passwords[pk] = body["password"]
+                return Response(status=204)
+            if req.method == "PATCH":
+                u.update(body)
+                return _json(u)
+            if req.method == "DELETE":
+                s.ak_users.remove(u)
+                return Response(status=204)
+        return _json({"detail": "Not found."}, 404)
 
     def _pg_create(self, body: dict) -> dict:
         s = self.s

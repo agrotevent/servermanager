@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% set help_page = "apps" %}
+{% from "_macros.html" import csrf, field with context %}
+{% from "integrations/_macros.html" import conn_fields with context %}
+{% block title %}{{ 'authentik hinzufügen' if is_new else 'SSO bearbeiten' }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>{{ 'authentik hinzufügen' if is_new else s.name ~ ' bearbeiten' }}</h1>
+  <p>API-Token in authentik unter <em>Verzeichnis → Tokens und App-Passwörter</em> anlegen (Zweck „API“, Benutzer mit Administratorrechten).</p></div></div>
+<form method="post" autocomplete="off">{{ csrf() }}
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>API (intern)</h2></div><div class="card-body"><div class="form-grid">
+    {{ conn_fields(s, 'Interne Adresse', 'https://10.20.0.20:9443', 'Direkt im internen Netz, z. B. Port 9443 (https)', 'authentik nutzt intern ein selbstsigniertes Zertifikat.') }}
+    {{ field('API-Token', 'token', '', type='password', help=('Hinterlegt – leer lassen, um es zu behalten' if s.token_enc else 'wird verschlüsselt gespeichert'), attrs='autocomplete="new-password"', cls='full') }}
+  </div></div></div>
+  <div class="card"><div class="card-head"><h2>Anmeldung (öffentlich)</h2></div><div class="card-body"><div class="form-grid">
+    {{ field('Öffentliche Adresse', 'public_url', s.public_url, required=True, placeholder='https://auth.example.com', help='über Pangolin veröffentlicht – Browser und Anwendungen nutzen diese Adresse für den Login', cls='full') }}
+    <div class="field full"><label>System (SSH)</label><select name="system_id"><option value="">– keins –</option>{% for x in systems %}<option value="{{ x.id }}" {% if s.system_id == x.id %}selected{% endif %}>{{ x.name }}</option>{% endfor %}</select></div>
+  </div></div></div>
+</div>
+<div class="actions mt-1"><button class="btn primary">Speichern</button><a class="btn" href="{{ url_for('sso.index') if is_new else url_for('sso.detail', sso_id=s.id) }}">Abbrechen</a></div>
+</form>
+{% if not is_new %}
+<div class="card danger-zone mt-2"><div class="card-head"><h2>Verbindung entfernen</h2></div><div class="card-body">
+  <form method="post" action="{{ url_for('sso.delete', sso_id=s.id) }}" data-confirm="Verbindung {{ s.name }} entfernen?">{{ csrf() }}<button class="btn danger">Entfernen</button></form>
+</div></div>
+{% endif %}
+{% endblock %}

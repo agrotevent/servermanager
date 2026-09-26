@@ -26,6 +26,8 @@ sichtbar.
 | Bedienen | Start/Stopp/Neustart, Snapshot erstellen, Sicherung | Lease statisch machen, NAT-Regel ein-/ausschalten, Ping-Test | Dienst aktivieren/deaktivieren |
 | Vollzugriff | Container anlegen/löschen, Ressourcen ändern, Snapshots zurückspielen, Überwachung | Leases, NAT, Routen, DNS anlegen/löschen, Konfiguration einlesen und Änderungen anwenden | Dienste veröffentlichen, Ziele und Anmeldung ändern, entfernen |
 
+Rechte für Mailcow und SSO sind in [Nextcloud, Mailcow & SSO](apps.md) beschrieben.
+
 Die Seite *Optimierungen* (Scan und Umsetzung über alle Verbindungen) ist Administratoren vorbehalten.
 *Bestand übernehmen* erfordert Vollzugriff auf die Proxmox-Verbindung und die Rolle Manager oder
 Administrator.

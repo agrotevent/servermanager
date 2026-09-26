@@ -25,3 +25,19 @@ zurückgehaltene Pakete, Fremdquellen, ISPConfig-/Nextcloud-Hinweise). Das eigen
 6. meldet den erforderlichen Neustart.
 
 Proxmox-Hosts werden bewusst ausgeschlossen (eigener Upgrade-Weg über `pve8to9`).
+
+### Nextcloud: Benutzer
+
+Im Nextcloud-Reiter eines Systems führt **Benutzer verwalten** zur Benutzerverwaltung über `occ`
+(anlegen, sperren, neues Passwort, löschen) – siehe [Nextcloud, Mailcow & SSO](apps.md).
+
+### Newt (Pangolin-Tunnel)
+
+Wird erkannt, wenn Newt als Programm (`/usr/local/bin/newt`, systemd-Dienst `newt`) oder als
+Docker-Container `fosrl/newt` läuft.
+
+- **Anzeige:** Betriebsart, Status, Version, Pangolin-Endpoint, letzte Meldungen (Secrets werden
+  ausgeblendet).
+- **Aktionen:** *Newt neu starten* (Bedienen), *Newt aktualisieren* (Vollzugriff; lädt die neueste
+  Version von GitHub, nur bei der vom Servermanager eingerichteten systemd-Installation).
+- Einrichtung und Zuordnung zu einem Pangolin-Server: siehe [Pangolin](pangolin.md).

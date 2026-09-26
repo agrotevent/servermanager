@@ -156,3 +156,14 @@ def token_hash(token: str) -> str:
 
 def const_eq(a: str, b: str) -> bool:
     return hmac.compare_digest(a.encode(), b.encode())
+
+
+def generate_password(length: int = 16) -> str:
+    """Random password with upper/lower case letters, digits and a symbol (for app accounts)."""
+    import string
+    alphabet = string.ascii_letters + string.digits
+    while True:
+        pw = "".join(secrets.choice(alphabet) for _ in range(length - 2)) + secrets.choice("-_.!+") + \
+            secrets.choice(string.digits)
+        if any(c.islower() for c in pw) and any(c.isupper() for c in pw):
+            return pw

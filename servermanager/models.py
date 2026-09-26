@@ -361,7 +361,11 @@ class ScheduleRun(Base):
 KIND_PVE = "pve"
 KIND_ROUTER = "router"
 KIND_PANGOLIN = "pangolin"
-INTEGRATION_KINDS = {KIND_PVE: "Proxmox VE", KIND_ROUTER: "RouterOS", KIND_PANGOLIN: "Pangolin"}
+KIND_MAILCOW = "mailcow"
+KIND_SSO = "sso"
+INTEGRATION_KINDS = {KIND_PVE: "Proxmox VE", KIND_ROUTER: "RouterOS", KIND_PANGOLIN: "Pangolin",
+                     KIND_MAILCOW: "Mailcow", KIND_SSO: "SSO (authentik)"}
+MAIL_PORTS_DEFAULT = "25,465,587,143,993,110,995,4190,80"
 PANGOLIN_ROLES = {"primary": "Primär", "backup": "Backup-Weg"}
 PVE_HOSTING = {"local": "Lokal (gemeinsames Netz)", "hetzner": "Hetzner (vSwitch)"}
 
@@ -449,6 +453,58 @@ class PangolinServer(IntegrationMixin, Base):
     @property
     def role_label(self) -> str:
         return PANGOLIN_ROLES.get(self.role, self.role)
+
+
+class MailcowServer(IntegrationMixin, Base):
+    """Mailcow: API reachable internally, web UI via Pangolin, mail protocols on an own public IP."""
+
+    __tablename__ = "mailcow_servers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    api_url: Mapped[str] = mapped_column(String(255), default="")        # internal, e.g. https://10.20.0.30
+    api_key_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    public_url: Mapped[str] = mapped_column(String(255), default="")     # web UI via Pangolin
+    system_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    mail_hostname: Mapped[str] = mapped_column(String(255), default="")  # MX / IMAP / SMTP name
+    mail_public_ip: Mapped[str] = mapped_column(String(64), default="")
+    mail_internal_ip: Mapped[str] = mapped_column(String(64), default="")
+    mail_ports: Mapped[str] = mapped_column(String(128), default=MAIL_PORTS_DEFAULT)
+    router_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    @property
+    def port_list(self) -> list[int]:
+        return [int(p) for p in (self.mail_ports or "").replace(" ", "").split(",") if p.isdigit()]
+
+
+class SsoServer(IntegrationMixin, Base):
+    """authentik: API reachable internally, login pages via Pangolin (public_url)."""
+
+    __tablename__ = "sso_servers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), default="authentik")
+    api_url: Mapped[str] = mapped_column(String(255), default="")        # internal, e.g. https://10.20.0.20:9443
+    public_url: Mapped[str] = mapped_column(String(255), default="")     # e.g. https://auth.example.com
+    token_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    system_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+
+class SsoClient(Base):
+    """An application connected to the SSO (OIDC provider + application in authentik)."""
+
+    __tablename__ = "sso_clients"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    sso_id: Mapped[int] = mapped_column(ForeignKey("sso_servers.id", ondelete="CASCADE"), index=True)
+    target_kind: Mapped[str] = mapped_column(String(16))                  # nextcloud | mailcow
+    target_id: Mapped[int] = mapped_column(Integer)
+    slug: Mapped[str] = mapped_column(String(64), default="")
+    provider_pk: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    client_id: Mapped[str] = mapped_column(String(255), default="")
+    app_url: Mapped[str] = mapped_column(String(255), default="")
+    status: Mapped[str] = mapped_column(String(16), default="pending")   # pending | active | error
+    message: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class IntegrationAccess(Base):

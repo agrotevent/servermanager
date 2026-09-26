@@ -20,7 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import discovery, integrations, pve, routeros, settings
-from .models import PangolinServer, PveServer, RouterDevice, System
+from .models import MailcowServer, PangolinServer, PveServer, RouterDevice, SsoClient, SsoServer, System
 from .pveapi import PveError
 
 HTTP_PORTS = {80: "http", 8080: "http", 8000: "http", 3000: "http", 443: "https", 8443: "https"}
@@ -77,6 +77,12 @@ def scan(db: Session, log=lambda _m: None) -> dict:
     out += scan_pangolin(db, pangolins, services)
     out += scan_tunnels(db, pangolins, inventories)
     out += scan_systems(db)
+    out += scan_apps(db, pangolins, services)
+    for mc in db.execute(select(MailcowServer).order_by(MailcowServer.id)).scalars():
+        try:
+            out += scan_mail(db, mc)
+        except integrations.ApiError as exc:
+            errors[f"Mail-IP {mc.name}"] = str(exc)
     return {"at": datetime.now().isoformat(timespec="seconds"), "proposals": out, "errors": errors}
 
 
@@ -237,6 +243,8 @@ def scan_router(db: Session, router: RouterDevice, published: set, published_ips
             continue
         port = int(port_s)
         proto = r.get("protocol", "tcp")
+        if _is_mail_forward(db, r):
+            continue  # mail protocols on the own public IP of Mailcow are an intended exception
         text = routeros._rule_text(r)
         if (ip, port) in published:
             out.append(proposal(f"router:{router.id}:fwd-off:{r.get('.id')}", "goal", o,
@@ -400,6 +408,120 @@ def scan_tunnels(db: Session, pangolins: list[PangolinServer], inventories: dict
                     params={"pve_id": victim["server"].id, "node": victim["node"], "type": victim["type"],
                             "vmid": victim["vmid"], "target": target, "name": victim["system"].name,
                             "other": other["system"].name}))
+    return out
+
+
+def _is_mail_forward(db: Session, r: dict) -> bool:
+    ports = set(str(r.get("dst-port", "")).split(","))
+    for mc in db.execute(select(MailcowServer)).scalars():
+        if not mc.mail_public_ip:
+            continue
+        if (r.get("dst-address") == mc.mail_public_ip or r.get("to-addresses") == mc.mail_internal_ip) and \
+                ports <= {str(p) for p in mc.port_list}:
+            return True
+    return False
+
+
+def _host_port(url: str, default_port: int = 443) -> tuple[str, int, str]:
+    from urllib.parse import urlsplit
+    parts = urlsplit(url if "://" in url else "https://" + url)
+    return parts.hostname or "", parts.port or (443 if parts.scheme == "https" else 80), parts.scheme or "https"
+
+
+def scan_apps(db: Session, pangolins: list[PangolinServer], services: dict) -> list[dict]:
+    """Web UIs of authentik, Mailcow and connected Nextclouds must be reachable through Pangolin."""
+    out = []
+    primary = next((p for p in pangolins if p.role == "primary"), None)
+    published = {p["domain"] for t in services["targets"] for p in t["paths"]}
+    domains = services.get("domains", {}).get(primary.id, {}) if primary else {}
+    apps = []
+    for srv in db.execute(select(SsoServer)).scalars():
+        apps.append(("sso", srv, srv.public_url, srv.api_url, f"authentik {srv.name}"))
+    for mc in db.execute(select(MailcowServer)).scalars():
+        apps.append(("mailcow", mc, mc.public_url, mc.api_url, f"Mailcow {mc.name}"))
+    for cl in db.execute(select(SsoClient).where(SsoClient.target_kind == "nextcloud")).scalars():
+        system = db.get(System, cl.target_id)
+        if system:
+            apps.append(("system", system, cl.app_url, f"https://{system.host}", f"Nextcloud {system.name}"))
+    for kind, obj, public, internal, label in apps:
+        if not public or not internal:
+            continue
+        host, _p, _s = _host_port(public)
+        if host in published:
+            continue
+        ihost, iport, ischeme = _host_port(internal)
+        match = next(((did, base) for did, base in domains.items() if host == base or host.endswith("." + base)),
+                     None)
+        sub = host[:-len(match[1]) - 1] if match and host != match[1] else ""
+        out.append(proposal(f"app:{kind}:{obj.id}:publish", "goal", _obj(kind, obj),
+                            f"{label}: Weboberfläche {host} über Pangolin veröffentlichen",
+                            f"Ziel {ischeme}://{ihost}:{iport} (intern) wird als {host} über {primary.name if primary else '–'} "
+                            "veröffentlicht – ohne Pangolin-Anmeldung, weil die Anwendung selbst anmeldet bzw. SSO "
+                            "nutzt (Clients und Apps müssen durchkommen).",
+                            action="publish_forward" if primary and match else None,
+                            params={"pangolin_id": primary.id if primary else None, "ip": ihost, "port": iport,
+                                    "protocol": "http", "method": ischeme, "name": label, "subdomain": sub,
+                                    "domain_id": match[0] if match else "", "proxy_port": None, "sso": False},
+                            note="" if primary and match else f"Domain von {host} ist auf keinem primären Pangolin "
+                                                              "eingerichtet"))
+    return out
+
+
+def scan_mail(db: Session, mc: MailcowServer) -> list[dict]:
+    """Own public IP for IMAP/SMTP: address on WAN, dst-nat of the mail ports, outgoing mail via that IP."""
+    out = []
+    o = _obj("mailcow", mc)
+    if not mc.mail_public_ip or not mc.mail_internal_ip or not mc.router_id:
+        if mc.mail_public_ip:
+            out.append(proposal(f"mail:{mc.id}:cfg", "router", o, f"{mc.name}: Mail-IP ohne Router/interne Adresse",
+                                "Für die Prüfung der Weiterleitung interne Mailcow-Adresse und RouterOS angeben.",
+                                severity="info"))
+        return out
+    router = db.get(RouterDevice, mc.router_id)
+    if router is None:
+        return out
+    mt = integrations.router_client(router)
+    snap = routeros.snapshot_from_api(mt)
+    target, _e = routeros.validate_target(router.target_cfg or routeros.detect_target(snap))
+    wan = target["wan_interface"]
+    ip, internal, ports = mc.mail_public_ip, mc.mail_internal_ip, ",".join(str(p) for p in mc.port_list)
+    ops = []
+    if not any(str(a.get("address", "")).split("/")[0] == ip for a in routeros.items(snap, "ip/address")):
+        ops.append(routeros.op_add("ip/address", {"address": f"{ip}/32", "interface": wan,
+                                                  "comment": f"servermanager: Mail-IP {mc.name}"}))
+    nat = routeros.items(snap, "ip/firewall/nat")
+    covered = set()
+    for r in nat:
+        if r.get("chain") == "dstnat" and routeros.enabled(r) and r.get("dst-address") == ip and \
+                r.get("to-addresses") == internal:
+            covered |= set(str(r.get("dst-port", "")).split(","))
+    missing = [p for p in ports.split(",") if p and p not in covered]
+    if missing:
+        ops.append(routeros.op_add("ip/firewall/nat", {
+            "chain": "dstnat", "action": "dst-nat", "dst-address": ip, "protocol": "tcp",
+            "dst-port": ",".join(missing), "to-addresses": internal,
+            "comment": f"servermanager: Mail {mc.name}"}))
+    snat = [r for r in nat if r.get("chain") == "srcnat" and r.get("action") == "src-nat" and routeros.enabled(r)
+            and r.get("src-address") in (internal, f"{internal}/32") and r.get("to-addresses") == ip]
+    if not snat:
+        first_masq = next((r for r in nat if r.get("chain") == "srcnat" and r.get("action") == "masquerade"), None)
+        data = {"chain": "srcnat", "action": "src-nat", "src-address": internal, "out-interface": wan,
+                "to-addresses": ip, "comment": f"servermanager: ausgehende Mails {mc.name} über Mail-IP"}
+        if first_masq and first_masq.get(".id"):
+            data["place-before"] = first_masq[".id"]
+        ops.append(routeros.op_add("ip/firewall/nat", data))
+    if ops:
+        out.append(proposal(f"mail:{mc.id}:router", "router", o,
+                            f"{mc.name}: Mail-IP {ip} auf {router.name} einrichten",
+                            f"IMAP/SMTP über die eigene Public-IP: {len(ops)} Änderung(en) – "
+                            + "; ".join(routeros.op_to_cli(x) for x in ops),
+                            action="router_direct_ops",
+                            params={"router_id": router.id, "ops": ops}))
+    out.append(proposal(f"mail:{mc.id}:dns", "router", o, f"{mc.name}: DNS für den Mailversand prüfen",
+                        f"PTR (Reverse-DNS) von {ip} → {mc.mail_hostname or 'Mail-Hostname'} (beim Provider, z. B. "
+                        f"Hetzner Robot), MX und A-Record von {mc.mail_hostname or 'mail.…'} → {ip}, SPF mit "
+                        f"ip4:{ip}, DKIM und DMARC. Die Weboberfläche läuft unter einem eigenen Namen über "
+                        "Pangolin.", severity="info"))
     return out
 
 

@@ -30,6 +30,8 @@ KIND_LABELS = {
     "optimize_scan": "Optimierungs-Scan",
     "optimize": "Optimierungen umsetzen",
     "newt_setup": "Newt einrichten",
+    "sso_connect": "SSO verbinden",
+    "sso_disconnect": "SSO trennen",
 }
 
 

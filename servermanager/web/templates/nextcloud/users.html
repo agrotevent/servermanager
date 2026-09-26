@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% set help_page = "apps" %}
+{% from "_macros.html" import csrf, field, empty with context %}
+{% block title %}Nextcloud-Benutzer · {{ system.name }}{% endblock %}
+{% macro uform(op, label, uid, cls='xs', confirm='', extra='') -%}
+  <form method="post" class="inline" {% if confirm %}data-confirm="{{ confirm }}"{% endif %}>{{ csrf() }}
+    <input type="hidden" name="op" value="{{ op }}"><input type="hidden" name="uid" value="{{ uid }}">{{ extra|safe }}
+    <button class="btn {{ cls }}">{{ label }}</button></form>
+{%- endmacro %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>Nextcloud-Benutzer</h1>
+  <p><a href="{{ url_for('systems.detail', system_id=system.id, tab='nextcloud') }}">{{ system.name }}</a>{% if sso %} · SSO über authentik aktiv (<span class="mono">{{ sso.app_url }}</span>) – neue SSO-Benutzer werden beim ersten Login automatisch angelegt{% endif %}</p></div></div>
+{% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+<div class="card"><div class="card-head"><h2>Benutzer</h2><input type="search" placeholder="Suchen …" data-filter-list="#nc-users tbody tr" style="max-width:220px"></div>
+  {% if users %}
+  <div class="table-wrap"><table class="table compact" id="nc-users">
+    <thead><tr><th>Benutzer</th><th>E-Mail</th><th>Gruppen</th><th>Quota</th><th>Status</th><th></th></tr></thead><tbody>
+    {% for u in users %}
+      <tr class="{{ 'muted' if not u.enabled }}"><td><strong>{{ u.uid }}</strong><span class="sub">{{ u.display }}{% if u.backend and u.backend != 'Database' %} · {{ u.backend }}{% endif %}</span></td>
+        <td><small>{{ u.email }}</small></td><td><small>{{ u.groups|join(', ') }}</small></td><td><small>{{ u.quota }}</small></td>
+        <td>{% if u.enabled %}<span class="badge success">aktiv</span>{% else %}<span class="badge">gesperrt</span>{% endif %}<span class="sub">{{ u.last_seen }}</span></td>
+        <td class="nowrap text-right">
+          {% if can(system.id, 'operate') %}
+            {% if u.enabled %}{{ uform('disable', 'Sperren', u.uid, 'xs', u.uid ~ ' sperren?') }}{% else %}{{ uform('enable', 'Entsperren', u.uid) }}{% endif %}
+            {{ uform('resetpw', 'Neues Passwort', u.uid, 'xs', 'Neues Passwort für ' ~ u.uid ~ ' setzen?') }}
+          {% endif %}
+          {% if can(system.id, 'full') %}{{ uform('delete', 'Löschen', u.uid, 'xs danger-outline', u.uid ~ ' mit allen Dateien löschen?') }}{% endif %}
+        </td></tr>
+    {% endfor %}</tbody></table></div>
+  {% elif not error %}<div class="card-body">{{ empty('Keine Benutzer gefunden.') }}</div>{% endif %}
+</div>
+{% if can(system.id, 'full') %}
+<div class="card"><div class="card-head"><h2>Benutzer anlegen</h2></div><div class="card-body">
+  <form method="post" class="form-grid" autocomplete="off">{{ csrf() }}<input type="hidden" name="op" value="add">
+    {{ field('Benutzer-ID', 'uid', '', required=True, placeholder='max.muster') }}
+    {{ field('Anzeigename', 'display', '') }}
+    {{ field('E-Mail', 'email', '', type='email') }}
+    {{ field('Gruppen', 'groups', '', placeholder='Mitarbeiter, Buchhaltung', help='Komma-getrennt; fehlende Gruppen werden angelegt' ~ ((' – vorhanden: ' ~ groups|join(', ')) if groups else '')) }}
+    {{ field('Quota', 'quota', '', placeholder='10 GB') }}
+    {{ field('Passwort', 'password', '', type='password', help='leer = zufälliges Passwort, wird einmal angezeigt', attrs='autocomplete="new-password"') }}
+    <div class="full"><button class="btn primary">Anlegen</button></div>
+  </form></div></div>
+{% endif %}
+{% endblock %}

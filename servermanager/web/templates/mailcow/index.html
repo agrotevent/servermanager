@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% set help_page = "apps" %}
+{% from "_macros.html" import empty with context %}
+{% from "integrations/_macros.html" import int_status with context %}
+{% block title %}Mailcow{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>Mailcow</h1><p>Postfächer und Aliase verwalten. Weboberfläche über Pangolin, IMAP/SMTP über eine eigene Public-IP.</p></div>
+  {% if user.is_admin %}<div class="actions"><a class="btn primary" href="{{ url_for('mailcow.new') }}"><svg class="icon"><use href="#i-plus"/></svg>Mailcow hinzufügen</a></div>{% endif %}
+</div>
+{% if items %}
+<div class="card"><div class="table-wrap"><table class="table">
+  <thead><tr><th>Mailcow</th><th>Status</th><th>Version</th><th>Domains</th><th>Postfächer</th><th>Mail-IP</th><th>Warnungen</th></tr></thead>
+  <tbody>{% for m in items %}{% set d = m.data %}
+    <tr><td><a href="{{ url_for('mailcow.detail', mc_id=m.id) }}"><strong>{{ m.name }}</strong></a><span class="sub">{{ m.public_url or m.api_url }}</span></td>
+      <td>{{ int_status(m) }}<span class="sub">{{ m.last_poll|ago }}</span></td><td>{{ d.version or '–' }}</td>
+      <td>{{ d.domains or 0 }}</td><td>{{ d.mailboxes or 0 }}{% if d.inactive %} <small class="muted">({{ d.inactive }} inaktiv)</small>{% endif %}</td>
+      <td class="mono">{{ m.mail_public_ip or '–' }}<span class="sub">{{ m.mail_hostname }}</span></td>
+      <td>{% if m.alert_list %}<span class="badge danger" title="{{ m.alert_list|map(attribute='text')|join('\n') }}">{{ m.alert_list|length }}</span>{% else %}<span class="badge success">keine</span>{% endif %}</td></tr>
+  {% endfor %}</tbody></table></div></div>
+{% else %}<div class="card"><div class="card-body">{{ empty('Noch keine Mailcow eingerichtet.', 'i-archive') }}</div></div>{% endif %}
+{% endblock %}
