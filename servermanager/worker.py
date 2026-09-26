@@ -826,6 +826,21 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
         if phase == "publish":
             if p.get("publish") and ip:
                 notes.append(self._publish(ctx, server, p, ip))
+            next_phase("newt")
+            phase = "newt"
+        if phase == "newt" and p.get("newt"):
+            with session_scope() as db:
+                sys_row = db.execute(select(System).where(System.pve_server_id == server.id,
+                                                          System.pve_vmid == vmid)).scalar_one_or_none()
+                sid = sys_row.id if sys_row else None
+            if sid is None:
+                notes.append("Newt nicht eingerichtet (Container nicht als System aufgenommen)")
+            else:
+                notes.append(self._newt_setup(ctx, self._system(sid), p["newt"].get("pangolin_id"), p["newt"]))
+                with session_scope() as db:
+                    job = db.get(Job, job_id)
+                    job.payload = {**(job.payload or {}), "newt": {k: v for k, v in p["newt"].items()
+                                                                  if k != "secret_enc"}}
         self._pve_refresh(server.id)
         return f"Container {vmid} ({p['hostname']}) angelegt" + (f", IP {ip}" if ip else "") + \
             "".join(f"; {n}" for n in notes if n)
@@ -914,6 +929,314 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
         with session_scope() as db:
             audit(db, None, "pangolin.publish", pg.name, f"{domain} -> {ip}:{pub['port']}")
         return f"veröffentlicht als {domain}"
+
+    # ------------------------------------------------------------------ import of existing guests
+    def _import_guest(self, ctx, server: PveServer, api, host: dict, g: dict, install_ssh: bool,
+                      user_id: Optional[int]) -> str:
+        """Management access for an existing guest + register it as system (host key pinned)."""
+        from . import mgmt
+        label = f"{'CT' if g['type'] == 'lxc' else 'VM'} {g['vmid']} ({g.get('name', '')})"
+        ctx.say(f"── {label}: Management-Zugang anlegen")
+        if g["type"] == "lxc":
+            if host.get("conn") is None:
+                if not server.system_id:
+                    raise JobFailed("Für Container muss der Proxmox-Host als System (SSH) verknüpft sein")
+                hs = self._system(server.system_id)
+                host["conn"] = self._connect(ctx, hs)
+                host["node"] = host["conn"].exec("hostname", timeout=20).stdout.strip()
+            res = mgmt.inject_key_lxc(host["conn"], host["node"], g["node"], g["vmid"], install_ssh)
+        else:
+            res = mgmt.inject_key_vm(api, g["node"], g["vmid"], install_ssh)
+        ctx.say(("Schlüssel hinterlegt" if res["added"] else "Schlüssel war bereits hinterlegt")
+                + (", SSH-Server installiert" if res["sshd_installed"] else "")
+                + f", {len(res['host_keys'])} Hostkey(s) übernommen")
+        if res["root_login"] == "no":
+            ctx.say("WARNUNG: PermitRootLogin=no – die Anmeldung als root per Schlüssel ist gesperrt.")
+        ip = g.get("ip") or mgmt.pick_ip(res["ips"], prefer=lambda a: not a.startswith("172.17."))
+        if not ip:
+            raise JobFailed(f"{label}: keine IPv4-Adresse ermittelbar")
+        with session_scope() as db:
+            system = db.execute(select(System).where(System.pve_server_id == server.id,
+                                                     System.pve_vmid == int(g["vmid"]))).scalar_one_or_none()
+            if system is None:
+                system = db.execute(select(System).where(System.host == ip)).scalars().first()
+            name = (g.get("name") or f"guest-{g['vmid']}")[:120]
+            if system is None:
+                if db.execute(select(System.id).where(System.name == name)).first():
+                    name = f"{name}-{g['vmid']}"
+                system = System(name=name, hostname=g.get("name", ""), host=ip, port=22, username="root",
+                                auth_method=AUTH_KEY, connection=CONN_DIRECT, types=["debian"], tags="import",
+                                created_by=user_id, description=f"{label} auf {server.name}/{g['node']}")
+                db.add(system)
+                db.flush()
+                user = db.get(User, user_id) if user_id else None
+                if user is not None and not user.is_admin:
+                    access.grant(db, user.id, system.id, LEVEL_FULL)
+            system.pve_server_id, system.pve_vmid = server.id, int(g["vmid"])
+            if res["host_keys"]:
+                system.host_keys = "\n".join(res["host_keys"])
+            sid = system.id
+            audit(db, None, "pve.import", system.name, f"{server.name}/{g['vmid']} {ip}")
+        system = self._system(sid)
+        try:
+            with inventory.connect(system, timeout=15) as conn:
+                with session_scope() as db:
+                    s = db.get(System, sid)
+                    inventory.deep_check(conn, db, s, ctx.write, manual=True, detect=True)
+                    s.status = STATUS_ONLINE
+        except SSHError as exc:
+            return f"{label}: System #{sid} angelegt, SSH-Prüfung fehlgeschlagen ({exc})"
+        return f"{label}: als System #{sid} übernommen ({ip})"
+
+    def job_pve_import(self, ctx, job_id, system_id, payload) -> str:
+        server, _state = self._pve_server(job_id)
+        api = pve.client(server, timeout=60)
+        host: dict = {}
+        done, failed = [], []
+        try:
+            for g in payload.get("items", []):
+                pve.check_guest_ref(g["node"], g["type"], g["vmid"])
+                try:
+                    done.append(self._import_guest(ctx, server, api, host, g, bool(payload.get("install_ssh")),
+                                                   self._job_user(job_id)))
+                    ctx.say(done[-1])
+                except (JobFailed, SSHError, PveError, ValueError) as exc:
+                    failed.append(f"{g.get('name', g['vmid'])}: {exc}")
+                    ctx.say(f"FEHLER: {exc}")
+        finally:
+            if host.get("conn"):
+                host["conn"].close()
+        if failed and not done:
+            raise JobFailed("; ".join(failed))
+        return f"{len(done)} übernommen" + (f", {len(failed)} fehlgeschlagen: " + "; ".join(failed) if failed else "")
+
+    def _job_user(self, job_id: int) -> Optional[int]:
+        with session_scope() as db:
+            return db.get(Job, job_id).user_id
+
+    # ------------------------------------------------------------------ optimisation
+    def job_optimize_scan(self, ctx, job_id, system_id, payload) -> str:
+        from . import optimize
+        with session_scope() as db:
+            result = optimize.scan(db, ctx.say)
+            optimize.save(db, result)
+        summ = optimize.summary(result)
+        for name, err in result["errors"].items():
+            ctx.say(f"Nicht erreichbar – {name}: {err}")
+        for p in result["proposals"]:
+            ctx.write(f"  [{p['severity']}] {p['title']}\n")
+        return f"{summ['total']} Vorschläge, davon {summ['actionable']} automatisch umsetzbar"
+
+    def job_optimize(self, ctx, job_id, system_id, payload) -> str:
+        ok, failed = [], []
+        backed_up: set[int] = set()
+        for item in payload.get("items", []):
+            ctx.say(f"── {item['title']}")
+            try:
+                msg = self._apply_proposal(ctx, job_id, item, backed_up)
+                ok.append(item["title"])
+                ctx.say(f"✔ {msg or 'erledigt'}")
+            except CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - one failing proposal must not stop the others
+                failed.append(f"{item['title']}: {exc}")
+                ctx.say(f"✘ {exc}")
+            if ctx.cancelled():
+                raise CancelledError("Abgebrochen")
+        with session_scope() as db:
+            audit(db, None, "optimize.apply", f"{len(ok)} umgesetzt", "\n".join(ok + failed)[:2000])
+        if failed and not ok:
+            raise JobFailed("; ".join(failed))
+        return f"{len(ok)} umgesetzt" + (f", {len(failed)} fehlgeschlagen" if failed else "")
+
+    def _apply_proposal(self, ctx, job_id: int, item: dict, backed_up: set) -> str:
+        from . import routeros
+        a, p = item["action"], item["params"]
+        obj = item.get("obj") or {}
+
+        def pve_server(pid: int) -> PveServer:
+            with session_scope() as db:
+                srv = db.get(PveServer, pid)
+                if srv is None:
+                    raise JobFailed("Proxmox-Verbindung existiert nicht mehr")
+                db.expunge(srv)
+                return srv
+
+        if a in ("pve_set", "pve_backup_job", "pve_resize", "pve_import", "pve_vswitch"):
+            srv = pve_server(obj["id"])
+            api = pve.client(srv, timeout=60)
+            if a == "pve_set":
+                node, gtype, vmid = pve.check_guest_ref(p["node"], p["type"], p["vmid"])
+                allowed = {"onboot", "agent", "net0"}
+                cfg = {k: v for k, v in p["config"].items() if k in allowed}
+                if "net0" in cfg:
+                    current = api.guest_config(node, gtype, vmid).get("net0", "")
+
+                    def core(net: str) -> set:
+                        return {x for x in net.split(",") if not x.startswith("mtu=")}
+                    if core(current) != core(cfg["net0"]):
+                        raise JobFailed("Netzwerk-Konfiguration hat sich seit dem Scan geändert – bitte neu scannen")
+                api.put(f"nodes/{node}/{gtype}/{vmid}/config", **cfg)
+                return ", ".join(f"{k}={v}" for k, v in cfg.items())
+            if a == "pve_backup_job":
+                vmid = int(p["vmid"])
+                jobs = api.backup_jobs()
+                mine = next((j for j in jobs if "servermanager" in str(j.get("comment", ""))), None)
+                if mine:
+                    vmids = sorted({int(v) for v in str(mine.get("vmid", "")).split(",") if v.strip().isdigit()}
+                                   | {vmid})
+                    api.put(f"cluster/backup/{mine['id']}", vmid=",".join(map(str, vmids)))
+                    return f"in Sicherungsjob {mine['id']} aufgenommen"
+                api.post("cluster/backup", vmid=str(vmid), storage=p["storage"], schedule="02:30", mode="snapshot",
+                         compress="zstd", enabled=1, comment="servermanager",
+                         **{"prune-backups": "keep-daily=7,keep-weekly=4"})
+                return f"Sicherungsjob angelegt (Storage {p['storage']}, täglich 02:30)"
+            if a == "pve_resize":
+                node, gtype, vmid = pve.check_guest_ref(p["node"], p["type"], p["vmid"])
+                state: dict = {}
+                self._pve_task(ctx, api, pve.start_op(api, "resize", node, gtype, vmid,
+                                                      {"add_gb": int(p["add_gb"])}), state, node)
+                return f"um {int(p['add_gb'])} GB vergrößert"
+            if a == "pve_import":
+                pve.check_guest_ref(p["node"], p["type"], p["vmid"])
+                host: dict = {}
+                try:
+                    return self._import_guest(ctx, srv, api, host, p, bool(item.get("inputs", {}).get("install_ssh")),
+                                              self._job_user(job_id))
+                finally:
+                    if host.get("conn"):
+                        host["conn"].close()
+            if a == "pve_vswitch":
+                node = p["node"]
+                pve.check_guest_ref(node, "lxc", 100)
+                vlan = int(p["vlan"])
+                if not 4000 <= vlan <= 4091:
+                    raise JobFailed("VLAN-ID des vSwitch muss zwischen 4000 und 4091 liegen")
+                nets = {n.get("iface") for n in api.networks(node)}
+                vif = f"{p['phys']}.{vlan}"
+                if vif not in nets:
+                    api.post(f"nodes/{node}/network", type="vlan", iface=vif, mtu=1400, autostart=1,
+                             comments="Hetzner vSwitch (servermanager)")
+                if p["bridge"] not in nets:
+                    api.post(f"nodes/{node}/network", type="bridge", iface=p["bridge"], bridge_ports=vif, mtu=1400,
+                             autostart=1, comments="Hetzner vSwitch (servermanager)")
+                upid = api.put(f"nodes/{node}/network")
+                self._pve_task(ctx, api, upid, {}, node)
+                return f"{vif} und {p['bridge']} auf {node} angelegt und aktiviert"
+        if a == "pve_migrate":
+            srv = pve_server(p["pve_id"])
+            api = pve.client(srv, timeout=60)
+            node, gtype, vmid = pve.check_guest_ref(p["node"], p["type"], p["vmid"])
+            target = p["target"]
+            pve.check_guest_ref(target, gtype, vmid)
+            extra = {"restart": 1} if gtype == "lxc" else {"online": 1}
+            upid = api.post(f"nodes/{node}/{gtype}/{vmid}/migrate", target=target, **extra)
+            self._pve_task(ctx, api, upid, {}, node)
+            self._pve_refresh(srv.id)
+            return f"{p.get('name')} nach {target} migriert"
+        if a == "pve_watch":
+            with session_scope() as db:
+                srv = db.get(PveServer, int(p["pve_id"]))
+                srv.watch = sorted(set(srv.watch_list) | {int(p["vmid"])})
+            return "wird überwacht"
+        if a in ("router_finding", "router_nat_disable", "router_lease_static"):
+            with session_scope() as db:
+                router = db.get(RouterDevice, obj["id"])
+                if router is None:
+                    raise JobFailed("Router existiert nicht mehr")
+                db.expunge(router)
+            mt = integrations.router_client(router, timeout=30)
+            if a == "router_finding":
+                snap = routeros.snapshot_from_api(mt)
+                target, _e = routeros.validate_target(router.target_cfg or routeros.detect_target(snap))
+                f = next((x for x in routeros.analyze(snap, target) if x["id"] == p["finding"]), None)
+                if f is None or f["status"] in ("ok", "check"):
+                    return "bereits erledigt"
+                if not f["applicable"]:
+                    raise JobFailed("nicht automatisch umsetzbar")
+                if router.id not in backed_up:
+                    name = routeros.backup_before_change(mt)
+                    backed_up.add(router.id)
+                    ctx.say(f"Sicherung auf dem Router: {name}.backup")
+                routeros.apply_ops(mt, f["ops"], lambda line: ctx.write(f"  {line}\n"))
+                return f"{len(f['ops'])} Änderung(en)"
+            if a == "router_lease_static":
+                lease = next((le for le in mt.get("ip/dhcp-server/lease") if le.get(".id") == p["lease_id"]), None)
+                if lease is None or lease.get("mac-address") != p.get("mac"):
+                    raise JobFailed("Lease hat sich geändert – bitte neu scannen")
+                if lease.get("dynamic") == "true":
+                    mt.command("ip/dhcp-server/lease/make-static", {".id": lease[".id"]})
+                return f"{lease.get('address')} statisch"
+            # router_nat_disable: only if the service is (still) reachable through Pangolin
+            with session_scope() as db:
+                from . import discovery
+                published = {(t["ip"], int(t["port"] or 0)) for t in discovery.services_map(db)["targets"]}
+            if (p["ip"], int(p["port"])) not in published:
+                raise JobFailed("Der Dienst ist nicht (mehr) über Pangolin veröffentlicht – Portfreigabe bleibt aktiv")
+            mt.patch("ip/firewall/nat", p["nat_id"], {"disabled": "yes",
+                                                      "comment": "servermanager: durch Pangolin ersetzt"})
+            return "Portfreigabe deaktiviert"
+        if a in ("publish_forward", "pangolin_mirror", "pangolin_sso"):
+            with session_scope() as db:
+                pg = db.get(PangolinServer, int(p["pangolin_id"]))
+                if pg is None:
+                    raise JobFailed("Pangolin-Verbindung existiert nicht mehr")
+                db.expunge(pg)
+            client = integrations.pangolin_client(pg)
+            if a == "pangolin_sso":
+                client.update_resource(int(p["resource_id"]), sso=True)
+                return "Pangolin-Anmeldung aktiviert"
+            if not pg.default_site_id or (p["protocol"] == "http" and not pg.default_domain_id):
+                raise JobFailed(f"Für {pg.name} Standard-Site und -Domain festlegen")
+            sub = (item.get("inputs", {}).get("subdomain") or p.get("subdomain") or "").strip().lower()
+            res = client.publish(p["name"], p["protocol"], pg.default_site_id, p["ip"], int(p["port"]),
+                                 p.get("method") or "http", sub, pg.default_domain_id,
+                                 p.get("proxy_port"), sso=bool(p.get("sso", a == "publish_forward")))
+            return f"veröffentlicht: {res.get('fullDomain') or p['name']} über {pg.name}"
+        if a == "newt_restart":
+            system = self._system(int(p["system_id"]))
+            from .modules import get_module
+            mod = get_module("newt")
+            body, env = mod.script_for(mod.action("restart"), system, {})
+            with self._connect(ctx, system) as conn:
+                code = conn.run_script(body, env=env, root=True, on_output=ctx.write, timeout=300)
+            if code != 0:
+                raise JobFailed(f"Neustart fehlgeschlagen ({code})")
+            return "Newt neu gestartet"
+        raise JobFailed(f"Unbekannte Aktion {a}")
+
+    # ------------------------------------------------------------------ newt tunnel
+    def _newt_setup(self, ctx, system: System, pangolin_id: Optional[int], newt: dict) -> str:
+        env = {"SM_TASK": "setup", "SM_NEWT_ID": newt["id"], "SM_NEWT_SECRET": security.decrypt(newt["secret_enc"]),
+               "SM_NEWT_ENDPOINT": newt["endpoint"]}
+        from .modules.base import load_script
+        body = load_script("lib.sh") + "\n" + load_script("newt.sh")
+        ctx.say(f"Richte Newt auf {system.name} ein (Endpoint {newt['endpoint']}) ...")
+        with self._connect(ctx, system) as conn:
+            code = conn.run_script(body, env=env, root=True, on_output=ctx.write, cancel=ctx.cancelled, timeout=900)
+            if code != 0:
+                raise JobFailed(f"Newt-Einrichtung fehlgeschlagen ({code})")
+            with session_scope() as db:
+                s = db.get(System, system.id)
+                facts, apt = inventory.run_facts(conn, s)
+                inventory.apply_facts(s, facts, apt)
+                if "newt" not in s.type_list:
+                    s.types = s.type_list + ["newt"]
+                if pangolin_id:
+                    pg = db.get(PangolinServer, pangolin_id)
+                    if pg is not None:
+                        pg.tunnel_system_id = s.id
+                audit(db, None, "newt.setup", s.name, newt["endpoint"])
+        return f"Newt auf {system.name} eingerichtet"
+
+    def job_newt_setup(self, ctx, job_id, system_id, payload) -> str:
+        system = self._system(system_id)
+        msg = self._newt_setup(ctx, system, payload.get("pangolin_id"), payload["newt"])
+        with session_scope() as db:
+            job = db.get(Job, job_id)
+            job.payload = {**(job.payload or {}), "newt": {k: v for k, v in payload["newt"].items()
+                                                          if k != "secret_enc"}}
+        return msg
 
     def job_pve_token(self, ctx, job_id, system_id, payload) -> str:
         """Create an API token for the servermanager on a Proxmox host via SSH."""

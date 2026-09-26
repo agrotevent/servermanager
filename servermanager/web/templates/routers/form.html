@@ -23,6 +23,16 @@
 <div class="actions mt-1"><button class="btn primary">Speichern</button><a class="btn" href="{{ url_for('routers.index') if is_new else url_for('routers.detail', router_id=r.id) }}">Abbrechen</a></div>
 </form>
 {% if not is_new %}
+<div class="card mt-2"><div class="card-head"><h2>API-Benutzer per Admin-Anmeldung anlegen</h2></div><div class="card-body">
+  <p>Legt mit einer <strong>einmaligen</strong> Admin-Anmeldung die Gruppe und den Benutzer <code>servermanager</code> mit zufälligem Passwort an, beschränkt auf die angegebenen Adressen, und hinterlegt ihn hier. Das Admin-Passwort wird nicht gespeichert.</p>
+  <form method="post" action="{{ url_for('routers.mgmt_user', router_id=r.id) }}" class="form-grid" autocomplete="off">{{ csrf() }}
+    {{ field('Admin-Benutzer', 'admin_user', 'admin', required=True) }}
+    {{ field('Admin-Passwort', 'admin_password', '', type='password', attrs='autocomplete="off"') }}
+    {{ field('Anmeldung erlaubt von', 'allowed', allowed_default, cls='full', help='Netze/IPs, von denen der Servermanager zugreift (z. B. WireGuard-Management-Netz). Leer = überall.') }}
+    <div class="full"><label class="check"><input type="checkbox" name="with_backup" value="1" checked> Sicherungen vor Änderungen erlauben (Rechte ftp, sensitive)</label></div>
+    <div class="full"><button class="btn primary">API-Benutzer anlegen</button></div>
+  </form>
+</div></div>
 <div class="card danger-zone mt-2"><div class="card-head"><h2>Verbindung entfernen</h2></div><div class="card-body">
   <form method="post" action="{{ url_for('routers.delete', router_id=r.id) }}" data-confirm="Verbindung {{ r.name }} entfernen?">{{ csrf() }}<button class="btn danger">Entfernen</button></form>
 </div></div>

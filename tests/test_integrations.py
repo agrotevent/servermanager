@@ -292,10 +292,12 @@ def test_migration_v1_to_v2(tmp_path):
     old.create_all(eng)
     with eng.begin() as conn:
         conn.execute(text("INSERT INTO meta(key, value) VALUES ('schema_version', '1')"))
-    assert migrations.migrate(eng) == 2
+    assert migrations.migrate(eng) == migrations.SCHEMA_VERSION
     insp = inspect(eng)
     assert {"pve_server_id", "pve_vmid"} <= {c["name"] for c in insp.get_columns("systems")}
     assert "pve_id" in {c["name"] for c in insp.get_columns("jobs")}
     assert "pve_servers" in insp.get_table_names()
     with eng.connect() as conn:
-        assert conn.execute(text("SELECT value FROM meta WHERE key='schema_version'")).scalar() == "2"
+        assert conn.execute(text("SELECT value FROM meta WHERE key='schema_version'")).scalar() == \
+            str(migrations.SCHEMA_VERSION)
+    assert {"role", "tunnel_system_id"} <= {c["name"] for c in insp.get_columns("pangolin_servers")}

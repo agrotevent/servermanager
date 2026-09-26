@@ -67,6 +67,23 @@
   {% for rt in d['ip/route'] %}<tr class="{{ 'muted' if rt.active != 'true' }}"><td class="mono">{{ rt['dst-address'] }}</td><td class="mono">{{ rt.gateway }}<span class="sub">{{ rt['immediate-gw'] or '' }}</span></td><td>{{ rt['routing-table'] or 'main' }}</td><td>{{ rt.distance }}</td><td>{{ flags(rt) }}{% if rt.active == 'true' %}<span class="badge success">aktiv</span>{% endif %}</td></tr>{% endfor %}
 </tbody></table></div></div>
 
+{% elif tab == 'devices' and not error %}
+<div class="card"><div class="card-head"><h2>Geräte im Netz</h2><input type="search" placeholder="Suchen …" data-filter-list="#dev-table tbody tr" style="max-width:220px"></div>
+  <div class="card-body"><small class="muted">Aus DHCP-Leases und ARP-Tabelle, abgeglichen mit den Systemen des Servermanagers. Portfreigaben zeigen, welche Geräte direkt über die öffentliche IP erreichbar sind.</small></div>
+  <div class="table-wrap"><table class="table compact" id="dev-table">
+  <thead><tr><th>IP</th><th>MAC</th><th>Name</th><th>Lease</th><th>Portfreigaben</th><th>Servermanager</th><th></th></tr></thead><tbody>
+  {% for dv in devices %}
+    <tr><td class="mono">{{ dv.ip }}</td><td class="mono"><small>{{ dv.mac }}</small></td><td>{{ dv.host }}<span class="sub">{{ dv.comment }}</span></td>
+      <td>{% if dv.lease == 'dynamisch' %}<span class="badge warning">dynamisch</span>{% elif dv.lease %}<span class="badge success">statisch</span>{% else %}<small class="muted">ARP</small>{% endif %}</td>
+      <td>{% for fw in dv.forwards %}<span class="badge danger" title="direkt über die öffentliche IP erreichbar">{{ fw }}</span> {% endfor %}</td>
+      <td>{% if dv.system %}<a class="badge success" href="{{ url_for('systems.detail', system_id=dv.system.id) }}">{{ dv.system.name }}</a>{% else %}<small class="muted">–</small>{% endif %}</td>
+      <td class="nowrap text-right">
+        {% if dv.lease == 'dynamisch' and int_can('router', r.id, 'operate') %}{{ act('lease_static', 'Statisch', dv.lease_id, 'xs', '', {'comment': 'servermanager: ' ~ (dv.host or dv.ip)}) }}{% endif %}
+        {% if not dv.system and user.can_add_systems %}<a class="btn xs ghost" href="{{ url_for('systems.new', name=dv.host or dv.ip, host=dv.ip) }}">Als System</a>{% endif %}
+      </td></tr>
+  {% else %}<tr><td colspan="7" class="muted">Keine Geräte gefunden.</td></tr>{% endfor %}
+  </tbody></table></div></div>
+
 {% elif tab == 'dhcp' and not error %}
 <div class="card"><div class="card-head"><h2>Leases</h2><input type="search" placeholder="Suchen …" data-filter-list="#lease-table tbody tr" style="max-width:220px"></div>
   <div class="table-wrap"><table class="table compact" id="lease-table">

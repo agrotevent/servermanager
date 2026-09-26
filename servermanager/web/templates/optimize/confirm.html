@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% set help_page = "bestand" %}
+{% from "_macros.html" import csrf with context %}
+{% block title %}Optimierungen bestätigen{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>Bitte bestätigen</h1>
+  <p>Folgende {{ items|length }} Änderung(en) werden ausgeführt. Jeder Punkt wird unmittelbar vorher erneut geprüft; schlägt einer fehl, laufen die übrigen weiter. Alles wird im Job-Protokoll und im Audit-Log festgehalten.</p></div></div>
+<form method="post" action="{{ url_for('optimize.apply') }}">{{ csrf() }}
+<input type="hidden" name="scan_at" value="{{ scan_at }}"><input type="hidden" name="confirmed" value="1">
+<div class="card"><div class="card-body findings">
+{% for i in items %}
+  <input type="hidden" name="sel" value="{{ i.idx }}">
+  {% for inp in i.input_defs %}{% set v = i.inputs.get(inp.name) %}{% if v %}<input type="hidden" name="in_{{ i.idx }}_{{ inp.name }}" value="{{ '1' if v is sameas true else v }}">{% endif %}{% endfor %}
+  <div class="finding st-change">
+    <div class="finding-head"><span class="badge">{{ loop.index }}</span><strong class="grow">{{ i.title }}</strong><span class="badge outline">{{ i.obj.name }}</span></div>
+    {% if i.detail %}<p>{{ i.detail }}</p>{% endif %}
+    {% for inp in i.input_defs %}<p class="muted"><small>{{ inp.label }}: <strong>{{ ('ja' if i.inputs.get(inp.name) else 'nein') if inp.kind == 'bool' else (i.inputs.get(inp.name) or '–') }}</strong></small></p>{% endfor %}
+  </div>
+{% endfor %}
+</div></div>
+<div class="actions"><button class="btn primary">Jetzt umsetzen</button><a class="btn" href="{{ url_for('optimize.index') }}">Zurück</a></div>
+</form>
+{% endblock %}

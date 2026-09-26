@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% set help_page = "pangolin" %}
+{% from "_macros.html" import csrf, empty with context %}
+{% block title %}Veröffentlichungen{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>Veröffentlichungen</h1>
+  <p>Alle über Pangolin erreichbaren Dienste, gruppiert nach internem Ziel – mit primärem und Backup-Weg.</p></div></div>
+{% for name, err in data.errors.items() %}<div class="alert danger">{{ name }}: {{ err }}</div>{% endfor %}
+<div class="stats">
+  {% for pg in pangolins %}
+  <a class="stat {{ 'danger' if pg.alert_list else 'success' }}" href="{{ url_for('pangolin.detail', pg_id=pg.id) }}"><div class="label">{{ pg.role_label }}: {{ pg.name }}</div>
+    <div class="value" style="font-size:16px">{% set sites = pg.data.sites or [] %}{{ sites|selectattr('online')|list|length }} / {{ sites|length }} Sites online</div>
+    <div class="sub">{{ pg.data.resources or 0 }} Dienste</div></a>
+  {% endfor %}
+</div>
+<div class="card">
+  {% if data.targets %}
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Ziel intern</th><th>Primärer Weg</th><th>Backup-Weg</th><th></th></tr></thead><tbody>
+    {% for t in data.targets %}
+      <tr><td class="mono">{{ t.ip }}:{{ t.port }}{% if t.system %}<span class="sub"><a href="{{ url_for('systems.detail', system_id=t.system.id) }}">{{ t.system.name }}</a></span>{% endif %}</td>
+        {% for role in ['primary', 'backup'] %}
+        <td>{% for pth in t.paths if pth.role == role %}
+            <div><a href="{{ url_for('pangolin.resource', pg_id=pth.pangolin.id, rid=pth.resource.resourceId) }}" class="mono">{{ pth.domain }}</a>
+              {% if pth.http %}{% if pth.sso %}<span class="badge success">Anmeldung</span>{% else %}<span class="badge warning">öffentlich</span>{% endif %}{% endif %}
+              {% if not pth.enabled %}<span class="badge">aus</span>{% endif %}<span class="sub">{{ pth.pangolin.name }}</span></div>
+          {% else %}<span class="badge {{ 'danger' if role == 'primary' else 'warning' }}">fehlt</span>{% endfor %}</td>
+        {% endfor %}
+        <td class="text-right">
+          {% if backups and t.primary and not t.backup %}{% set src = (t.paths|selectattr('role', 'equalto', 'primary')|first) %}{% set bk = backups[0] %}
+            {% if int_can('pangolin', bk.id, 'full') %}
+            <form method="post" action="{{ url_for('pangolin.mirror') }}" class="inline" data-confirm="{{ src.domain }} zusätzlich über {{ bk.name }} veröffentlichen?">{{ csrf() }}
+              <input type="hidden" name="pangolin_id" value="{{ bk.id }}"><input type="hidden" name="name" value="{{ src.resource.name }}">
+              <input type="hidden" name="ip" value="{{ t.ip }}"><input type="hidden" name="port" value="{{ t.port }}">
+              <input type="hidden" name="protocol" value="{{ 'http' if src.http else (src.resource.protocol or 'tcp') }}"><input type="hidden" name="method" value="{{ src.method or 'http' }}">
+              <input type="hidden" name="subdomain" value="{{ src.resource.subdomain or '' }}"><input type="hidden" name="proxy_port" value="{{ src.resource.proxyPort or '' }}">
+              {% if src.sso %}<input type="hidden" name="sso" value="1">{% endif %}
+              <button class="btn xs primary">Backup-Weg anlegen</button></form>
+            {% endif %}
+          {% endif %}
+        </td></tr>
+    {% endfor %}</tbody></table></div>
+  {% else %}<div class="card-body">{{ empty('Noch keine Dienste veröffentlicht.', 'i-globe') }}</div>{% endif %}
+</div>
+{% if not backups %}<div class="alert info">Kein Backup-Weg eingerichtet: zweiten Pangolin-Server mit der Rolle „Backup-Weg“ hinzufügen – mit eigenem Tunnel-Container auf einem anderen Proxmox-Host.</div>{% endif %}
+{% endblock %}

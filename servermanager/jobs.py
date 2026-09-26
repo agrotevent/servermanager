@@ -26,6 +26,10 @@ KIND_LABELS = {
     "pve": "Proxmox",
     "pve_create": "Container anlegen",
     "pve_token": "Proxmox-Token einrichten",
+    "pve_import": "Bestand übernehmen",
+    "optimize_scan": "Optimierungs-Scan",
+    "optimize": "Optimierungen umsetzen",
+    "newt_setup": "Newt einrichten",
 }
 
 

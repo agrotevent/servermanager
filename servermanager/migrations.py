@@ -33,9 +33,18 @@ def _v2(conn: Connection) -> None:
     add_column_if_missing(conn, "jobs", "pve_id", "INTEGER REFERENCES pve_servers(id) ON DELETE CASCADE")
 
 
+def _v3(conn: Connection) -> None:
+    # redundant Pangolin paths, Newt tunnel systems, hosting of Proxmox servers
+    add_column_if_missing(conn, "pangolin_servers", "role", "VARCHAR(16) NOT NULL DEFAULT 'primary'")
+    add_column_if_missing(conn, "pangolin_servers", "tunnel_system_id", "INTEGER")
+    add_column_if_missing(conn, "pve_servers", "hosting", "VARCHAR(16) NOT NULL DEFAULT 'local'")
+    add_column_if_missing(conn, "pve_servers", "vswitch_vlan", "INTEGER")
+
+
 MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     1: lambda conn: None,  # initial schema
     2: _v2,
+    3: _v3,
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 

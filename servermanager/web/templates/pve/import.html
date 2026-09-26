@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% set help_page = "bestand" %}
+{% from "_macros.html" import csrf, empty, checkbox with context %}
+{% block title %}Bestand übernehmen · {{ s.name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>Bestand übernehmen</h1>
+  <p>Vorhandene Container und VMs auf <a href="{{ url_for('pve.server', pve_id=s.id, live=0) }}">{{ s.name }}</a>: Management-Zugang anlegen und als System verwalten.</p></div></div>
+{% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+<div class="alert info">
+  <strong>So funktioniert es:</strong> Der SSH-Schlüssel des Servermanagers wird über einen vertrauenswürdigen Weg hinterlegt –
+  bei Containern per <code>pct exec</code> über den Proxmox-Host{% if not s.system_id %} (<strong>dafür den Host in der Verbindung als System verknüpfen</strong>){% endif %},
+  bei VMs über den QEMU-Guest-Agent. Die SSH-Hostkeys werden auf demselben Weg gelesen und fest hinterlegt. Danach wird das System aufgenommen und seine Komponenten erkannt.
+</div>
+<form method="post">{{ csrf() }}
+<div class="card">
+  {% if rows %}
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th class="cb"><input type="checkbox" data-check-all="input[name=guest]"></th><th>Gast</th><th>Status</th><th>IP</th><th>Weg</th><th>Verwaltung</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      {% set possible = (r.type == 'lxc' and s.system_id) or (r.type == 'qemu' and r.agent) %}
+      <tr>
+        <td>{% if not r.system and r.status == 'running' and possible %}<input type="checkbox" name="guest" value="{{ r.node }}/{{ r.type }}/{{ r.vmid }}">{% endif %}</td>
+        <td><strong>{{ 'CT' if r.type == 'lxc' else 'VM' }} {{ r.vmid }} · {{ r.name }}</strong><span class="sub">{{ r.node }} · {{ r.ostype or '?' }}{% if r.bridge %} · {{ r.bridge }}{% endif %}{% if r.mac %} · {{ r.mac }}{% endif %}</span></td>
+        <td><span class="badge {{ 'success' if r.status == 'running' else '' }}">{{ r.status }}</span></td>
+        <td>{% if not r.system and r.status == 'running' %}<input type="text" name="ip_{{ r.vmid }}" value="{{ r.ip }}" placeholder="automatisch" style="max-width:150px">{% else %}<span class="mono">{{ r.ip or '–' }}</span>{% endif %}</td>
+        <td><small>{% if r.type == 'lxc' %}pct exec{% if not s.system_id %} <span class="badge warning">Host fehlt</span>{% endif %}{% else %}Guest-Agent {% if r.agent %}<span class="badge success">aktiv</span>{% else %}<span class="badge warning">aus</span>{% endif %}{% endif %}</small></td>
+        <td>{% if r.system %}<a href="{{ url_for('systems.detail', system_id=r.system.id) }}" class="badge success">System {{ r.system.name }}</a>{% if r.match == 'ip' %} <small class="muted">(per IP erkannt)</small>{% endif %}
+            {% elif r.status != 'running' %}<small class="muted">nur laufende Gäste</small>{% else %}<span class="badge">nicht verwaltet</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody></table></div>
+  <div class="card-body bulkbar">
+    <span class="count" data-bulk-count="input[name=guest]">Keine Auswahl</span>
+    <label class="check"><input type="checkbox" name="install_ssh" value="1"> SSH-Server installieren, falls er fehlt</label>
+    <button class="btn primary" data-confirm="Management-Zugang für die ausgewählten Gäste anlegen und als Systeme übernehmen?">Übernehmen</button>
+  </div>
+  {% else %}<div class="card-body">{{ empty('Keine Gäste gefunden.') }}</div>{% endif %}
+</div>
+</form>
+{% endblock %}

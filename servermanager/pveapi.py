@@ -68,15 +68,17 @@ def seg(value: Any) -> str:
 
 class PveClient:
     def __init__(self, url: str, token_id: str, token_secret: str, fingerprint: str = "",
-                 verify_ca: bool = False, timeout: int = 20):
+                 verify_ca: bool = False, timeout: int = 20, _login: bool = False):
         self.base = normalize_url(url)
-        if not TOKEN_ID_RE.match(token_id or ""):
-            raise PveError("Ungültige Token-ID (Format benutzer@realm!tokenname)")
-        if not token_secret:
-            raise PveError("Kein Token-Secret hinterlegt")
+        if not _login:
+            if not TOKEN_ID_RE.match(token_id or ""):
+                raise PveError("Ungültige Token-ID (Format benutzer@realm!tokenname)")
+            if not token_secret:
+                raise PveError("Kein Token-Secret hinterlegt")
         self.timeout = timeout
         self.session = requests.Session()
-        self.session.headers["Authorization"] = f"PVEAPIToken={token_id}={token_secret}"
+        if not _login:
+            self.session.headers["Authorization"] = f"PVEAPIToken={token_id}={token_secret}"
         self.session.trust_env = False  # never send the token through a proxy from the environment
         if fingerprint:
             try:
@@ -128,17 +130,17 @@ class PveClient:
         except ValueError as exc:
             raise PveError("Ungültige Antwort der Proxmox-API") from exc
 
-    def get(self, path: str, **params) -> Any:
-        return self.request("GET", path, params)
+    def get(self, _path: str, **params) -> Any:
+        return self.request("GET", _path, params)
 
-    def post(self, path: str, **params) -> Any:
-        return self.request("POST", path, params)
+    def post(self, _path: str, **params) -> Any:
+        return self.request("POST", _path, params)
 
-    def put(self, path: str, **params) -> Any:
-        return self.request("PUT", path, params)
+    def put(self, _path: str, **params) -> Any:
+        return self.request("PUT", _path, params)
 
-    def delete(self, path: str, **params) -> Any:
-        return self.request("DELETE", path, params)
+    def delete(self, _path: str, **params) -> Any:
+        return self.request("DELETE", _path, params)
 
     # ------------------------------------------------------------------ cluster
     def version(self) -> dict:
@@ -216,6 +218,86 @@ class PveClient:
 
     def task_stop(self, node: str, upid: str) -> None:
         self.delete(f"nodes/{seg(node)}/tasks/{seg(upid)}")
+
+    # ------------------------------------------------------------------ login (one-time admin session)
+    @classmethod
+    def login(cls, url: str, username: str, password: str, otp: str = "", fingerprint: str = "",
+              verify_ca: bool = False, timeout: int = 20) -> "PveClient":
+        """Ticket session with an administrator login - used once to create the API token.
+        The password is only sent to the server after its certificate was verified/pinned."""
+        client = cls(url, "", "", fingerprint=fingerprint, verify_ca=verify_ca, timeout=timeout, _login=True)
+        params = {"username": username, "password": password}
+        if otp:
+            params["otp"] = otp
+        data = client.post("access/ticket", **params) or {}
+        if data.get("NeedTFA"):
+            raise PveError("Für dieses Konto ist eine Zwei-Faktor-Anmeldung aktiv – bitte den TOTP-Code angeben "
+                           "oder ein Konto ohne 2FA verwenden")
+        if not data.get("ticket"):
+            raise PveError("Anmeldung fehlgeschlagen")
+        client.session.cookies.set("PVEAuthCookie", data["ticket"])
+        client.session.headers["CSRFPreventionToken"] = data.get("CSRFPreventionToken", "")
+        return client
+
+    def create_api_token(self, userid: str = "servermanager@pve", role: str = "PVEAdmin",
+                         token_name: str = "sm") -> tuple[str, str]:
+        users = {u.get("userid") for u in (self.get("access/users") or [])}
+        if userid not in users:
+            self.post("access/users", userid=userid, comment="Servermanager API")
+        self.put("access/acl", path="/", roles=role, users=userid)
+        data = self.post(f"access/users/{seg(userid)}/token/{seg(token_name)}", privsep=0,
+                         comment="Servermanager") or {}
+        if not data.get("value"):
+            raise PveError("Proxmox hat kein Token-Secret zurückgegeben")
+        return data.get("full-tokenid") or f"{userid}!{token_name}", data["value"]
+
+    # ------------------------------------------------------------------ qemu guest agent
+    def agent_ping(self, node: str, vmid: int) -> bool:
+        try:
+            self.post(f"nodes/{seg(node)}/qemu/{int(vmid)}/agent/ping")
+            return True
+        except PveError:
+            return False
+
+    def agent_exec(self, node: str, vmid: int, script: str, timeout: int = 120) -> tuple[int, str, str]:
+        """Run a shell script inside a VM via the QEMU guest agent."""
+        import time as _time
+        base = f"nodes/{seg(node)}/qemu/{int(vmid)}/agent"
+        res = self.post(f"{base}/exec", command=["/bin/sh", "-c", script]) or {}
+        pid = res.get("pid")
+        if pid is None:
+            raise PveError("Guest-Agent hat keinen Prozess gestartet")
+        deadline = _time.monotonic() + timeout
+        while _time.monotonic() < deadline:
+            st = self.get(f"{base}/exec-status", pid=pid) or {}
+            if st.get("exited"):
+                return int(st.get("exitcode", 0) or 0), st.get("out-data", ""), st.get("err-data", "")
+            _time.sleep(1)
+        raise PveError("Zeitüberschreitung beim Guest-Agent")
+
+    def agent_ipv4(self, node: str, vmid: int) -> str:
+        try:
+            data = self.get(f"nodes/{seg(node)}/qemu/{int(vmid)}/agent/network-get-interfaces") or {}
+        except PveError:
+            return ""
+        for iface in data.get("result", []):
+            if iface.get("name") == "lo":
+                continue
+            for a in iface.get("ip-addresses") or []:
+                if a.get("ip-address-type") == "ipv4" and not str(a.get("ip-address")).startswith("127."):
+                    return a["ip-address"]
+        return ""
+
+    # ------------------------------------------------------------------ cluster backup jobs
+    def backup_jobs(self) -> list[dict]:
+        try:
+            return self.get("cluster/backup") or []
+        except PveError:
+            return []
+
+    # ------------------------------------------------------------------ node network
+    def networks(self, node: str) -> list[dict]:
+        return self.get(f"nodes/{seg(node)}/network") or []
 
 
 def upid_node(upid: str) -> str:

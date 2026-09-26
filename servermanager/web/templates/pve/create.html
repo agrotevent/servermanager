@@ -87,6 +87,16 @@
         <div class="field"><label>&nbsp;</label>{{ chk('Pangolin-Anmeldung (SSO) vorschalten', 'pub_sso', True) }}</div>
       </div>
     {% endif %}
+    {% if all_pangolins %}
+    <hr>
+    {{ chk('Als Newt-Tunnel für Pangolin einrichten', 'newt', False, 'Installiert Newt als systemd-Dienst. Primärer und Backup-Tunnel sollten auf verschiedenen Proxmox-Hosts laufen.') }}
+    <div class="form-grid mt-1" data-show-for="newt=1">
+      <div class="field"><label>Pangolin</label><select name="newt_pangolin">{% for p in all_pangolins %}<option value="{{ p.id }}" {% if f.get('newt_pangolin') == p.id|string %}selected{% endif %}>{{ p.name }} ({{ p.role_label }})</option>{% endfor %}</select></div>
+      {{ field('Pangolin-Adresse (Endpoint)', 'newt_endpoint', f.get('newt_endpoint', ''), placeholder='https://pangolin.example.com') }}
+      {{ field('Newt-ID', 'newt_id', f.get('newt_id', ''), help='Pangolin → Sites → Site anlegen (Newt)') }}
+      {{ field('Newt-Secret', 'newt_secret', '', type='password', attrs='autocomplete="off"') }}
+    </div>
+    {% endif %}
   </div></div>
 </div>
 <div class="actions mt-1"><button class="btn primary">Container anlegen</button><a class="btn" href="{{ url_for('pve.server', pve_id=s.id, live=0) }}">Abbrechen</a></div>

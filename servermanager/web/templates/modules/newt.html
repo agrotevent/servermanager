@@ -1,0 +1,13 @@
+{% from "_macros.html" import empty with context %}
+{% include "modules/_panel_head.html" %}
+{% if data.mode is defined %}
+  {% if data.mode == 'none' %}{{ empty('Kein Newt-Dienst gefunden.', 'i-alert') }}{% else %}
+  <dl class="kv">
+    <dt>Betrieb</dt><dd>{{ 'systemd-Dienst' if data.mode == 'systemd' else 'Docker-Container' }}</dd>
+    <dt>Status</dt><dd><span class="badge {{ 'success' if data.active in ('active', 'running') else 'danger' }}"><span class="dot"></span>{{ data.active or '?' }}</span>{% if data.since %} <small class="muted">seit {{ data.since }}</small>{% endif %}</dd>
+    <dt>Version</dt><dd class="mono">{{ data.version or '–' }}</dd>
+    {% if data.endpoint %}<dt>Pangolin</dt><dd class="mono">{{ data.endpoint }}</dd>{% endif %}
+  </dl>
+  {% if data.log %}<h4 class="mt-1">Letzte Meldungen</h4><pre class="log small">{{ data.log|join('\n') }}</pre>{% endif %}
+  {% endif %}
+{% endif %}

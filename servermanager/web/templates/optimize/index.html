@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% set help_page = "bestand" %}
+{% from "_macros.html" import csrf, empty with context %}
+{% block title %}Optimierungen{% endblock %}
+{% block body_attrs %}{% if running %}data-autorefresh="5"{% endif %}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>Optimierungen</h1>
+    <p>Vorschläge für Proxmox, RouterOS, Pangolin und Systeme – Leitlinie: <strong>möglichst nur eine Public-IP</strong>, Dienste über Pangolin-Tunnel mit Backup-Weg. Umgesetzt wird nur, was du auswählst und bestätigst.</p></div>
+  <div class="actions">
+    <form method="post" action="{{ url_for('optimize.scan') }}" class="inline">{{ csrf() }}<button class="btn primary" {% if running %}disabled{% endif %}><svg class="icon"><use href="#i-refresh"/></svg>{{ 'Scan läuft …' if running else 'Jetzt scannen' }}</button></form>
+  </div>
+</div>
+{% if running %}<div class="alert info">Scan läuft (<a href="{{ url_for('jobs.detail', job_id=running.id) }}">Job #{{ running.id }}</a>) – die Seite aktualisiert sich automatisch.</div>{% endif %}
+{% if result.at %}
+<p class="muted">Letzter Scan: {{ result.at|replace('T', ' ') }}</p>
+{% for name, err in (result.errors or {}).items() %}<div class="alert danger">{{ name }} nicht erreichbar: {{ err }}</div>{% endfor %}
+<div class="stats">
+  <div class="stat"><div class="label">Vorschläge</div><div class="value">{{ summary.total }}</div></div>
+  <div class="stat {{ 'info' if summary.actionable }}"><div class="label">Automatisch umsetzbar</div><div class="value">{{ summary.actionable }}</div></div>
+  <div class="stat {{ 'danger' if summary.crit else 'success' }}"><div class="label">Kritisch</div><div class="value">{{ summary.crit }}</div></div>
+</div>
+{% if groups %}
+<form method="post" action="{{ url_for('optimize.confirm') }}">{{ csrf() }}
+<input type="hidden" name="scan_at" value="{{ result.at }}">
+{% for area, label, items in groups %}
+<div class="card">
+  <div class="card-head"><h2>{{ label }}</h2><span class="badge">{{ items|length }}</span></div>
+  <div class="card-body findings">
+  {% for idx, p in items %}
+    <div class="finding {{ 'st-missing' if p.severity == 'crit' else ('st-change' if p.severity == 'warn' else 'st-check') }} {{ 'crit' if p.severity == 'crit' }}">
+      <div class="finding-head">
+        {% if p.action %}<input type="checkbox" name="sel" value="{{ idx }}" title="auswählen">{% else %}<span class="cb-space"></span>{% endif %}
+        <span class="badge {{ {'crit': 'danger', 'warn': 'warning', 'info': 'info'}[p.severity] }}">{{ {'crit': 'kritisch', 'warn': 'empfohlen', 'info': 'Hinweis'}[p.severity] }}</span>
+        <strong class="grow">{{ p.title }}</strong>
+        <span class="badge outline">{{ p.obj.name }}</span>
+        {% if not p.action %}<span class="badge">manuell</span>{% endif %}
+      </div>
+      {% if p.detail %}<p>{{ p.detail }}</p>{% endif %}
+      {% if p.note %}<p class="muted"><small>{{ p.note }}</small></p>{% endif %}
+      {% if p.params.script and not p.action %}<pre class="mono small">{{ p.params.script|join('\n') }}</pre>{% endif %}
+      {% if p.action and p.inputs %}<div class="inline-form mt-1">
+        {% for inp in p.inputs %}
+          {% if inp.kind == 'bool' %}<label class="check"><input type="checkbox" name="in_{{ idx }}_{{ inp.name }}" value="1" {% if inp.default %}checked{% endif %}> {{ inp.label }}</label>
+          {% else %}<div class="field"><label>{{ inp.label }}</label><input type="text" name="in_{{ idx }}_{{ inp.name }}" value="{{ inp.default }}"></div>{% endif %}
+        {% endfor %}</div>{% endif %}
+    </div>
+  {% endfor %}
+  </div>
+</div>
+{% endfor %}
+<div class="card"><div class="card-body bulkbar">
+  <span class="count" data-bulk-count="input[name=sel]">Keine Auswahl</span>
+  <button class="btn primary">Auswahl prüfen …</button>
+</div></div>
+</form>
+{% else %}<div class="card"><div class="card-body">{{ empty('Keine Optimierungen gefunden – alles im Zielzustand.') }}</div></div>{% endif %}
+{% elif not running %}
+<div class="card"><div class="card-body">{{ empty('Noch kein Scan durchgeführt. „Jetzt scannen“ liest Proxmox, RouterOS und Pangolin ein (ändert nichts).', 'i-refresh') }}</div></div>
+{% endif %}
+{% endblock %}

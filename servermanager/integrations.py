@@ -84,10 +84,15 @@ def poll(db: Session, obj: Integration) -> list[dict]:
                 alerts.append({"key": "mem", "severity": "warn", "text": f"Arbeitsspeicher zu {data['mem_pct']} % belegt"})
         else:
             data = pangolin_overview(pangolin_client(obj))
+            others = [p for p in db.query(PangolinServer).filter(PangolinServer.id != obj.id).all()
+                      if p.role != obj.role and p.status == STATUS_ONLINE
+                      and any(x.get("online") for x in (p.data.get("sites") or []))]
+            fallback = (f" – Backup-Weg über {others[0].name} ist verfügbar" if others and obj.role == "primary"
+                        else (" – KEIN weiterer Weg verfügbar" if obj.role == "primary" else ""))
             for s in data["sites"]:
                 if not s["online"]:
                     alerts.append({"key": f"site:{s['id']}", "severity": "crit",
-                                   "text": f"Site {s['name']} (Newt) ist offline"})
+                                   "text": f"Site {s['name']} (Newt) ist offline{fallback}"})
         obj.cache = data
         obj.status = STATUS_ONLINE
         obj.status_message = ""

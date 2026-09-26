@@ -23,9 +23,16 @@ Die SSH-basierte Verwaltung des Proxmox-Hosts selbst (Paket-Updates, Upgrade-Pr�
    pveum user token add servermanager@pve sm --privsep 0
    ```
 
-   **Automatisch:** Ist der Proxmox-Host bereits als System (SSH) im Servermanager, diesen unter
-   *Verknüpfungen* auswählen, speichern und **Token per SSH einrichten** klicken. Der Servermanager legt
-   Benutzer und Token an, speichert das Secret verschlüsselt und pinnt das Host-Zertifikat.
+   **Automatisch:**
+   - *Management-Zugang per Admin-Anmeldung* (Bearbeiten): einmalige Anmeldung, z. B. mit `root@pam`
+     (optional mit 2FA-Code). Benutzer und Token werden über die API angelegt, das Passwort wird nicht
+     gespeichert.
+   - oder, wenn der Proxmox-Host bereits als System (SSH) im Servermanager ist: unter *Verknüpfungen*
+     auswählen, speichern und **Token per SSH einrichten** klicken. Der Servermanager legt Benutzer und
+     Token an, speichert das Secret verschlüsselt und pinnt das Host-Zertifikat.
+   - **Standort:** *Lokal* (gemeinsames Netz) oder *Hetzner* mit der VLAN-ID des vSwitch (4000–4091).
+     Die [Optimierungen](bestand.md) prüfen dann, ob jeder Node die vSwitch-Bridge (`vmbr<VLAN>`, MTU
+     1400) hat und die Gäste darin MTU 1400 verwenden.
 4. Optional: **RouterOS** (DHCP im Container-Netz) und **Pangolin** zuordnen – dann können neue
    Container ihre DHCP-Lease automatisch fixieren und direkt unter einer Domain veröffentlicht werden.
 
@@ -92,6 +99,15 @@ den laufenden Task danach weiter, ohne ihn erneut auszulösen.
 Ablauf des Jobs: Vorlage laden → Container anlegen → starten → auf die DHCP-Adresse warten → Lease
 fixieren → als System aufnehmen → veröffentlichen. Das Root-Passwort wird nach dem Anlegen aus dem
 Job entfernt.
+
+## Bestand übernehmen
+
+*Bestand übernehmen* listet alle Gäste mit IP, Bridge, Guest-Agent und Verwaltungsstatus. Ausgewählte
+Gäste bekommen einen Management-Zugang (SSH-Schlüssel per `pct exec` bzw. Guest-Agent, Hostkey gepinnt)
+und werden als Systeme aufgenommen – Details unter [Bestand übernehmen & Optimierungen](bestand.md).
+
+Beim Anlegen eines Containers kann er zusätzlich **als Newt-Tunnel** für einen Pangolin-Server
+eingerichtet werden (siehe [Pangolin](pangolin.md)).
 
 ## Verknüpfung mit Systemen
 

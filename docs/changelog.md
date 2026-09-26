@@ -2,6 +2,31 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.3.0 – 26.09.2026
+
+### Neu
+
+- **Bestand übernehmen:** vorhandene Container und VMs erhalten einen Management-Zugang (SSH-Schlüssel per
+  `pct exec` bzw. QEMU-Guest-Agent, Hostkeys sicher übernommen) und werden als Systeme aufgenommen.
+- **Management-Zugänge per einmaliger Admin-Anmeldung:** Proxmox-API-Token (auch mit 2FA-Code) und
+  RouterOS-API-Benutzer mit zufälligem Passwort und Adressbeschränkung – Admin-Passwörter werden nicht
+  gespeichert.
+- RouterOS: Reiter **Geräte** (DHCP + ARP, Portfreigaben, zugehörige Systeme).
+- **Optimierungen:** Scan über Proxmox, RouterOS und Pangolin mit Vorschlägen, Auswahl, Bestätigung und
+  Umsetzung als Job – u. a. Portfreigaben durch Pangolin ersetzen (Ziel: eine Public-IP), Backup-Weg
+  spiegeln, Autostart, Sicherungsjob, Disk, Guest-Agent, Leases statisch, Analyse-Ergebnisse des Routers.
+- **Zwei Pangolin-Server** (primär/Backup-Weg) mit eigenem Tunnel-Container, Übersicht *Alle
+  Veröffentlichungen* mit beiden Wegen, Failover-Hinweis in der Überwachung.
+- **Newt-Tunnel-Container:** Einrichtung als systemd-Dienst (auch direkt beim Anlegen eines Containers),
+  Modul mit Status, Neustart und Update; Prüfung, dass die Tunnel auf verschiedenen Proxmox-Hosts laufen
+  (sonst Migrationsvorschlag).
+- **Hetzner vSwitch:** Standort je Proxmox-Verbindung; Prüfung und Einrichtung der vSwitch-Bridge
+  (VLAN, MTU 1400) je Node und der MTU der Gäste.
+
+### Geändert
+
+- Datenbank-Schema Version 3.
+
 ## 1.2.0 – 26.09.2026
 
 ### Neu

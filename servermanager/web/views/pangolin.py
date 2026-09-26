@@ -4,10 +4,12 @@ from __future__ import annotations
 import re
 
 from flask import Blueprint, abort, flash, g, redirect, render_template, request, url_for
+from sqlalchemy import select
 
 from ... import access, integrations, security
 from ...core import audit
-from ...models import KIND_PANGOLIN, LEVEL_FULL, LEVEL_OPERATE, LEVEL_VIEW, PangolinServer, PveServer, System
+from ...models import (KIND_PANGOLIN, LEVEL_FULL, LEVEL_OPERATE, LEVEL_VIEW, PANGOLIN_ROLES, PangolinServer,
+                       PveServer, System)
 from ...pangolin import METHODS, ORG_RE, PROTOCOLS, SUBDOMAIN_RE, PangolinError
 from ..auth import admin_required, client_ip, login_required
 from . import _integration as common
@@ -49,6 +51,9 @@ def _save(pg: PangolinServer) -> list[str]:
     pg.default_site_id = int(site) if site.isdigit() else None
     dom = (f.get("default_domain_id") or "").strip()
     pg.default_domain_id = dom if re.match(r"^[A-Za-z0-9_-]{0,64}$", dom) else ""
+    pg.role = f.get("role") if f.get("role") in PANGOLIN_ROLES else "primary"
+    tsys = (f.get("tunnel_system_id") or "").strip()
+    pg.tunnel_system_id = int(tsys) if tsys.isdigit() and g.db.get(System, int(tsys)) else None
     return errors
 
 
@@ -60,7 +65,9 @@ def _form(pg: PangolinServer, is_new: bool):
             sites, domains = client.sites(), client.domains()
         except integrations.ApiError:
             pass
-    return render_template("pangolin/form.html", p=pg, is_new=is_new, sites=sites, domains=domains)
+    systems = g.db.execute(select(System).order_by(System.name)).scalars().all()
+    return render_template("pangolin/form.html", p=pg, is_new=is_new, sites=sites, domains=domains,
+                           roles=PANGOLIN_ROLES, systems=systems)
 
 
 @bp.route("/new", methods=["GET", "POST"])
@@ -142,6 +149,7 @@ def detail(pg_id: int):
         ctx["error"] = str(exc)
     integrations.poll(g.db, pg)
     g.db.commit()
+    ctx["tunnel"] = g.db.get(System, pg.tunnel_system_id) if pg.tunnel_system_id else None
     return render_template("pangolin/detail.html", **ctx)
 
 
@@ -250,3 +258,70 @@ def publish(pg_id: int):
         sites, domains = [], []
     return render_template("pangolin/publish.html", p=pg, f=f, sites=sites, domains=domains, methods=METHODS,
                            protocols=PROTOCOLS)
+
+
+# --------------------------------------------------------------------------
+# tunnel container (Newt)
+# --------------------------------------------------------------------------
+@bp.route("/<int:pg_id>/tunnel", methods=["GET", "POST"])
+@login_required
+def tunnel(pg_id: int):
+    from ... import pve as pvemod
+    from ...jobs import enqueue
+    from ..auth import can
+    pg = _get(pg_id, LEVEL_FULL)
+    systems = [s for s in g.db.execute(select(System).order_by(System.name)).scalars() if can(s.id, "full")]
+    if request.method == "POST":
+        sid = request.form.get("system_id", "")
+        system = g.db.get(System, int(sid)) if sid.isdigit() else None
+        if system is None or not can(system.id, "full"):
+            abort(403)
+        try:
+            newt = pvemod.clean_newt(request.form)
+        except pvemod.PveParamError as exc:
+            flash(str(exc), "danger")
+            return render_template("pangolin/tunnel.html", p=pg, systems=systems, f=request.form)
+        job = enqueue(g.db, kind="newt_setup", title=f"Newt für {pg.name} auf {system.name} einrichten", system=system,
+                      user=g.user, payload={"pangolin_id": pg.id, "newt": newt})
+        audit(g.db, g.user, "newt.setup_start", pg.name, system.name, ip=client_ip())
+        g.db.commit()
+        return redirect(url_for("jobs.detail", job_id=job.id))
+    return render_template("pangolin/tunnel.html", p=pg, systems=systems, f={})
+
+
+# --------------------------------------------------------------------------
+# all publications with primary and backup path
+# --------------------------------------------------------------------------
+@bp.get("/services")
+@login_required
+def services():
+    from ... import discovery
+    visible = common.visible(KIND_PANGOLIN)
+    if not visible:
+        abort(403)
+    data = discovery.services_map(g.db, visible)
+    backups = [p for p in visible if p.role == "backup"]
+    return render_template("pangolin/services.html", data=data, pangolins=visible, backups=backups)
+
+
+@bp.post("/services/mirror")
+@login_required
+def mirror():
+    """Publish a target also through the backup Pangolin (same subdomain, backup's default domain/site)."""
+    pg = _get(int(request.form.get("pangolin_id", "0") or 0), LEVEL_FULL)
+    client = _client(pg)
+    f = request.form
+    try:
+        if not pg.default_site_id or (f.get("protocol") == "http" and not pg.default_domain_id):
+            raise PangolinError(f"Für {pg.name} zuerst Standard-Site und -Domain festlegen")
+        proxy = int(f.get("proxy_port") or 0) or None
+        res = client.publish(f.get("name", "")[:100] or "dienst", f.get("protocol", "http"), pg.default_site_id,
+                             f.get("ip", ""), f.get("port", ""), f.get("method") or "http",
+                             (f.get("subdomain") or "").lower(), pg.default_domain_id, proxy,
+                             sso=bool(f.get("sso")))
+        audit(g.db, g.user, "pangolin.mirror", pg.name, f"{f.get('ip')}:{f.get('port')}", ip=client_ip())
+        g.db.commit()
+        flash(f"Backup-Weg angelegt: {res.get('fullDomain') or res.get('name')}", "success")
+    except (PangolinError, ValueError) as exc:
+        flash(f"Backup-Weg nicht angelegt: {exc}", "danger")
+    return redirect(url_for("pangolin.services"))

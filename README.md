@@ -14,7 +14,10 @@ einem MikroTik (RouterOS 7)** oder direkt per SSH für bestehende Systeme ohne T
   und Veröffentlichung über Pangolin)
 - RouterOS (z. B. CHR) über die API: DHCP, NAT, Routing/Mangle, DNS und Konfigurationsanalyse
   bestehender Router
-- Pangolin: Dienste aus dem internen Netz unter einer Domain veröffentlichen
+- Pangolin: Dienste aus dem internen Netz unter einer Domain veröffentlichen, mit Backup-Weg über einen
+  zweiten Pangolin-Server und Newt-Tunnel-Containern auf verschiedenen Hosts
+- Bestand übernehmen & Optimierungen: vorhandene Geräte einlesen, Management-Zugänge anlegen,
+  Verbesserungen nach Bestätigung umsetzen (Ziel: eine Public-IP)
 - Benutzerverwaltung mit Rollen und Rechten je System, Zwei-Faktor-Anmeldung, Audit-Log
 - Backup/Restore des Servermanagers (optional verschlüsselt) und Konfigurations-Backups der Systeme
 - Update des Servermanagers per Klick aus dem Git-Repository (mit automatischer Sicherung und Rollback)
@@ -64,6 +67,7 @@ dem Code gepflegt und mit jedem Update des Servermanagers aktualisiert.
 - [Update-Übersicht & Wartungsplaner](docs/updates-wartung.md)
 - [WireGuard & MikroTik](docs/wireguard.md)
 - [Benutzer und Rechte](docs/benutzer.md)
+- [Bestand übernehmen & Optimierungen](docs/bestand.md)
 - [Proxmox VE über die API](docs/proxmox.md)
 - [RouterOS (CHR) über die API](docs/routeros.md)
 - [Pangolin: Dienste veröffentlichen](docs/pangolin.md)

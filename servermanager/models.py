@@ -362,6 +362,8 @@ KIND_PVE = "pve"
 KIND_ROUTER = "router"
 KIND_PANGOLIN = "pangolin"
 INTEGRATION_KINDS = {KIND_PVE: "Proxmox VE", KIND_ROUTER: "RouterOS", KIND_PANGOLIN: "Pangolin"}
+PANGOLIN_ROLES = {"primary": "Primär", "backup": "Backup-Weg"}
+PVE_HOSTING = {"local": "Lokal (gemeinsames Netz)", "hetzner": "Hetzner (vSwitch)"}
 
 
 class IntegrationMixin:
@@ -403,6 +405,8 @@ class PveServer(IntegrationMixin, Base):
                                                      nullable=True)          # DHCP for new containers
     pangolin_id: Mapped[Optional[int]] = mapped_column(ForeignKey("pangolin_servers.id", ondelete="SET NULL"),
                                                        nullable=True)        # publishing of services
+    hosting: Mapped[str] = mapped_column(String(16), default="local")        # local | hetzner
+    vswitch_vlan: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # Hetzner vSwitch VLAN id
 
     system: Mapped[Optional[System]] = relationship(foreign_keys=[system_id])
 
@@ -437,6 +441,12 @@ class PangolinServer(IntegrationMixin, Base):
     api_key_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     default_site_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     default_domain_id: Mapped[str] = mapped_column(String(64), default="")
+    role: Mapped[str] = mapped_column(String(16), default="primary")          # primary | backup
+    tunnel_system_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # system running Newt
+
+    @property
+    def role_label(self) -> str:
+        return PANGOLIN_ROLES.get(self.role, self.role)
 
 
 class IntegrationAccess(Base):

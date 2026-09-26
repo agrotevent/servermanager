@@ -22,6 +22,11 @@ pveum user token add servermanager@pve sm --privsep 0</pre>
       Oder automatisch: Proxmox-Host als System verknüpfen, speichern und „Token per SSH einrichten“ klicken.
     </div>
   </div></div></div>
+  <div class="card"><div class="card-head"><h2>Standort</h2></div><div class="card-body"><div class="form-grid">
+    <div class="field"><label>Hosting</label><select name="hosting">{% for k, v in hostings.items() %}<option value="{{ k }}" {% if s.hosting == k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select>
+      <span class="help">Hetzner: Hosts sind über einen vSwitch (VLAN) verbunden; lokal: gemeinsames Netz.</span></div>
+    {{ field('vSwitch-VLAN (Hetzner)', 'vswitch_vlan', s.vswitch_vlan or '', type='number', placeholder='4000', help='VLAN-ID des vSwitch (4000–4091); MTU im vSwitch: 1400', attrs='min="4000" max="4091"') }}
+  </div></div></div>
   <div class="card"><div class="card-head"><h2>Verknüpfungen</h2></div><div class="card-body"><div class="form-grid">
     <div class="field full"><label>Proxmox-Host als System (SSH)</label>
       <select name="system_id"><option value="">– keins –</option>{% for x in pve_systems %}<option value="{{ x.id }}" {% if s.system_id == x.id %}selected{% endif %}>{{ x.name }} ({{ x.host }}){% if x.has_type('proxmox') %} · Proxmox{% endif %}</option>{% endfor %}</select>
@@ -38,6 +43,17 @@ pveum user token add servermanager@pve sm --privsep 0</pre>
 </form>
 {% if not is_new %}
 <div class="grid grid-2 mt-2">
+  <div class="card"><div class="card-head"><h2>Management-Zugang per Admin-Anmeldung</h2></div><div class="card-body">
+    <p>Legt mit einer <strong>einmaligen</strong> Anmeldung (z. B. <code>root@pam</code>) den Benutzer <code>servermanager@pve</code> und ein API-Token an. Das Passwort wird nicht gespeichert und erst nach Prüfung des Zertifikats übertragen.</p>
+    {% if not s.fingerprint and not s.verify_ca %}<div class="alert warning">Zuerst oben den Zertifikats-Fingerabdruck hinterlegen und speichern.</div>{% endif %}
+    <form method="post" action="{{ url_for('pve.mgmt_login', pve_id=s.id) }}" class="form-grid" autocomplete="off">{{ csrf() }}
+      {{ field('Admin-Benutzer', 'username', 'root@pam', required=True) }}
+      {{ field('Passwort', 'password', '', type='password', required=True, attrs='autocomplete="off"') }}
+      {{ field('2FA-Code (falls aktiv)', 'otp', '', attrs='autocomplete="one-time-code" inputmode="numeric"') }}
+      <div class="field"><label>Rolle des Tokens</label><select name="role"><option value="PVEAdmin">PVEAdmin (empfohlen)</option><option value="Administrator">Administrator</option><option value="PVEAuditor">PVEAuditor (nur lesen)</option></select></div>
+      <div class="full"><button class="btn primary">Token anlegen</button></div>
+    </form>
+  </div></div>
   <div class="card"><div class="card-head"><h2>Token per SSH einrichten</h2></div><div class="card-body">
     {% if s.system_id %}
     <p>Legt auf dem verknüpften Host den Benutzer <code>servermanager@pve</code> und ein neues API-Token an, speichert es verschlüsselt und pinnt das Zertifikat des Hosts.</p>

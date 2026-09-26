@@ -260,7 +260,34 @@ def build_create(form: dict) -> dict:
             raise PveParamError("Pangolin-Domain wählen")
         p["publish"] = {"subdomain": sub, "port": port, "method": method, "domain_id": domain, "site_id": site,
                         "sso": bool(f.get("pub_sso"))}
+    p["newt"] = None
+    if f.get("newt"):
+        if not p["register"]:
+            raise PveParamError("Für den Newt-Tunnel muss der Container als System verwaltet werden")
+        p["newt"] = clean_newt(f)
+        pid = f.get("newt_pangolin", "")
+        p["newt"]["pangolin_id"] = int(pid) if str(pid).isdigit() else None
     return p
+
+
+NEWT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
+NEWT_SECRET_RE = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
+
+
+def clean_newt(f: dict) -> dict:
+    """Newt credentials from a form (the secret is encrypted right away)."""
+    from urllib.parse import urlsplit
+    nid = (f.get("newt_id") or "").strip()
+    secret = (f.get("newt_secret") or "").strip()
+    endpoint = (f.get("newt_endpoint") or "").strip().rstrip("/")
+    if not NEWT_ID_RE.match(nid):
+        raise PveParamError("Newt-ID angeben (aus Pangolin: Site anlegen → Newt)")
+    if not NEWT_SECRET_RE.match(secret):
+        raise PveParamError("Newt-Secret angeben")
+    parts = urlsplit(endpoint)
+    if parts.scheme != "https" or not parts.hostname or parts.path not in ("", "/") or parts.username:
+        raise PveParamError("Pangolin-Endpoint als https://pangolin.example.com angeben")
+    return {"id": nid, "secret_enc": security.encrypt(secret), "endpoint": endpoint}
 
 
 def create_params(p: dict) -> dict:

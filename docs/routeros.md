@@ -36,10 +36,16 @@ Auf dem Router einen eigenen Benutzer anlegen (Zugriff nur aus dem Management-Ne
 
 Dann **Router hinzufügen**: REST-Adresse (z. B. `https://10.66.0.1`), Benutzer, Passwort.
 
+**Einfacher:** den Router zunächst mit einem vorhandenen Admin-Zugang hinzufügen und unter *Bearbeiten →
+API-Benutzer per Admin-Anmeldung* den Benutzer `servermanager` automatisch anlegen lassen (zufälliges
+Passwort, beschränkt auf die Management-Adressen). Das Admin-Passwort wird dafür nur einmal verwendet
+und nicht gespeichert.
+
 ## Reiter
 
 | Reiter | Inhalt | Aktionen |
 |---|---|---|
+| Geräte | alle Geräte im Netz (DHCP-Leases + ARP) mit Lease-Art, Portfreigaben und zugehörigem System | Lease statisch machen, als System anlegen |
 | Übersicht | CPU, RAM, Laufzeit, Interfaces mit Traffic, Adressen, Routen | Ping-Test vom Router (optional mit LAN-IP als Quelle – prüft NAT/Policy-Routing) |
 | DHCP | Leases, Server, Netze | Lease **statisch machen**, statische Lease anlegen/löschen |
 | NAT | alle NAT-Regeln | aktivieren/deaktivieren, Portweiterleitung anlegen, löschen |

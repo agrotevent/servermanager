@@ -7,7 +7,7 @@ from sqlalchemy import select
 from ... import access, integrations, pve, security, sshkeys
 from ...core import audit
 from ...jobs import enqueue
-from ...models import (KIND_PANGOLIN, KIND_PVE, LEVEL_FULL, LEVEL_OPERATE, LEVEL_VIEW, Job,
+from ...models import (KIND_PANGOLIN, KIND_PVE, LEVEL_FULL, PVE_HOSTING, LEVEL_OPERATE, LEVEL_VIEW, Job,
                        PangolinServer, PveServer, RouterDevice, System)
 from ...pveapi import TOKEN_ID_RE, PveError
 from ...schedules import get_tz
@@ -47,6 +47,7 @@ def _form_ctx(server: PveServer) -> dict:
         "pve_systems": g.db.execute(select(System).order_by(System.name)).scalars().all(),
         "routers": g.db.execute(select(RouterDevice).order_by(RouterDevice.name)).scalars().all(),
         "pangolins": g.db.execute(select(PangolinServer).order_by(PangolinServer.name)).scalars().all(),
+        "hostings": PVE_HOSTING,
     }
 
 
@@ -61,6 +62,11 @@ def _save(server: PveServer) -> list[str]:
     server.token_id = token_id
     if f.get("token_secret"):
         server.token_secret_enc = security.encrypt(f["token_secret"].strip())
+    server.hosting = f.get("hosting") if f.get("hosting") in PVE_HOSTING else "local"
+    vlan = (f.get("vswitch_vlan") or "").strip()
+    if vlan and (not vlan.isdigit() or not 4000 <= int(vlan) <= 4091):
+        errors.append("vSwitch-VLAN: Hetzner vergibt IDs von 4000 bis 4091.")
+    server.vswitch_vlan = int(vlan) if vlan.isdigit() else None
     for attr, model, key in (("system_id", System, "system_id"), ("router_id", RouterDevice, "router_id"),
                              ("pangolin_id", PangolinServer, "pangolin_id")):
         raw = f.get(key, "")
@@ -154,6 +160,63 @@ def token_setup(pve_id: int):
     audit(g.db, g.user, "pve.token_setup", server.name, system.name, ip=client_ip())
     g.db.commit()
     return redirect(url_for("jobs.detail", job_id=job.id))
+
+
+@bp.post("/<int:pve_id>/mgmt-login")
+@admin_required
+def mgmt_login(pve_id: int):
+    """Create the API token with a one-time administrator login (the password is not stored)."""
+    from ... import mgmt
+    server = _get(pve_id, LEVEL_FULL)
+    f = request.form
+    try:
+        token_id = mgmt.pve_token_via_login(server, f.get("username", "").strip(), f.get("password", ""),
+                                            f.get("otp", "").strip(), f.get("role", "PVEAdmin"))
+    except mgmt.MgmtError as exc:
+        g.db.rollback()
+        flash(f"Token konnte nicht angelegt werden: {exc}", "danger")
+        return redirect(url_for("pve.edit", pve_id=pve_id))
+    audit(g.db, g.user, "pve.token_login", server.name, token_id, ip=client_ip())
+    integrations.poll(g.db, server)
+    g.db.commit()
+    flash(f"API-Token {token_id} angelegt und gespeichert. Das Admin-Passwort wurde nicht gespeichert.", "success")
+    return redirect(url_for("pve.server", pve_id=pve_id))
+
+
+@bp.route("/<int:pve_id>/import", methods=["GET", "POST"])
+@login_required
+def import_guests(pve_id: int):
+    """Existing guests: create management access and register them as systems."""
+    from ... import discovery
+    server = _get(pve_id, LEVEL_FULL)
+    if not g.user.can_add_systems:
+        abort(403)
+    if request.method == "POST":
+        keys = set(request.form.getlist("guest"))
+        inv = {f"{x['node']}/{x['type']}/{x['vmid']}": x for x in server.data.get("guests", [])}
+        items = []
+        for k in keys:
+            x = inv.get(k)
+            if x is None:
+                continue
+            items.append({"node": x["node"], "type": x["type"], "vmid": x["vmid"], "name": x["name"],
+                          "ip": request.form.get(f"ip_{x['vmid']}", "").strip()})
+        if not items:
+            flash("Keine Gäste ausgewählt.", "warning")
+            return redirect(url_for("pve.import_guests", pve_id=pve_id))
+        job = enqueue(g.db, kind="pve_import", title=f"Bestand übernehmen: {len(items)} Gast/Gäste – {server.name}",
+                      user=g.user, pve_id=server.id,
+                      payload={"items": items, "install_ssh": bool(request.form.get("install_ssh"))})
+        audit(g.db, g.user, "pve.import_start", server.name, ",".join(str(i["vmid"]) for i in items), ip=client_ip())
+        g.db.commit()
+        return redirect(url_for("jobs.detail", job_id=job.id))
+    error = None
+    rows = []
+    try:
+        rows = discovery.pve_inventory(g.db, server)
+    except (PveError, ValueError) as exc:
+        error = str(exc)
+    return render_template("pve/import.html", s=server, rows=rows, error=error)
 
 
 @bp.post("/<int:pve_id>/refresh")
@@ -392,4 +455,6 @@ def create(pve_id: int):
             ctx["pg_error"] = str(exc)
     if server.router_id:
         ctx["router"] = g.db.get(RouterDevice, server.router_id)
+    ctx["all_pangolins"] = [p for p in g.db.execute(select(PangolinServer).order_by(PangolinServer.name)).scalars()
+                            if common.can(KIND_PANGOLIN, p.id, LEVEL_FULL)]
     return render_template("pve/create.html", **ctx)

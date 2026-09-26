@@ -67,6 +67,8 @@ def detect_types(facts: dict) -> list[str]:
         types.append("ispconfig")
     if facts.get("pve_version"):
         types.append("proxmox")
+    if facts.get("newt_version"):
+        types.append("newt")
     return types
 
 

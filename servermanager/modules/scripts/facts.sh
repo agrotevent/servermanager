@@ -89,6 +89,13 @@ if command -v pveversion >/dev/null 2>&1; then
     kv pve_version "$(pveversion 2>/dev/null | cut -d/ -f2)"
     kv pve_guests "$( (qm list 2>/dev/null | tail -n +2; pct list 2>/dev/null | tail -n +2) | wc -l)"
 fi
+if [ -x /usr/local/bin/newt ] || command -v newt >/dev/null 2>&1; then
+    kv newt_version "$( (newt --version 2>/dev/null || /usr/local/bin/newt --version 2>/dev/null) | head -n 1 | tr -d '\r')"
+    kv newt_active "$(systemctl is-active newt 2>/dev/null)"
+elif command -v docker >/dev/null 2>&1 && docker ps -a --format '{{.Image}}' 2>/dev/null | grep -q 'fosrl/newt'; then
+    kv newt_version "docker"
+    kv newt_active "$(docker ps --format '{{.Image}}' 2>/dev/null | grep -q 'fosrl/newt' && echo active || echo inactive)"
+fi
 ispc=/usr/local/ispconfig/server/lib/config.inc.php
 if [ -f "$ispc" ]; then
     kv ispconfig_version "$(grep -oE "ISPC_APP_VERSION', *'[^']+" "$ispc" | sed "s/.*'//")"

@@ -5,8 +5,10 @@
 {% block title %}{{ p.name }} · Pangolin{% endblock %}
 {% block content %}
 <div class="page-head">
-  <div class="grow"><h1>{{ p.name }} {{ int_status(p) }}</h1><p>{{ p.api_url }} · Organisation {{ p.org_id }}</p></div>
+  <div class="grow"><h1>{{ p.name }} {{ int_status(p) }} <span class="badge {{ 'info' if p.role == 'backup' else 'primary' }}">{{ p.role_label }}</span></h1><p>{{ p.api_url }} · Organisation {{ p.org_id }}{% if tunnel %} · Tunnel-Container <a href="{{ url_for('systems.detail', system_id=tunnel.id) }}">{{ tunnel.name }}</a>{% endif %}</p></div>
   <div class="actions">
+    <a class="btn" href="{{ url_for('pangolin.services') }}">Alle Veröffentlichungen</a>
+    {% if int_can('pangolin', p.id, 'full') %}<a class="btn" href="{{ url_for('pangolin.tunnel', pg_id=p.id) }}">Tunnel-Container einrichten</a>{% endif %}
     {% if int_can('pangolin', p.id, 'full') %}<a class="btn primary" href="{{ url_for('pangolin.publish', pg_id=p.id) }}"><svg class="icon"><use href="#i-cloud"/></svg>Dienst veröffentlichen</a>{% endif %}
     {% if user.is_admin %}<a class="btn ghost" href="{{ url_for('pangolin.edit', pg_id=p.id) }}"><svg class="icon"><use href="#i-edit"/></svg>Bearbeiten</a>{% endif %}
   </div>

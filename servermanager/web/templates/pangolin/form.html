@@ -12,6 +12,10 @@
     {{ conn_fields(p, 'API-Adresse', 'https://api.pangolin.example.com/v1', 'Adresse der Integration-API (Standard-Pfad /v1).', 'Bei Let’s-Encrypt-Zertifikat statt Fingerabdruck die CA-Prüfung verwenden.') }}
   </div></div></div>
   <div class="card"><div class="card-head"><h2>Zugang</h2></div><div class="card-body"><div class="form-grid">
+    <div class="field"><label>Rolle</label><select name="role">{% for k, v in roles.items() %}<option value="{{ k }}" {% if p.role == k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select>
+      <span class="help">Backup-Weg: zweiter Pangolin-Server mit eigenem Tunnel-Container, falls der primäre ausfällt.</span></div>
+    <div class="field"><label>Tunnel-Container (Newt)</label><select name="tunnel_system_id"><option value="">– nicht zugeordnet –</option>{% for x in systems %}<option value="{{ x.id }}" {% if p.tunnel_system_id == x.id %}selected{% endif %}>{{ x.name }}{% if x.has_type('newt') %} · Newt{% endif %}</option>{% endfor %}</select>
+      <span class="help">System, auf dem der Newt-Client dieser Site läuft.</span></div>
     {{ field('Organisations-ID', 'org_id', p.org_id, required=True, placeholder='meine-org') }}
     {{ field('API-Schlüssel', 'api_key', '', type='password', help=('Hinterlegt – leer lassen, um ihn zu behalten' if p.api_key_enc else 'Pangolin → Organisation → API-Schlüssel; Rechte für Sites, Domains, Resources und Targets'), attrs='autocomplete="new-password"') }}
     <div class="field"><label>Standard-Site (Newt)</label>

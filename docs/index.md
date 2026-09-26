@@ -16,7 +16,9 @@ einem MikroTik (RouterOS 7)** oder direkt per SSH für bestehende Systeme ohne T
 - **RouterOS über die API** (z. B. CHR mit öffentlicher IP): DHCP/Leases, NAT, Routing, DNS und eine
   Konfigurationsanalyse für bestehende Router (NAT/Mangle/Policy-Routing, Firewall, Dienste)
 - **Pangolin**: Dienste aus dem internen Netz per Domain und Ziel-IP:Port veröffentlichen, Newt-Sites
-  überwachen
+  überwachen – mit zweitem Pangolin-Server als Backup-Weg und Tunnel-Containern auf verschiedenen Hosts
+- **Bestand übernehmen & Optimierungen**: vorhandene Geräte einlesen, Management-Zugänge anlegen,
+  Verbesserungen vorschlagen und nach Bestätigung umsetzen – Ziel: nur eine Public-IP
 - Benutzerverwaltung mit Rollen und Rechten je System, Zwei-Faktor-Anmeldung, Audit-Log
 - Backup/Restore des Servermanagers (optional verschlüsselt) und Konfigurations-Backups der Systeme
 - Update des Servermanagers per Klick aus dem Git-Repository (mit automatischer Sicherung und Rollback)

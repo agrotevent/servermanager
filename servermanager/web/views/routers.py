@@ -20,7 +20,7 @@ MAC_RE = re.compile(r"^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$")
 NAME_RE = re.compile(r"^[A-Za-z0-9._<>-]{1,64}$")
 DNSNAME_RE = re.compile(r"^(?=.{1,253}$)[A-Za-z0-9*_-]{1,63}(\.[A-Za-z0-9_-]{1,63})*$")
 PORTS_RE = re.compile(r"^[0-9]{1,5}(-[0-9]{1,5})?(,[0-9]{1,5}(-[0-9]{1,5})?)*$")
-TABS = {"overview": "Übersicht", "dhcp": "DHCP", "nat": "NAT", "routing": "Routing & Mangle",
+TABS = {"overview": "Übersicht", "devices": "Geräte", "dhcp": "DHCP", "nat": "NAT", "routing": "Routing & Mangle",
         "firewall": "Firewall", "dns": "DNS", "analysis": "Konfigurationsanalyse"}
 
 
@@ -82,7 +82,8 @@ def _save(router: RouterDevice) -> list[str]:
 
 
 def _form(router: RouterDevice, is_new: bool):
-    return render_template("routers/form.html", r=router, is_new=is_new)
+    allowed = settings.get(g.db, "wg.network") if settings.get(g.db, "wg.enabled") else ""
+    return render_template("routers/form.html", r=router, is_new=is_new, allowed_default=allowed)
 
 
 @bp.route("/new", methods=["GET", "POST"])
@@ -152,6 +153,28 @@ def delete(router_id: int):
     return redirect(url_for("routers.index"))
 
 
+@bp.post("/<int:router_id>/mgmt-user")
+@admin_required
+def mgmt_user(router_id: int):
+    """Create a dedicated API user with a one-time admin login (the admin password is not stored)."""
+    from ... import mgmt
+    router = _get(router_id, LEVEL_FULL)
+    f = request.form
+    try:
+        name = mgmt.router_mgmt_user(router, f.get("admin_user", "").strip(), f.get("admin_password", ""),
+                                     f.get("allowed", ""), with_backup=bool(f.get("with_backup")))
+    except mgmt.MgmtError as exc:
+        g.db.rollback()
+        flash(f"API-Benutzer konnte nicht angelegt werden: {exc}", "danger")
+        return redirect(url_for("routers.edit", router_id=router_id))
+    audit(g.db, g.user, "router.mgmt_user", router.name, name, ip=client_ip())
+    integrations.poll(g.db, router)
+    g.db.commit()
+    flash(f"API-Benutzer „{name}“ mit zufälligem Passwort angelegt und hinterlegt. Das Admin-Passwort wurde nicht "
+          "gespeichert.", "success")
+    return redirect(url_for("routers.detail", router_id=router_id))
+
+
 @bp.post("/<int:router_id>/refresh")
 @login_required
 def refresh(router_id: int):
@@ -184,6 +207,12 @@ def detail(router_id: int):
     ctx: dict = {"r": router, "tab": tab, "tabs": TABS, "d": {}, "error": None}
     if tab == "analysis":
         ctx.update(_analysis_ctx(router))
+    elif tab == "devices":
+        from ... import discovery
+        try:
+            ctx["devices"] = discovery.router_devices(g.db, router)
+        except (MikroTikError, ValueError) as exc:
+            ctx["error"] = str(exc)
     else:
         try:
             mt = _mt(router)

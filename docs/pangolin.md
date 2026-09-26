@@ -57,6 +57,46 @@ Schutz (Anmeldung/öffentlich) und Status. Je Dienst:
 - Pangolin-Anmeldung ein-/ausschalten, Ziele hinzufügen/entfernen (mehrere Ziele = Lastverteilung),
   Veröffentlichung entfernen (Vollzugriff).
 
+## Zwei Pangolin-Server: primärer und Backup-Weg
+
+Es können mehrere Pangolin-Server eingebunden werden. Jeder bekommt eine **Rolle**:
+
+- **Primär** – der normale Weg von außen.
+- **Backup-Weg** – ein zweiter Pangolin-Server mit **eigenem Tunnel-Container (Newt)**, falls der primäre
+  Server oder sein Tunnel ausfällt.
+
+Einrichtung:
+
+1. Beide Pangolin-Server hinzufügen, Rolle festlegen, je Standard-Site und -Domain wählen.
+2. Je Server einen **Tunnel-Container** einrichten (siehe unten) – **auf verschiedenen Proxmox-Hosts**.
+3. Dienste auf dem primären Server veröffentlichen und unter *Alle Veröffentlichungen* mit **Backup-Weg
+   anlegen** zusätzlich über den Backup-Server veröffentlichen. Er verwendet dieselbe Subdomain unter
+   seiner eigenen Domain, z. B. `cloud.example.com` (primär) und `cloud.backup-example.net` (Backup).
+   Die [Optimierungen](bestand.md) schlagen das für alle Dienste ohne Backup-Weg vor.
+
+*Alle Veröffentlichungen* zeigt je internem Ziel (IP:Port) beide Wege mit Domain, Schutz und Status.
+Fällt der primäre Tunnel aus, meldet die Überwachung das zusammen mit dem Hinweis, ob der Backup-Weg
+verfügbar ist.
+
+> Ein automatisches Umschalten der primären Domain (DNS-Failover) gehört nicht zum Servermanager – im
+> Störfall sind die Dienste über die Backup-Domain erreichbar.
+
+## Tunnel-Container (Newt)
+
+Der Newt-Client läuft am besten in einem eigenen kleinen Debian-LXC je Pangolin-Server:
+
+- **Neu anlegen:** *Proxmox → Container anlegen* → Option **„Als Newt-Tunnel einrichten“**: Pangolin
+  wählen, Endpoint (Adresse des Pangolin-Dashboards), Newt-ID und Secret (in Pangolin: *Sites → Site
+  hinzufügen → Newt*) eingeben. Container, System, Newt-Dienst und Zuordnung entstehen in einem Job.
+- **Vorhandenes System:** *Pangolin → Tunnel-Container einrichten*: installiert Newt als systemd-Dienst
+  (`/usr/local/bin/newt`, Zugangsdaten root-only in `/etc/newt/newt.env`) und ordnet das System zu.
+- Bestehende Newt-Installationen (systemd oder Docker-Container `fosrl/newt`) werden bei der
+  Komponentenerkennung gefunden. Die Zuordnung erfolgt unter *Pangolin → Bearbeiten → Tunnel-Container*.
+
+Auf der System-Seite zeigt der Reiter *Newt* Status, Version und letzte Meldungen, mit *Neu starten* und
+*Aktualisieren*. Der Servermanager prüft, dass die Tunnel-Container der Pangolin-Server nicht auf
+demselben Proxmox-Host laufen, und schlägt sonst eine Migration vor.
+
 ## Überwachung
 
 Ist eine Site offline (Newt-Client nicht verbunden), meldet der Servermanager eine Warnung – alle

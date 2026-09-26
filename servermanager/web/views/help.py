@@ -26,6 +26,7 @@ PAGES: list[tuple[str, str, str]] = [
     ("updates-wartung", "Update-Übersicht & Wartungsplaner", "Verwaltung"),
     ("wireguard", "WireGuard & MikroTik", "Verwaltung"),
     ("benutzer", "Benutzer und Rechte", "Verwaltung"),
+    ("bestand", "Bestand übernehmen & Optimierungen", "Infrastruktur"),
     ("proxmox", "Proxmox VE über die API", "Infrastruktur"),
     ("routeros", "RouterOS (CHR) über die API", "Infrastruktur"),
     ("pangolin", "Pangolin: Dienste veröffentlichen", "Infrastruktur"),

@@ -68,11 +68,25 @@ class State:
                              "net0": "name=eth0,bridge=vmbr1,hwaddr=BC:24:11:00:00:64,ip=dhcp", "unprivileged": 1,
                              "rootfs": "local-lvm:vm-100-disk-0,size=2G", "ostype": "debian"},
                   "snapshots": [], "ip": "10.20.0.100"},
+            101: {"vmid": 101, "name": "wiki", "type": "lxc", "node": "pve1", "status": "running", "cpu": 0.01,
+                  "maxcpu": 1, "mem": 100 * 2 ** 20, "maxmem": 512 * 2 ** 20, "disk": 0.5 * 2 ** 30,
+                  "maxdisk": 4 * 2 ** 30, "uptime": 100, "netin": 0, "netout": 0,
+                  "config": {"hostname": "wiki", "cores": 1, "memory": 512, "onboot": 0, "unprivileged": 1,
+                             "net0": "name=eth0,bridge=vmbr4000,hwaddr=BC:24:11:00:00:65,ip=dhcp"},
+                  "snapshots": [], "ip": "10.20.0.101"},
             200: {"vmid": 200, "name": "win", "type": "qemu", "node": "pve1", "status": "stopped", "cpu": 0,
                   "maxcpu": 2, "mem": 0, "maxmem": 4 * 2 ** 30, "disk": 0, "maxdisk": 32 * 2 ** 30, "uptime": 0,
                   "config": {"name": "win", "cores": 2, "memory": 4096}, "snapshots": []},
         }
         self.templates = ["local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst"]
+        self.backup_jobs: list[dict] = []
+        self.networks = {n: [{"iface": "vmbr0", "type": "bridge", "bridge_ports": "enp0s31f6", "active": 1},
+                             {"iface": "vmbr1", "type": "bridge", "bridge_ports": "", "active": 1},
+                             {"iface": "enp0s31f6", "type": "eth", "active": 1}] for n in ("pve1", "pve2")}
+        self.pve_users: dict[str, dict] = {"root@pam": {"userid": "root@pam"}}
+        self.acl: list[dict] = []
+        self.tokens: dict[str, str] = {}
+        self.agent_hostkeys = "SM_HOSTKEY ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockHostKeyForTestsOnly0000000000000000"
         self.tasks: dict[str, dict] = {}
         self.next_task = 1
         # ---------------- routeros
@@ -157,9 +171,20 @@ class MockApp:
 
     # ------------------------------------------------------------------ proxmox
     def pve(self, req: Request, path: str) -> Response:
-        if req.headers.get("Authorization") != f"PVEAPIToken={PVE_TOKEN}={PVE_SECRET}":
-            return Response("no ticket", 401)
         s = self.s
+        if path == "access/ticket" and req.method == "POST":
+            f0 = _form(req)
+            if f0.get("username") == "root@pam" and f0.get("password") == "rootpw":
+                return _json({"data": {"ticket": "PVE:root@pam:TICKET", "CSRFPreventionToken": "CSRF1",
+                                       "username": "root@pam"}})
+            return Response("authentication failure", 401)
+        auth = req.headers.get("Authorization", "")
+        token_ok = auth == f"PVEAPIToken={PVE_TOKEN}={PVE_SECRET}" or any(
+            auth == f"PVEAPIToken={tid}={sec}" for tid, sec in s.tokens.items())
+        ticket_ok = req.cookies.get("PVEAuthCookie") == "PVE:root@pam:TICKET" and (
+            req.method == "GET" or req.headers.get("CSRFPreventionToken") == "CSRF1")
+        if not (token_ok or ticket_ok):
+            return Response("no ticket", 401)
         p = path.strip("/").split("/")
         f = _form(req)
         ok = lambda d: _json({"data": d})  # noqa: E731
@@ -171,10 +196,33 @@ class MockApp:
             return ok(str(max(s.guests) + 1))
         if path == "pools":
             return ok([{"poolid": "kunden"}])
+        if path == "access/users":
+            if req.method == "POST":
+                s.pve_users[f["userid"]] = {"userid": f["userid"]}
+                return ok(None)
+            return ok(list(s.pve_users.values()))
+        if path == "access/acl" and req.method == "PUT":
+            s.acl.append(dict(f))
+            return ok(None)
+        if len(p) == 5 and p[:2] == ["access", "users"] and p[3] == "token" and req.method == "POST":
+            tid = f"{p[2]}!{p[4]}"
+            s.tokens[tid] = "sec-" + p[4]
+            return ok({"full-tokenid": tid, "value": s.tokens[tid]})
+        if path == "cluster/backup":
+            if req.method == "POST":
+                job = {"id": f"backup-{len(s.backup_jobs) + 1}", **f}
+                s.backup_jobs.append(job)
+                return ok(None)
+            return ok(s.backup_jobs)
+        if len(p) == 3 and p[:2] == ["cluster", "backup"] and req.method == "PUT":
+            for j in s.backup_jobs:
+                if j["id"] == p[2]:
+                    j.update(f)
+            return ok(None)
         if path == "cluster/resources":
-            items = [{"type": "node", "node": "pve1", "status": "online", "cpu": 0.05, "maxcpu": 8,
-                      "mem": 8 * 2 ** 30, "maxmem": 32 * 2 ** 30, "disk": 10 * 2 ** 30, "maxdisk": 100 * 2 ** 30,
-                      "uptime": 86400},
+            items = [{"type": "node", "node": n, "status": "online", "cpu": 0.05, "maxcpu": 8,
+                      "mem": m * 2 ** 30, "maxmem": 32 * 2 ** 30, "disk": 10 * 2 ** 30, "maxdisk": 100 * 2 ** 30,
+                      "uptime": 86400} for n, m in (("pve1", 8), ("pve2", 4))] + [
                      {"type": "storage", "node": "pve1", "storage": "local", "status": "available",
                       "disk": 20 * 2 ** 30, "maxdisk": 100 * 2 ** 30, "content": "vztmpl,backup,iso",
                       "plugintype": "dir"},
@@ -184,10 +232,10 @@ class MockApp:
             for g in s.guests.values():
                 items.append({k: v for k, v in g.items() if k not in ("config", "snapshots", "ip")})
             return ok(items)
-        if len(p) < 2 or p[0] != "nodes" or p[1] != "pve1":
+        if len(p) < 2 or p[0] != "nodes" or p[1] not in ("pve1", "pve2"):
             return _json({"errors": {"node": "unknown"}}, 400)
         rest = p[2:]
-        node = "pve1"
+        node = p[1]
         if rest == ["status"]:
             return ok({"cpu": 0.05, "uptime": 86400})
         if rest == ["storage"]:
@@ -210,8 +258,12 @@ class MockApp:
             return ok(s.task(node, "download", "", [f"downloading {f['template']}", "download finished"],
                              lambda: s.templates.append(vol)))
         if rest == ["network"]:
-            return ok([{"iface": "vmbr0", "type": "bridge"}, {"iface": "vmbr1", "type": "bridge"},
-                       {"iface": "eno1", "type": "eth"}])
+            if req.method == "POST":
+                s.networks[node].append({k: v for k, v in f.items()})
+                return ok(None)
+            if req.method == "PUT":
+                return ok(s.task(node, "srvreload", "", ["ifreload -a"]))
+            return ok(s.networks[node])
         if rest == ["rrddata"]:
             return ok(self._rrd(None))
         if rest == ["vzdump"]:
@@ -252,6 +304,8 @@ class MockApp:
                 return ok(s.task(node, "vzcreate", vmid, ["extracting archive", "Creating SSH host keys"], done))
             vmid = int(rest[1])
             g = s.guests.get(vmid)
+            if g is not None and g["node"] != node:
+                g = None
             if g is None or g["type"] != gtype:
                 return _json({"errors": {"vmid": f"CT {vmid} does not exist"}}, 500)
             sub = rest[2:]
@@ -297,6 +351,22 @@ class MockApp:
                 return ok(s.task(node, "vzrollback", vmid, ["rollback"]))
             if sub == ["resize"]:
                 return ok(s.task(node, "resize", vmid, [f"resize {f.get('size')}"]))
+            if sub == ["migrate"]:
+                return ok(s.task(node, "vzmigrate", vmid, [f"migrate to {f['target']}"],
+                                 lambda: g.__setitem__("node", f["target"])))
+            if sub[:1] == ["agent"]:
+                if sub == ["agent", "ping"]:
+                    return ok(None) if g["config"].get("agent") in (1, "1") else \
+                        _json({"errors": {"agent": "QEMU guest agent is not running"}}, 500)
+                if sub == ["agent", "exec"]:
+                    g["_exec"] = req.form.getlist("command")
+                    return ok({"pid": 4711})
+                if sub == ["agent", "exec-status"]:
+                    return ok({"exited": 1, "exitcode": 0, "out-data": "SM_KEY added\n" + s.agent_hostkeys +
+                               "\nSM_ROOTLOGIN prohibit-password\nSM_IP 10.20.0.200/24\n"})
+                if sub == ["agent", "network-get-interfaces"]:
+                    return ok({"result": [{"name": "eth0", "ip-addresses": [{"ip-address-type": "ipv4",
+                                                                              "ip-address": "10.20.0.200"}]}]})
         return _json({"errors": {"path": path}}, 501)
 
     def _rrd(self, g) -> list[dict]:
@@ -312,9 +382,12 @@ class MockApp:
     # ------------------------------------------------------------------ routeros
     def ros(self, req: Request, path: str) -> Response:
         auth = req.authorization
-        if not auth or auth.username != ROS_USER or auth.password != ROS_PASS:
-            return _json({"error": 401, "message": "Unauthorized"}, 401)
         s = self.s
+        users = {u.get("name"): u.get("password") for u in s.ros.get("user", [])}
+        users.setdefault("admin", "adminpw")
+        if not auth or (users.get(auth.username) != auth.password
+                        and (auth.username, auth.password) != (ROS_USER, ROS_PASS)):
+            return _json({"error": 401, "message": "Unauthorized"}, 401)
         path = path.strip("/")
         body = req.get_json(silent=True) or {}
         if req.method == "GET":

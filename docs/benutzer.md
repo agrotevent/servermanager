@@ -26,6 +26,10 @@ sichtbar.
 | Bedienen | Start/Stopp/Neustart, Snapshot erstellen, Sicherung | Lease statisch machen, NAT-Regel ein-/ausschalten, Ping-Test | Dienst aktivieren/deaktivieren |
 | Vollzugriff | Container anlegen/löschen, Ressourcen ändern, Snapshots zurückspielen, Überwachung | Leases, NAT, Routen, DNS anlegen/löschen, Konfiguration einlesen und Änderungen anwenden | Dienste veröffentlichen, Ziele und Anmeldung ändern, entfernen |
 
+Die Seite *Optimierungen* (Scan und Umsetzung über alle Verbindungen) ist Administratoren vorbehalten.
+*Bestand übernehmen* erfordert Vollzugriff auf die Proxmox-Verbindung und die Rolle Manager oder
+Administrator.
+
 Ist ein System einem Proxmox-Gast zugeordnet (nur durch Administratoren), dürfen Benutzer mit
 **Bedienen** auf dieses System den Gast auch ohne Zugriff auf die Proxmox-Verbindung starten,
 herunterfahren und neu starten (siehe [Proxmox](proxmox.md)).

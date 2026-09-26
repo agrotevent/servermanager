@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% set help_page = "pangolin" %}
+{% from "_macros.html" import csrf, field with context %}
+{% block title %}Tunnel-Container · {{ p.name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>Tunnel-Container einrichten</h1>
+  <p>Installiert den Newt-Client für <a href="{{ url_for('pangolin.detail', pg_id=p.id) }}">{{ p.name }}</a> ({{ p.role_label }}) als systemd-Dienst auf einem vorhandenen System und ordnet es als Tunnel-Container zu.</p></div></div>
+<div class="alert info">Empfehlung: ein eigener kleiner Debian-LXC je Pangolin-Server. <strong>Primärer und Backup-Tunnel auf verschiedenen Proxmox-Hosts</strong>, damit beim Ausfall eines Hosts ein Weg erhalten bleibt. Einen neuen Container legst du unter Proxmox → „Container anlegen“ mit der Option „Als Newt-Tunnel einrichten“ in einem Schritt an.</div>
+<form method="post" autocomplete="off">{{ csrf() }}
+<div class="card"><div class="card-body"><div class="form-grid">
+  <div class="field full"><label>System</label><select name="system_id" required>{% for x in systems %}<option value="{{ x.id }}" {% if (f.get('system_id') or p.tunnel_system_id)|string == x.id|string %}selected{% endif %}>{{ x.name }} ({{ x.host }}){% if x.has_type('newt') %} · Newt vorhanden{% endif %}</option>{% endfor %}</select></div>
+  {{ field('Pangolin-Adresse (Endpoint)', 'newt_endpoint', f.get('newt_endpoint', ''), placeholder='https://pangolin.example.com', help='Adresse des Pangolin-Dashboards (nicht der Integration-API)') }}
+  {{ field('Newt-ID', 'newt_id', f.get('newt_id', ''), help='Pangolin → Sites → Site hinzufügen → Newt: ID und Secret') }}
+  {{ field('Newt-Secret', 'newt_secret', '', type='password', attrs='autocomplete="off"', help='wird nur auf dem Zielsystem gespeichert (/etc/newt/newt.env, nur root)') }}
+</div></div></div>
+<div class="actions mt-1"><button class="btn primary" data-confirm="Newt jetzt installieren und starten?">Einrichten</button><a class="btn" href="{{ url_for('pangolin.detail', pg_id=p.id) }}">Abbrechen</a></div>
+</form>
+{% endblock %}

@@ -6,13 +6,14 @@
 {% block content %}
 <div class="page-head">
   <div class="grow"><h1>Pangolin</h1><p>Dienste aus dem internen Netz über den Newt-Tunnel unter einer Domain erreichbar machen.</p></div>
-  {% if user.is_admin %}<div class="actions"><a class="btn primary" href="{{ url_for('pangolin.new') }}"><svg class="icon"><use href="#i-plus"/></svg>Pangolin hinzufügen</a></div>{% endif %}
+  <div class="actions">{% if items %}<a class="btn" href="{{ url_for('pangolin.services') }}">Alle Veröffentlichungen</a>{% endif %}
+  {% if user.is_admin %}<a class="btn primary" href="{{ url_for('pangolin.new') }}"><svg class="icon"><use href="#i-plus"/></svg>Pangolin hinzufügen</a>{% endif %}</div>
 </div>
 {% if items %}
 <div class="card"><div class="table-wrap"><table class="table">
   <thead><tr><th>Pangolin</th><th>Status</th><th>Sites (Newt)</th><th>Veröffentlichte Dienste</th><th>Warnungen</th></tr></thead>
   <tbody>{% for p in items %}{% set d = p.data %}
-    <tr><td><a href="{{ url_for('pangolin.detail', pg_id=p.id) }}"><strong>{{ p.name }}</strong></a><span class="sub">{{ p.api_url }} · Org {{ p.org_id }}</span></td>
+    <tr><td><a href="{{ url_for('pangolin.detail', pg_id=p.id) }}"><strong>{{ p.name }}</strong></a> <span class="badge {{ 'info' if p.role == 'backup' else 'primary' }}">{{ p.role_label }}</span><span class="sub">{{ p.api_url }} · Org {{ p.org_id }}</span></td>
       <td>{{ int_status(p) }}<span class="sub">{{ p.last_poll|ago }}</span></td>
       <td>{% for s in d.sites or [] %}<span class="badge {{ 'success' if s.online else 'danger' }}"><span class="dot"></span>{{ s.name }}</span> {% endfor %}</td>
       <td>{{ d.resources or 0 }}</td>
