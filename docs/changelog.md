@@ -2,6 +2,19 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.4.0 – 26.09.2026
+
+### Neu
+
+- **Domain-Zuordnung primär → Backup:** Für jede auf den primären Pangolin-Servern genutzte Domain wird
+  beim Backup-Pangolin die Backup-Domain und eine Vorlage für die Subdomain festgelegt (`{sub}`,
+  `{domain}`, `{base}`). Spiegeln, Übersicht und Optimierungen verwenden die Zuordnung, belegte Adressen
+  werden erkannt, abweichende Backup-Wege markiert.
+
+### Geändert
+
+- Datenbank-Schema Version 4.
+
 ## 1.3.0 – 26.09.2026
 
 ### Neu

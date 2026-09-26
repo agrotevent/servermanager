@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from . import integrations, pve
 from .models import PangolinServer, PveServer, RouterDevice, System
+from .pangolin import PangolinError, backup_address
 from .pveapi import PveError
 
 
@@ -133,9 +134,11 @@ def services_map(db: Session, pangolins: Optional[list[PangolinServer]] = None) 
     by_ip = _systems_by_ip(db)
     targets: dict[str, dict] = {}
     errors: dict[str, str] = {}
+    domains: dict[int, dict[str, str]] = {}
     for pg in pangolins:
         try:
             client = integrations.pangolin_client(pg)
+            domains[pg.id] = {d.get("domainId"): d.get("baseDomain") for d in client.domains()}
             resources = client.resources()
             for r in resources:
                 tlist = r.get("targets")
@@ -148,12 +151,28 @@ def services_map(db: Session, pangolins: Optional[list[PangolinServer]] = None) 
                     entry["paths"].append({"pangolin": pg, "role": pg.role, "resource": r,
                                            "domain": r.get("fullDomain") or f"{(r.get('protocol') or '').upper()}:{r.get('proxyPort')}",
                                            "sso": r.get("sso"), "enabled": r.get("enabled", True) is not False,
-                                           "http": bool(r.get("http")), "method": t.get("method")})
+                                           "http": bool(r.get("http")), "method": t.get("method"),
+                                           "base": domains[pg.id].get(r.get("domainId"), ""),
+                                           "sub": r.get("subdomain") or ""})
         except integrations.ApiError as exc:
             errors[pg.name] = str(exc)
     rows = sorted(targets.values(), key=lambda e: (_ip_key(e["ip"] or ""), e["port"] or 0))
+    backups = [p for p in pangolins if p.role == "backup" and p.id in domains]
     for e in rows:
         roles = {p["role"] for p in e["paths"]}
         e["primary"] = "primary" in roles
         e["backup"] = "backup" in roles
-    return {"targets": rows, "errors": errors}
+        e["planned"] = None
+        src = next((p for p in e["paths"] if p["role"] == "primary"), None)
+        if src and backups:
+            bk = backups[0]
+            try:
+                addr = backup_address(bk, src["base"], src["sub"], domains[bk.id]) if src["http"] else None
+                e["planned"] = {"pangolin": bk, "source": src, **(addr or {"full": f"{(src['resource'].get('protocol') or 'tcp').upper()}:{src['resource'].get('proxyPort')}"})}
+            except PangolinError as exc:
+                e["planned"] = {"pangolin": bk, "source": src, "error": str(exc)}
+            # an existing backup path with a different name than the mapping says
+            if e["backup"] and e["planned"] and e["planned"].get("full"):
+                have = {p["domain"] for p in e["paths"] if p["role"] == "backup"}
+                e["planned"]["mismatch"] = src["http"] and e["planned"]["full"] not in have
+    return {"targets": rows, "errors": errors, "domains": domains}

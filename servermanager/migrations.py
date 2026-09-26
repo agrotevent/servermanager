@@ -41,10 +41,16 @@ def _v3(conn: Connection) -> None:
     add_column_if_missing(conn, "pve_servers", "vswitch_vlan", "INTEGER")
 
 
+def _v4(conn: Connection) -> None:
+    # domain mapping primary -> backup Pangolin
+    add_column_if_missing(conn, "pangolin_servers", "domain_map", "TEXT")
+
+
 MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     1: lambda conn: None,  # initial schema
     2: _v2,
     3: _v3,
+    4: _v4,
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 

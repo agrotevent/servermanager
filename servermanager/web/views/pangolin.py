@@ -10,7 +10,8 @@ from ... import access, integrations, security
 from ...core import audit
 from ...models import (KIND_PANGOLIN, LEVEL_FULL, LEVEL_OPERATE, LEVEL_VIEW, PANGOLIN_ROLES, PangolinServer,
                        PveServer, System)
-from ...pangolin import METHODS, ORG_RE, PROTOCOLS, SUBDOMAIN_RE, PangolinError
+from ...pangolin import (DEFAULT_TEMPLATE, METHODS, ORG_RE, PROTOCOLS, SUBDOMAIN_RE, PangolinError,
+                         render_subdomain, validate_template)
 from ..auth import admin_required, client_ip, login_required
 from . import _integration as common
 
@@ -54,7 +55,37 @@ def _save(pg: PangolinServer) -> list[str]:
     pg.role = f.get("role") if f.get("role") in PANGOLIN_ROLES else "primary"
     tsys = (f.get("tunnel_system_id") or "").strip()
     pg.tunnel_system_id = int(tsys) if tsys.isdigit() and g.db.get(System, int(tsys)) else None
+    if pg.role == "backup" and "map_count" in f:
+        mapping = {}
+        for i in range(min(int(f.get("map_count") or 0), 200)):
+            base = (f.get(f"map_{i}_base") or "").strip().lower()
+            dom = (f.get(f"map_{i}_domain") or "").strip()
+            if not base or not dom or not re.match(r"^[A-Za-z0-9_-]{1,64}$", dom):
+                continue
+            try:
+                template = validate_template(f.get(f"map_{i}_template") or DEFAULT_TEMPLATE)
+                render_subdomain(template, "test", base)
+            except PangolinError as exc:
+                errors.append(f"{base}: {exc}")
+                continue
+            mapping[base] = {"domain_id": dom, "template": template}
+        pg.domain_map = mapping
     return errors
+
+
+def _primary_domains(exclude_id=None) -> list[dict]:
+    """Base domains used by the primary Pangolin instances (for the backup mapping)."""
+    out: dict[str, dict] = {}
+    for p in g.db.execute(select(PangolinServer).where(PangolinServer.role == "primary")).scalars():
+        if p.id == exclude_id:
+            continue
+        try:
+            for d in integrations.pangolin_client(p).domains():
+                out.setdefault((d.get("baseDomain") or "").lower(), {"base": (d.get("baseDomain") or "").lower(),
+                                                                      "pangolins": []})["pangolins"].append(p.name)
+        except integrations.ApiError:
+            continue
+    return sorted(out.values(), key=lambda x: x["base"])
 
 
 def _form(pg: PangolinServer, is_new: bool):
@@ -66,8 +97,21 @@ def _form(pg: PangolinServer, is_new: bool):
         except integrations.ApiError:
             pass
     systems = g.db.execute(select(System).order_by(System.name)).scalars().all()
+    primary_domains = _primary_domains(pg.id) if pg.role == "backup" else []
+    for d in (pg.domain_map or {}):
+        if d not in {x["base"] for x in primary_domains}:
+            primary_domains.append({"base": d, "pangolins": []})
+    names = {d.get("domainId"): d.get("baseDomain") for d in domains}
+    for d in primary_domains:
+        m = (pg.domain_map or {}).get(d["base"], {})
+        base = names.get(m.get("domain_id") or pg.default_domain_id, "?")
+        try:
+            sub = render_subdomain(m.get("template") or DEFAULT_TEMPLATE, "cloud", d["base"])
+            d["example"] = f"cloud.{d['base']} → {sub + '.' if sub else ''}{base}"
+        except PangolinError:
+            d["example"] = "ungültige Vorlage"
     return render_template("pangolin/form.html", p=pg, is_new=is_new, sites=sites, domains=domains,
-                           roles=PANGOLIN_ROLES, systems=systems)
+                           roles=PANGOLIN_ROLES, systems=systems, primary_domains=primary_domains)
 
 
 @bp.route("/new", methods=["GET", "POST"])
@@ -312,12 +356,20 @@ def mirror():
     client = _client(pg)
     f = request.form
     try:
-        if not pg.default_site_id or (f.get("protocol") == "http" and not pg.default_domain_id):
-            raise PangolinError(f"Für {pg.name} zuerst Standard-Site und -Domain festlegen")
+        domains = {d.get("domainId"): d.get("baseDomain") for d in client.domains()}
+        domain_id = f.get("domain_id") or pg.default_domain_id
+        if f.get("protocol") == "http" and domain_id not in domains:
+            raise PangolinError(f"Für {pg.name} keine gültige Domain (Domain-Zuordnung prüfen)")
+        if not pg.default_site_id:
+            raise PangolinError(f"Für {pg.name} zuerst die Standard-Site festlegen")
+        sub = (f.get("subdomain") or "").lower()
+        if f.get("protocol") == "http":
+            full = f"{sub}.{domains[domain_id]}" if sub else domains[domain_id]
+            if full in {r.get("fullDomain") for r in client.resources()}:
+                raise PangolinError(f"{full} ist auf {pg.name} bereits vergeben")
         proxy = int(f.get("proxy_port") or 0) or None
         res = client.publish(f.get("name", "")[:100] or "dienst", f.get("protocol", "http"), pg.default_site_id,
-                             f.get("ip", ""), f.get("port", ""), f.get("method") or "http",
-                             (f.get("subdomain") or "").lower(), pg.default_domain_id, proxy,
+                             f.get("ip", ""), f.get("port", ""), f.get("method") or "http", sub, domain_id, proxy,
                              sso=bool(f.get("sso")))
         audit(g.db, g.user, "pangolin.mirror", pg.name, f"{f.get('ip')}:{f.get('port')}", ip=client_ip())
         g.db.commit()

@@ -443,6 +443,8 @@ class PangolinServer(IntegrationMixin, Base):
     default_domain_id: Mapped[str] = mapped_column(String(64), default="")
     role: Mapped[str] = mapped_column(String(16), default="primary")          # primary | backup
     tunnel_system_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # system running Newt
+    # backup role: primary base domain -> {"domain_id": backup domain, "template": "{sub}"}
+    domain_map: Mapped[Optional[dict]] = mapped_column(JSONText, default=dict)
 
     @property
     def role_label(self) -> str:

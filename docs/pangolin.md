@@ -69,10 +69,35 @@ Einrichtung:
 
 1. Beide Pangolin-Server hinzufügen, Rolle festlegen, je Standard-Site und -Domain wählen.
 2. Je Server einen **Tunnel-Container** einrichten (siehe unten) – **auf verschiedenen Proxmox-Hosts**.
-3. Dienste auf dem primären Server veröffentlichen und unter *Alle Veröffentlichungen* mit **Backup-Weg
-   anlegen** zusätzlich über den Backup-Server veröffentlichen. Er verwendet dieselbe Subdomain unter
-   seiner eigenen Domain, z. B. `cloud.example.com` (primär) und `cloud.backup-example.net` (Backup).
-   Die [Optimierungen](bestand.md) schlagen das für alle Dienste ohne Backup-Weg vor.
+3. Beim Backup-Server die **Domain-Zuordnung** festlegen (siehe unten).
+4. Dienste auf dem primären Server veröffentlichen und unter *Alle Veröffentlichungen* mit **Backup-Weg
+   anlegen** zusätzlich über den Backup-Server veröffentlichen. Die [Optimierungen](bestand.md) schlagen
+   das für alle Dienste ohne Backup-Weg vor.
+
+### Domain-Zuordnung primär → Backup
+
+Auf den primären Pangolin-Servern können mehrere Domains mit ihren Subdomains genutzt werden (z. B.
+`example.com`, `firma.de`). Unter *Pangolin → Bearbeiten* des **Backup-Servers** wird für jede primäre
+Domain festgelegt:
+
+- **Backup-Domain:** eine der Domains des Backup-Pangolins. Mehrere primäre Domains können dieselbe
+  Backup-Domain verwenden.
+- **Vorlage** für die Subdomain mit den Platzhaltern `{sub}` (Subdomain auf dem primären Weg), `{domain}`
+  (erster Teil der primären Domain) und `{base}` (primäre Domain, Punkte durch Bindestriche ersetzt).
+
+| Primär | Backup-Domain | Vorlage | Backup-Adresse |
+|---|---|---|---|
+| `cloud.example.com` | `backup-example.net` | `{sub}` | `cloud.backup-example.net` |
+| `cloud.firma.de` | `backup-example.net` | `{sub}-{domain}` | `cloud-firma.backup-example.net` |
+| `firma.de` (Basisdomain) | `backup-example.net` | `{sub}-{domain}` | `firma.backup-example.net` |
+| `shop.firma.de` | `firma-backup.de` | `{sub}` | `shop.firma-backup.de` |
+
+Nutzen mehrere primäre Domains dieselbe Backup-Domain, braucht es eine unterscheidende Vorlage (z. B.
+`{sub}-{domain}`). Sonst würden `cloud.example.com` und `cloud.firma.de` beide `cloud.backup-…` belegen.
+Der Servermanager prüft vor dem Anlegen, ob die Adresse auf dem Backup-Server schon vergeben ist, und
+bricht dann ab. Primäre Domains ohne Zuordnung verwenden die Standard-Domain des Backup-Servers mit der
+unveränderten Subdomain. Die Übersicht zeigt die geplante Backup-Adresse vorab und markiert vorhandene
+Backup-Wege, die von der Zuordnung abweichen.
 
 *Alle Veröffentlichungen* zeigt je internem Ziel (IP:Port) beide Wege mit Domain, Schutz und Status.
 Fällt der primäre Tunnel aus, meldet die Überwachung das zusammen mit dem Hinweis, ob der Backup-Weg

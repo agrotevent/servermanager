@@ -26,6 +26,24 @@
       {% else %}<input type="text" name="default_domain_id" value="{{ p.default_domain_id or '' }}" placeholder="nach dem Speichern wählbar">{% endif %}</div>
   </div></div></div>
 </div>
+{% if p.role == 'backup' and not is_new %}
+<div class="card mt-2" id="mapping"><div class="card-head"><h2>Domain-Zuordnung (primär → Backup)</h2></div><div class="card-body">
+  <p>Für jede Domain, die auf den primären Pangolin-Servern verwendet wird, legst du fest, unter welcher Domain dieses Backup-Pangolins die Dienste gespiegelt werden. Die <strong>Vorlage</strong> bildet die Subdomain:
+    <code>{sub}</code> = Subdomain auf dem primären Weg, <code>{domain}</code> = erster Teil der primären Domain, <code>{base}</code> = primäre Domain mit Bindestrichen.
+    Beispiel: <code>cloud.firma.de</code> mit Vorlage <code>{sub}-{domain}</code> → <code>cloud-firma.backup-example.net</code>. Mehrere primäre Domains auf dieselbe Backup-Domain nur mit unterscheidender Vorlage.</p>
+  {% if primary_domains %}
+  <input type="hidden" name="map_count" value="{{ primary_domains|length }}">
+  <table class="table compact"><thead><tr><th>Primäre Domain</th><th>Backup-Domain</th><th>Vorlage</th><th>Beispiel</th></tr></thead><tbody>
+  {% for d in primary_domains %}{% set m = (p.domain_map or {}).get(d.base, {}) %}
+    <tr><td class="mono">{{ d.base }}<input type="hidden" name="map_{{ loop.index0 }}_base" value="{{ d.base }}"><span class="sub">{{ d.pangolins|join(', ') or 'nicht mehr verwendet' }}</span></td>
+      <td><select name="map_{{ loop.index0 }}_domain"><option value="">– Standard-Domain –</option>{% for x in domains %}<option value="{{ x.domainId }}" {% if m.domain_id == x.domainId %}selected{% endif %}>{{ x.baseDomain }}</option>{% endfor %}</select></td>
+      <td><input type="text" name="map_{{ loop.index0 }}_template" value="{{ m.template or '{sub}' }}" class="mono" style="max-width:180px"></td>
+      <td class="mono"><small>{{ d.example }}</small></td></tr>
+  {% endfor %}
+  </tbody></table>
+  {% else %}<p class="muted">Keine primären Pangolin-Server mit Domains gefunden.</p>{% endif %}
+</div></div>
+{% endif %}
 <div class="actions mt-1"><button class="btn primary">Speichern</button><a class="btn" href="{{ url_for('pangolin.index') if is_new else url_for('pangolin.detail', pg_id=p.id) }}">Abbrechen</a></div>
 </form>
 {% if not is_new %}

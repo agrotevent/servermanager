@@ -1186,11 +1186,18 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
             if a == "pangolin_sso":
                 client.update_resource(int(p["resource_id"]), sso=True)
                 return "Pangolin-Anmeldung aktiviert"
-            if not pg.default_site_id or (p["protocol"] == "http" and not pg.default_domain_id):
+            domain_id = p.get("domain_id") or pg.default_domain_id
+            if not pg.default_site_id or (p["protocol"] == "http" and not domain_id):
                 raise JobFailed(f"Für {pg.name} Standard-Site und -Domain festlegen")
             sub = (item.get("inputs", {}).get("subdomain") or p.get("subdomain") or "").strip().lower()
+            if p["protocol"] == "http":
+                full = f"{sub}." if sub else ""
+                taken = {r.get("fullDomain") for r in client.resources()}
+                base = {d.get("domainId"): d.get("baseDomain") for d in client.domains()}.get(domain_id, "")
+                if f"{full}{base}" in taken:
+                    raise JobFailed(f"{full}{base} ist auf {pg.name} bereits vergeben")
             res = client.publish(p["name"], p["protocol"], pg.default_site_id, p["ip"], int(p["port"]),
-                                 p.get("method") or "http", sub, pg.default_domain_id,
+                                 p.get("method") or "http", sub, domain_id,
                                  p.get("proxy_port"), sso=bool(p.get("sso", a == "publish_forward")))
             return f"veröffentlicht: {res.get('fullDomain') or p['name']} über {pg.name}"
         if a == "newt_restart":

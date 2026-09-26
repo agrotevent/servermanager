@@ -295,16 +295,32 @@ def scan_pangolin(db: Session, pangolins: list[PangolinServer], services: dict) 
             p = primary_paths[0]
             r = p["resource"]
             name = r.get("name") or f"{t['ip']}:{t['port']}"
-            out.append(proposal(f"pangolin:mirror:{t['ip']}:{t['port']}", "tunnel", _obj("pangolin", backup),
-                                f"{name}: Backup-Weg über {backup.name} anlegen",
-                                f"{p['domain']} → {t['ip']}:{t['port']} wird zusätzlich über {backup.name} "
-                                "veröffentlicht (gleiche Subdomain unter dessen Standard-Domain, eigene Site).",
-                                action="pangolin_mirror",
-                                params={"pangolin_id": backup.id, "name": name, "ip": t["ip"], "port": t["port"],
-                                        "http": p["http"], "method": p.get("method") or "http",
-                                        "subdomain": r.get("subdomain") or "", "proxy_port": r.get("proxyPort"),
-                                        "protocol": "http" if p["http"] else (r.get("protocol") or "tcp"),
-                                        "sso": bool(r.get("sso"))}))
+            plan = t.get("planned") or {}
+            if plan.get("error"):
+                out.append(proposal(f"pangolin:mirror:{t['ip']}:{t['port']}", "tunnel", _obj("pangolin", backup),
+                                    f"{name}: Backup-Weg fehlt", plan["error"] + " (Pangolin → Bearbeiten → "
+                                    "Domain-Zuordnung)", severity="warn"))
+            else:
+                target_name = plan.get("full") or ""
+                out.append(proposal(f"pangolin:mirror:{t['ip']}:{t['port']}", "tunnel", _obj("pangolin", backup),
+                                    f"{name}: Backup-Weg {p['domain']} → {target_name}",
+                                    f"{t['ip']}:{t['port']} wird zusätzlich über {backup.name} veröffentlicht"
+                                    + ("" if plan.get("mapped", True) else " (keine Domain-Zuordnung für "
+                                       f"{p['base']} – Standard-Domain)") + ".",
+                                    action="pangolin_mirror",
+                                    params={"pangolin_id": backup.id, "name": name, "ip": t["ip"], "port": t["port"],
+                                            "http": p["http"], "method": p.get("method") or "http",
+                                            "subdomain": plan.get("subdomain", ""),
+                                            "domain_id": plan.get("domain_id", ""),
+                                            "proxy_port": r.get("proxyPort"),
+                                            "protocol": "http" if p["http"] else (r.get("protocol") or "tcp"),
+                                            "sso": bool(r.get("sso"))}))
+        if backup and t.get("planned") and t["planned"].get("mismatch"):
+            have = ", ".join(x["domain"] for x in t["paths"] if x["role"] == "backup")
+            out.append(proposal(f"pangolin:mirror-name:{t['ip']}:{t['port']}", "tunnel", _obj("pangolin", backup),
+                                f"Backup-Adresse weicht von der Domain-Zuordnung ab ({have})",
+                                f"Laut Zuordnung wäre es {t['planned']['full']}. Bei Bedarf in Pangolin anpassen.",
+                                severity="info"))
         for p in t["paths"]:
             if p["http"] and not p["sso"]:
                 out.append(proposal(f"pangolin:sso:{p['pangolin'].id}:{p['resource'].get('resourceId')}", "pangolin",

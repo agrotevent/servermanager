@@ -214,3 +214,47 @@ class Pangolin:
                 pass
             raise
         return res
+
+
+# --------------------------------------------------------------------------
+# primary -> backup domain mapping
+# --------------------------------------------------------------------------
+DEFAULT_TEMPLATE = "{sub}"
+TEMPLATE_RE = re.compile(r"^[a-z0-9{}.-]{1,100}$")
+
+
+def validate_template(template: str) -> str:
+    t = (template or DEFAULT_TEMPLATE).strip().lower()
+    if not TEMPLATE_RE.match(t) or re.search(r"\{(?!sub\}|domain\}|base\})[^}]*\}", t):
+        raise PangolinError("Vorlage: Buchstaben, Ziffern, '-', '.' und die Platzhalter {sub}, {domain}, {base}")
+    return t
+
+
+def render_subdomain(template: str, sub: str, primary_base: str) -> str:
+    """Backup subdomain for a primary resource; '' means the backup base domain itself."""
+    label = (primary_base or "").split(".")[0]
+    t = validate_template(template)
+    out = t.replace("{sub}", sub or "").replace("{domain}", label).replace("{base}", (primary_base or "").replace(".", "-"))
+    out = re.sub(r"\.{2,}", ".", re.sub(r"-{2,}", "-", out)).strip(".-")
+    out = re.sub(r"(^|\.)-+|-+(\.|$)", lambda m: m.group(1) or m.group(2), out)
+    if out and not SUBDOMAIN_RE.match(out):
+        raise PangolinError(f"Ungültige Subdomain „{out}“ aus Vorlage {template}")
+    return out
+
+
+def backup_address(backup, primary_base: str, sub: str, backup_domains: dict[str, str]) -> dict:
+    """Where a primary service (sub + base domain) is published on the backup Pangolin.
+
+    Returns {"domain_id", "base", "subdomain", "full", "mapped"}. Without an explicit mapping the
+    backup's default domain is used with the plain subdomain.
+    """
+    entry = (backup.domain_map or {}).get((primary_base or "").lower())
+    mapped = bool(entry and entry.get("domain_id") in backup_domains)
+    domain_id = entry["domain_id"] if mapped else backup.default_domain_id
+    template = (entry or {}).get("template") or DEFAULT_TEMPLATE if mapped else DEFAULT_TEMPLATE
+    if not domain_id or domain_id not in backup_domains:
+        raise PangolinError(f"Für {backup.name} ist keine Backup-Domain für {primary_base or '?'} festgelegt")
+    subdomain = render_subdomain(template, sub, primary_base)
+    base = backup_domains[domain_id]
+    return {"domain_id": domain_id, "base": base, "subdomain": subdomain,
+            "full": f"{subdomain}.{base}" if subdomain else base, "mapped": mapped}
