@@ -13,7 +13,9 @@ log = logging.getLogger(__name__)
 
 
 class MikroTikError(Exception):
-    pass
+    def __init__(self, message: str, status: int = 0):
+        super().__init__(message)
+        self.status = status
 
 
 class MikroTik:
@@ -28,7 +30,9 @@ class MikroTik:
             url = url[:-5]
         self.base = url + "/rest"
         self.session = requests.Session()
-        self.session.auth = (user, password)
+        # RouterOS expects UTF-8 (requests would encode str credentials as latin-1)
+        self.user = user or ""
+        self.session.auth = ((user or "").encode("utf-8"), (password or "").encode("utf-8"))
         self.session.verify = verify_tls
         self.session.trust_env = False  # never send credentials through a proxy from the environment
         self.session.headers["Content-Type"] = "application/json"
@@ -59,7 +63,8 @@ class MikroTik:
         except requests.RequestException as exc:
             raise MikroTikError(f"MikroTik nicht erreichbar ({self.base}): {exc}") from exc
         if r.status_code == 401:
-            raise MikroTikError("MikroTik: Anmeldung fehlgeschlagen (Benutzer/Passwort/Rechte prüfen)")
+            raise MikroTikError(f"MikroTik: Anmeldung als „{self.user}“ fehlgeschlagen (Benutzer/Passwort/Rechte "
+                                "prüfen)", 401)
         if r.status_code >= 400:
             try:
                 j = r.json()

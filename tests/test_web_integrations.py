@@ -254,3 +254,28 @@ def test_update_start_survives_service_restart(app, db, monkeypatch):
     assert "Update konnte nicht gestartet werden: Update-Dienst" in r.text
     settings.set(db, "backup.before_update", True)
     db.commit()
+
+
+def test_router_create_checks_login_first(app, env, mock, db):
+    c = login(app, "i-admin")
+    base = {"name": "chr-new", "api_url": mock.url, "fingerprint": mock.fingerprint, "monitor": "1",
+            "csrf_token": c.csrf}
+    r = c.post("/routeros/new", data={**base, "username": "admin", "password": "falsch", "allowed": "10.0.0.1/32"})
+    assert r.status_code == 200 and "Anmeldung als „admin“ fehlgeschlagen" in r.text
+    assert "address=" in r.text
+    assert db.query(RouterDevice).filter_by(name="chr-new").count() == 0
+    # admin login + own API user: only the new user is stored
+    r = c.post("/routeros/new", data={**base, "username": "admin", "password": "adminpw",
+                                      "create_api_user": "1", "allowed": "10.0.0.1/32"})
+    assert r.status_code == 302, r.text[:500]
+    db.expire_all()
+    router = db.query(RouterDevice).filter_by(name="chr-new").one()
+    assert router.username == "servermanager"
+    assert security.decrypt(router.password_enc) not in ("adminpw", "")
+    user = next(u for u in mock.state.ros["user"] if u.get("name") == "servermanager")
+    assert user["address"] == "10.0.0.1/32"
+    # explicit override stores a connection whose login fails
+    r = c.post("/routeros/new", data={**base, "name": "chr-anyway", "username": "x", "password": "y",
+                                      "save_anyway": "1"})
+    assert r.status_code == 302
+    assert db.query(RouterDevice).filter_by(name="chr-anyway").count() == 1

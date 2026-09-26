@@ -32,6 +32,31 @@ def kind_of(obj: Integration) -> str:
     raise TypeError(obj)
 
 
+def source_ip_for(url: str) -> str:
+    """Local address the servermanager uses to reach a host (no packet is sent)."""
+    import socket
+    from urllib.parse import urlsplit
+    parts = urlsplit(url if "://" in url else "https://" + url)
+    if not parts.hostname:
+        return ""
+    try:
+        infos = socket.getaddrinfo(parts.hostname, parts.port or 443, proto=socket.IPPROTO_UDP)
+        family, _t, _p, _c, addr = infos[0]
+        with socket.socket(family, socket.SOCK_DGRAM) as s:
+            s.connect(addr)
+            return s.getsockname()[0]
+    except OSError:
+        return ""
+
+
+def router_login_hint(router: RouterDevice) -> str:
+    src = source_ip_for(router.api_url)
+    return ("Prüfen: Benutzername und Passwort; bei einem eigenen API-Benutzer braucht dessen Gruppe die Rechte "
+            "read, api und rest-api (für Änderungen write), und die erlaubte Adresse des Benutzers "
+            f"(/user … address=) muss {src or 'die Adresse des Servermanagers'} enthalten. "
+            "Tipp: mit dem Admin-Zugang anlegen und „eigenen API-Benutzer anlegen“ wählen.")
+
+
 def router_client(router: RouterDevice, timeout: int = 15) -> MikroTik:
     return MikroTik(router.api_url, router.username, security.decrypt(router.password_enc),
                     verify_tls=bool(router.verify_ca), timeout=timeout, fingerprint=router.fingerprint or "")

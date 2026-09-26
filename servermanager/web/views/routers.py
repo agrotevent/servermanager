@@ -82,14 +82,20 @@ def _save(router: RouterDevice) -> list[str]:
 
 
 def _form(router: RouterDevice, is_new: bool):
-    allowed = settings.get(g.db, "wg.network") if settings.get(g.db, "wg.enabled") else ""
-    return render_template("routers/form.html", r=router, is_new=is_new, allowed_default=allowed)
+    allowed = request.form.get("allowed") if request.method == "POST" and "allowed" in request.form else None
+    if allowed is None:
+        allowed = settings.get(g.db, "wg.network") if settings.get(g.db, "wg.enabled") else ""
+        if not allowed and router.api_url:
+            src = integrations.source_ip_for(router.api_url)
+            allowed = f"{src}/32" if src and ":" not in src else src
+    return render_template("routers/form.html", r=router, is_new=is_new, allowed_default=allowed,
+                           source_ip=integrations.source_ip_for(router.api_url) if router.api_url else "")
 
 
 @bp.route("/new", methods=["GET", "POST"])
 @admin_required
 def new():
-    router = RouterDevice(monitor=True, verify_ca=False, username="servermanager")
+    router = RouterDevice(monitor=True, verify_ca=False, username="")
     if request.method == "POST":
         errors = _save(router)
         if request.form.get("fetch_fp"):
@@ -102,13 +108,36 @@ def new():
             for e in errors:
                 flash(e, "danger")
             return _form(router, True)
+        # test the login before anything is stored
+        try:
+            integrations.router_client(router).identity()
+            login_ok = True
+        except MikroTikError as exc:
+            login_ok = False
+            if not request.form.get("save_anyway"):
+                flash(f"{exc}. " + (integrations.router_login_hint(router) if exc.status == 401 else ""), "danger")
+                return _form(router, True)
+        if login_ok and request.form.get("create_api_user"):
+            from ... import mgmt
+            admin_user, admin_pw = router.username, security.decrypt(router.password_enc)
+            try:
+                mgmt.router_mgmt_user(router, admin_user, admin_pw, request.form.get("allowed", ""),
+                                      with_backup=bool(request.form.get("with_backup")))
+                flash(f"API-Benutzer „{router.username}“ angelegt – der Admin-Zugang wurde nicht gespeichert.",
+                      "success")
+            except mgmt.MgmtError as exc:
+                router.username = admin_user
+                router.password_enc = security.encrypt(admin_pw)
+                flash(f"API-Benutzer konnte nicht angelegt werden: {exc}. {integrations.router_login_hint(router)}",
+                      "danger")
+                return _form(router, True)
         g.db.add(router)
         g.db.flush()
         audit(g.db, g.user, "router.create", router.name, router.api_url, ip=client_ip())
         integrations.poll(g.db, router)
         g.db.commit()
         flash("RouterOS-Verbindung angelegt. Tipp: unter „Konfigurationsanalyse“ die laufende Konfiguration "
-              "importieren und prüfen.", "success")
+              "importieren und prüfen.", "success" if login_ok else "warning")
         return redirect(url_for("routers.detail", router_id=router.id))
     return _form(router, True)
 

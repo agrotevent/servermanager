@@ -10,6 +10,16 @@
 | MikroTik-API: 401 | Benutzer, Passwort, `address=`-Einschränkung und Gruppe (`rest-api`, `read`, `write`) prüfen |
 | Passwort vergessen | `servermanager-cli reset-password NAME` |
 
+## RouterOS: „Anmeldung … fehlgeschlagen“
+
+Der Router antwortet mit 401. Häufigste Ursachen:
+
+- Die erlaubte Adresse des Benutzers (`/user print detail`, Feld `address`) enthält nicht die Adresse,
+  mit der der Servermanager ankommt – z. B. anfangs dessen öffentliche IP statt des Management-Netzes.
+  Beim Anlegen wird die erkannte Absenderadresse angezeigt.
+- Falscher Benutzername oder falsches Passwort.
+- Der Gruppe fehlen die Rechte `read`, `api` oder `rest-api`.
+
 ## Update: „couldn't find remote ref main“
 
 Der eingestellte Update-Branch existiert im Repository nicht. Unter *Update → Update-Branch* einen

@@ -36,10 +36,18 @@ Auf dem Router einen eigenen Benutzer anlegen (Zugriff nur aus dem Management-Ne
 
 Dann **Router hinzufügen**: REST-Adresse (z. B. `https://10.66.0.1`), Benutzer, Passwort.
 
-**Einfacher:** den Router zunächst mit einem vorhandenen Admin-Zugang hinzufügen und unter *Bearbeiten →
-API-Benutzer per Admin-Anmeldung* den Benutzer `servermanager` automatisch anlegen lassen (zufälliges
-Passwort, beschränkt auf die Management-Adressen). Das Admin-Passwort wird dafür nur einmal verwendet
-und nicht gespeichert.
+**Einfacher:** beim Hinzufügen den vorhandenen Admin-Zugang eintragen und **eigenen API-Benutzer
+anlegen** anhaken. Der Servermanager legt dann den Benutzer `servermanager` mit zufälligem Passwort an,
+beschränkt auf die angegebenen Adressen, und speichert nur diesen – das Admin-Passwort wird nur einmal
+verwendet. Dasselbe geht nachträglich unter *Bearbeiten → API-Benutzer per Admin-Anmeldung*.
+
+Vor dem Speichern wird die Anmeldung geprüft. Schlägt sie fehl, wird nichts gespeichert und die
+Ursachen werden angezeigt (mit **Trotzdem speichern** lässt sich das übergehen).
+
+**Erlaubte Adressen:** RouterOS prüft die Absenderadresse, mit der der Servermanager ankommt. Das
+Formular schlägt die dafür erkannte Adresse vor. Solange die interne Anbindung (WireGuard, Management-Netz)
+noch nicht steht, ist das die öffentliche IP des Management-Servers – diese dann vorübergehend zusätzlich
+erlauben und später unter *Bearbeiten → API-Benutzer* auf das Management-Netz einschränken.
 
 ## Reiter
 

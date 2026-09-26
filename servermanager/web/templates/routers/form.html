@@ -12,12 +12,23 @@
     {{ conn_fields(r, 'REST-Adresse', 'https://10.66.0.1', 'https://<router> (Port 443) – z. B. über das WireGuard-Management-Netz.', 'RouterOS verwendet meist ein selbstsigniertes Zertifikat.') }}
   </div></div></div>
   <div class="card"><div class="card-head"><h2>Anmeldung</h2></div><div class="card-body"><div class="form-grid">
-    {{ field('Benutzer', 'username', r.username, required=True) }}
+    {{ field('Benutzer', 'username', r.username, required=True, placeholder=('admin oder servermanager' if is_new else '')) }}
     {{ field('Passwort', 'password', '', type='password', help=('Hinterlegt – leer lassen, um es zu behalten' if r.password_enc else 'wird verschlüsselt gespeichert'), attrs='autocomplete="new-password"') }}
     <div class="full help">Benutzer auf dem Router anlegen (Lesen reicht für Überwachung und Analyse; für Änderungen <code>write</code>):
       <pre class="mono small">/user group add name=servermanager policy=read,write,api,rest-api,test,!ftp,!ssh,!winbox,!telnet,!web,!sniff,!sensitive,!password,!policy,!reboot,!local,!romon
 /user add name=servermanager group=servermanager address=10.66.0.0/24 password="…"</pre>
       <code>test</code> wird für den Ping-Test benötigt, <code>address</code> beschränkt die Anmeldung auf das Management-Netz. Für Sicherungen vor Änderungen zusätzlich <code>ftp</code> und <code>sensitive</code>.</div>
+    {% if is_new %}
+    <div class="full">
+      <label class="check"><input type="checkbox" name="create_api_user" value="1" {% if request.form.get('create_api_user', '1' if request.method == 'GET' else '') %}checked{% endif %}>
+        <span>Mit diesen (Admin-)Zugangsdaten einen eigenen API-Benutzer <code>servermanager</code> anlegen <small>(empfohlen – gespeichert wird nur dieser, mit zufälligem Passwort)</small></span></label>
+      <div class="form-grid mt-1" data-show-for="create_api_user=1">
+        {{ field('Anmeldung erlaubt von', 'allowed', allowed_default, help='Adresse(n), von denen der Servermanager zugreift' ~ ((' – erkannt: ' ~ source_ip) if source_ip else '') ~ '. Leer = überall.') }}
+        <div class="field"><label>&nbsp;</label><label class="check"><input type="checkbox" name="with_backup" value="1" checked> Sicherungen vor Änderungen erlauben</label></div>
+      </div>
+      <label class="check mt-1"><input type="checkbox" name="save_anyway" value="1"> Auch speichern, wenn der Router gerade nicht erreichbar ist</label>
+    </div>
+    {% endif %}
   </div></div></div>
 </div>
 <div class="actions mt-1"><button class="btn primary">Speichern</button><a class="btn" href="{{ url_for('routers.index') if is_new else url_for('routers.detail', router_id=r.id) }}">Abbrechen</a></div>

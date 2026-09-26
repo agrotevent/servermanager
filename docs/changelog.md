@@ -2,6 +2,15 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.5.3 – 26.09.2026
+
+### Verbessert
+
+- RouterOS hinzufügen: Die Anmeldung wird vor dem Speichern geprüft; bei einem Fehler nennt die Meldung
+  den Benutzer, die erkannte Absenderadresse und die typischen Ursachen (erlaubte Adresse, Rechte).
+- Optional wird beim Hinzufügen direkt mit dem Admin-Zugang ein eigener API-Benutzer angelegt; nur
+  dieser wird gespeichert. Passwörter mit Umlauten werden korrekt übertragen (UTF-8).
+
 ## 1.5.2 – 26.09.2026
 
 ### Behoben
