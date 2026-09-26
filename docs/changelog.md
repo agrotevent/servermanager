@@ -2,6 +2,13 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.6.2 – 26.09.2026
+
+### Verbessert
+
+- Pangolin: Verbindungsfehler nennen die Ursache (Port 3003 nicht veröffentlicht, DNS, Zeitüberschreitung);
+  die Hilfe beschreibt die Freigabe der Integration-API über Traefik.
+
 ## 1.6.1 – 26.09.2026
 
 ### Verbessert

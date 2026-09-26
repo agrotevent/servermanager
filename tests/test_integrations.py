@@ -367,3 +367,13 @@ def test_retry_create_skips_existing_container(mock, objects, db, data_dir):
     log = log_path(new.id).read_text()
     assert db.get(Job, new.id).status == "success", log
     assert "existiert bereits" in log and "Container läuft bereits" in log
+
+
+def test_pangolin_connection_hints():
+    from servermanager.pangolin import connect_hint
+    refused = OSError("Failed to establish a new connection: [Errno 111] Connection refused")
+    assert "Traefik" in connect_hint("https://pangolin.example.com:3003/v1", refused)
+    assert "lauscht nichts" in connect_hint("https://api.example.com/v1", refused)
+    assert "DNS" in connect_hint("https://x.example/v1", OSError("[Errno -2] Name or service not known"))
+    with pytest.raises(PangolinError, match="Port 3003"):
+        Pangolin("https://127.0.0.1:3003/v1", "key", "org1", timeout=2).sites()

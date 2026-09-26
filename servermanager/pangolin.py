@@ -68,6 +68,25 @@ def validate_target(ip: str, port: Any) -> tuple[str, int]:
     return ip, port
 
 
+def connect_hint(base: str, exc: Exception) -> str:
+    """Readable cause for a failed connection to the integration API."""
+    text = str(exc)
+    parts = urlsplit(base)
+    if "Connection refused" in text or "Errno 111" in text:
+        if parts.port == 3003:
+            return ("Port 3003 ist der interne Port der Integration-API im Docker-Netz von Pangolin und nach "
+                    "außen nicht geöffnet. Die API über Traefik unter einer eigenen Subdomain freigeben und "
+                    "hier ohne Port eintragen, z. B. https://api.<domain>/v1 (siehe Hilfe → Pangolin).")
+        return ("Auf diesem Port lauscht nichts – Adresse/Port prüfen und ob die Integration-API "
+                "(flags.enable_integration_api) aktiviert und über Traefik veröffentlicht ist.")
+    if "Name or service not known" in text or "getaddrinfo failed" in text or "Errno -2" in text \
+            or "Errno -3" in text:
+        return f"Der Name {parts.hostname} lässt sich nicht auflösen (DNS-Eintrag anlegen)."
+    if "timed out" in text.lower():
+        return "Zeitüberschreitung – Firewall zwischen Servermanager und Pangolin prüfen."
+    return ""
+
+
 def _seg(v: Any) -> str:
     return quote(str(v), safe="")
 
@@ -102,7 +121,9 @@ class Pangolin:
         except requests.exceptions.SSLError as exc:
             raise PangolinError(f"TLS-Fehler bei {self.base}: {exc}") from exc
         except requests.RequestException as exc:
-            raise PangolinError(f"Pangolin-API nicht erreichbar ({self.base}): {exc}") from exc
+            hint = connect_hint(self.base, exc)
+            raise PangolinError(f"Pangolin-API nicht erreichbar ({self.base}): {exc}"
+                                + (f" – {hint}" if hint else "")) from exc
         try:
             j = r.json()
         except ValueError:

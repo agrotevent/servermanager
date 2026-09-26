@@ -16,7 +16,35 @@ Unter **Infrastruktur → Pangolin** trägt der Servermanager die nötige **Doma
     enable_integration_api: true
   ```
 
-  Die API ist dann unter einer eigenen Adresse erreichbar (z. B. `https://api.pangolin.example.com/v1`).
+  Die API lauscht im Pangolin-Container auf Port **3003** – dieser Port ist **nicht** nach außen
+  geöffnet (`https://<pangolin>:3003/v1` ergibt „Connection refused“). Sie wird über Traefik unter einer
+  eigenen Subdomain veröffentlicht, z. B. in `config/traefik/dynamic_config.yml`:
+
+  ```yaml
+  http:
+    routers:
+      int-api-router-redirect:
+        rule: "Host(`api.pangolin.example.com`)"
+        service: int-api-service
+        entryPoints: [web]
+        middlewares: [redirect-to-https]
+      int-api-router:
+        rule: "Host(`api.pangolin.example.com`)"
+        service: int-api-service
+        entryPoints: [websecure]
+        tls:
+          certResolver: letsencrypt
+    services:
+      int-api-service:
+        loadBalancer:
+          servers:
+            - url: "http://pangolin:3003"
+  ```
+
+  Dazu einen DNS-Eintrag für `api.pangolin.example.com` auf den Pangolin-Server setzen, Traefik neu
+  starten (`docker compose restart traefik`) und im Servermanager **ohne Port** eintragen:
+  `https://api.pangolin.example.com/v1`. Test: `curl https://api.pangolin.example.com/v1/` liefert
+  eine JSON-Antwort.
 - Ein **API-Schlüssel** der Organisation mit Rechten für Sites, Domains, Resources und Targets.
 - Die **Organisations-ID** (steht in der Pangolin-URL: `/<org-id>/settings`).
 - Eine Site mit Newt, die das interne Netz erreicht.

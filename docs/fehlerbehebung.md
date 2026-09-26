@@ -10,6 +10,13 @@
 | MikroTik-API: 401 | Benutzer, Passwort, `address=`-Einschränkung und Gruppe (`rest-api`, `read`, `write`) prüfen |
 | Passwort vergessen | `servermanager-cli reset-password NAME` |
 
+## Pangolin: „Connection refused“ auf Port 3003
+
+Port 3003 ist der interne Port der Integration-API im Docker-Netz von Pangolin und von außen nicht
+erreichbar. Die API über Traefik unter einer eigenen Subdomain veröffentlichen und im Servermanager
+ohne Port eintragen (`https://api.<domain>/v1`) – Anleitung unter [Pangolin](pangolin.md#voraussetzungen).
+Außerdem muss in der `config.yml` `flags.enable_integration_api: true` gesetzt sein.
+
 ## RouterOS: Ping-Test „Keine Antwort von 1.1.1.1“
 
 Der Router selbst erreicht das Ziel nicht. Bei einem Fehlschlag prüft der Servermanager automatisch und
