@@ -377,3 +377,14 @@ def test_pangolin_connection_hints():
     assert "DNS" in connect_hint("https://x.example/v1", OSError("[Errno -2] Name or service not known"))
     with pytest.raises(PangolinError, match="Port 3003"):
         Pangolin("https://127.0.0.1:3003/v1", "key", "org1", timeout=2).sites()
+
+
+def test_pangolin_wrong_key_message(mock):
+    with pytest.raises(PangolinError) as exc:
+        Pangolin(mock.url, "nur-das-geheimnis", m.PG_ORG, fingerprint=mock.fingerprint).sites()
+    msg = str(exc.value)
+    assert exc.value.status == 401 and "<ID>.<Geheimnis>" in msg and m.PG_ORG in msg
+    assert "keinen Punkt" in msg
+    with pytest.raises(PangolinError) as exc:
+        Pangolin(mock.url, "abc.def", m.PG_ORG, fingerprint=mock.fingerprint).sites()
+    assert "keinen Punkt" not in str(exc.value)

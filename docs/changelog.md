@@ -2,6 +2,13 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.7.1 – 26.09.2026
+
+### Verbessert
+
+- Pangolin: Ein abgelehnter API-Schlüssel wird mit Ursachen gemeldet (Format `<ID>.<Geheimnis>`,
+  Organisation, Server-Admin-Schlüssel); ein Schlüssel ohne ID-Teil wird direkt erkannt.
+
 ## 1.7.0 – 26.09.2026
 
 ### Neu

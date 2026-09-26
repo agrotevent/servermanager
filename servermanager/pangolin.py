@@ -102,6 +102,10 @@ class Pangolin:
         self.timeout = timeout
         self.session = requests.Session()
         self.session.trust_env = False
+        api_key = api_key.strip()
+        self.key_hint = "" if "." in api_key else (
+            " Der eingetragene Schlüssel enthält keinen Punkt – vermutlich fehlt der ID-Teil: den vollständigen "
+            "Schlüssel im Format <ID>.<Geheimnis> eintragen, wie er beim Anlegen einmalig angezeigt wird.")
         self.session.headers["Authorization"] = f"Bearer {api_key}"
         self.session.headers["Accept"] = "application/json"
         if fingerprint and self.base.startswith("https://"):
@@ -131,7 +135,11 @@ class Pangolin:
         if r.status_code >= 400 or (isinstance(j, dict) and j.get("error") is True):
             msg = (j.get("message") if isinstance(j, dict) else "") or r.reason or r.text[:200]
             if r.status_code == 401:
-                msg = "Anmeldung fehlgeschlagen (API-Schlüssel prüfen)"
+                server = f": {msg}" if msg and msg not in ("Unauthorized", r.reason) else ""
+                msg = (f"Anmeldung fehlgeschlagen{server} – API-Schlüssel prüfen. Er muss vollständig sein "
+                       "(Format <ID>.<Geheimnis>, wird beim Anlegen nur einmal angezeigt), darf nicht gelöscht "
+                       f"sein und muss zur Organisation „{self.org}“ gehören (Organisation → API-Schlüssel) "
+                       "oder ein Server-Admin-Schlüssel sein." + self.key_hint)
             elif r.status_code == 403:
                 msg = f"Keine Berechtigung ({msg}) – Rechte des API-Schlüssels prüfen"
             raise PangolinError(f"Pangolin: {msg}", r.status_code)

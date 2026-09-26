@@ -29,6 +29,21 @@ Bleibt der Fehler, auf dem System als root prüfen:
 - Proxmox-Hosts ohne Subscription: das Enterprise-Repository deaktivieren bzw. das
   No-Subscription-Repository eintragen.
 
+## Pangolin: „Anmeldung fehlgeschlagen“
+
+Die Integration-API ist erreichbar, lehnt aber den API-Schlüssel ab (HTTP 401):
+
+- **Schlüssel unvollständig:** Pangolin zeigt den Schlüssel nur einmal beim Anlegen an, im Format
+  `<ID>.<Geheimnis>`. Beide Teile samt Punkt eintragen. Ist er nicht mehr bekannt, einen neuen anlegen.
+- **Falsche Organisation:** Ein Schlüssel aus *Organisation → API-Schlüssel* gilt nur für diese
+  Organisation. Die Organisations-ID im Servermanager muss dazu passen (steht in der Pangolin-URL
+  `/<org-id>/settings`). Alternativ einen Server-Admin-Schlüssel verwenden.
+- **Schlüssel gelöscht oder abgelaufen:** einen neuen anlegen, mit den Rechten für Sites, Domains,
+  Resources und Targets.
+
+Test auf dem Servermanager:
+`curl -H "Authorization: Bearer <ID>.<Geheimnis>" https://api.<domain>/v1/org/<org-id>/sites`
+
 ## Pangolin: „Connection refused“ auf Port 3003
 
 Port 3003 ist der interne Port der Integration-API im Docker-Netz von Pangolin und von außen nicht
