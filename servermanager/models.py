@@ -365,9 +365,10 @@ KIND_MAILCOW = "mailcow"
 KIND_SSO = "sso"
 KIND_PBX = "pbx"
 KIND_ZABBIX = "zabbix"
+KIND_ISPC = "ispconfig"
 INTEGRATION_KINDS = {KIND_PVE: "Proxmox VE", KIND_ROUTER: "RouterOS", KIND_PANGOLIN: "Pangolin",
                      KIND_MAILCOW: "Mailcow", KIND_SSO: "SSO (authentik)", KIND_PBX: "Telefonie (Asterisk/FreePBX)",
-                     KIND_ZABBIX: "Zabbix & Tickets"}
+                     KIND_ZABBIX: "Zabbix & Tickets", KIND_ISPC: "ISPConfig"}
 MAIL_PORTS_DEFAULT = "25,465,587,143,993,110,995,4190,80"
 PANGOLIN_ROLES = {"primary": "Primär", "backup": "Backup-Weg"}
 PVE_HOSTING = {"local": "Lokal (gemeinsames Netz)", "hetzner": "Hetzner (vSwitch)"}
@@ -501,6 +502,26 @@ class PbxServer(IntegrationMixin, Base):
     def source_list(self) -> list[str]:
         import re as _re
         return [x for x in _re.split(r"[,\s]+", self.sip_sources or "") if x]
+
+
+class IspServer(IntegrationMixin, Base):
+    """ISPConfig 3 panel: remote API (set up via SSH), panel UI via Pangolin."""
+
+    __tablename__ = "ispconfig_servers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    api_url: Mapped[str] = mapped_column(String(255), default="")        # https://10.20.0.70:8080/remote/json.php
+    username: Mapped[str] = mapped_column(String(64), default="")
+    password_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    system_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    public_url: Mapped[str] = mapped_column(String(255), default="")     # panel via Pangolin
+    setup: Mapped[Optional[dict]] = mapped_column(JSONText, default=dict)
+
+    @property
+    def panel_url(self) -> str:
+        from urllib.parse import urlsplit
+        p = urlsplit(self.api_url or "")
+        return f"{p.scheme}://{p.netloc}/" if p.netloc else ""
 
 
 class ZabbixServer(IntegrationMixin, Base):

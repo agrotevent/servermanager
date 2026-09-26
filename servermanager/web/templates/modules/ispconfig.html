@@ -13,3 +13,4 @@
   {% for s in data.services %}<span class="badge {{ 'success' if s.state == 'active' else 'danger' }}">{{ s.name }}: {{ s.state }}</span>{% endfor %}
 </div>
 {% elif not error %}{{ empty('Keine Daten.') }}{% endif %}
+{% if user.is_admin %}<p class="mt-1"><a class="btn sm ghost" href="{{ url_for('ispc.index') }}">ISPConfig-Verwaltung (Kunden, Webseiten, E-Mail)</a></p>{% endif %}

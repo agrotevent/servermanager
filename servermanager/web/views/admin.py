@@ -24,7 +24,7 @@ SECTIONS = {
     "checks": ["checks.status_interval_min", "checks.deep_interval_hours", "checks.apt_refresh",
                "checks.docker_image_check", "checks.parallel", "ssh.connect_timeout", "jobs.max_parallel",
                "jobs.log_retention_days", "integrations.poll_min", "integrations.disk_alert_pct",
-               "integrations.notify"],
+               "integrations.notify", "ispconfig.auto_setup"],
     "enroll": ["enroll.tls_pin", "enroll.insecure_tls", "enroll.restrict_ssh_source", "enroll.direct_source",
                "enroll.default_valid_hours"],
     "mail": ["mail.enabled", "mail.host", "mail.port", "mail.security", "mail.user", "mail.sender",

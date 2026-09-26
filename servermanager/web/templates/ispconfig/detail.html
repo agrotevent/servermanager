@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% set help_page = "ispconfig" %}
+{% from "_macros.html" import csrf, empty with context %}
+{% from "integrations/_macros.html" import int_status, alerts_box with context %}
+{% block title %}{{ i.name }} · ISPConfig{% endblock %}
+{% macro act(action, label, cls='xs', confirm='', extra={}) -%}
+  <form method="post" action="{{ url_for('ispc.do', isp_id=i.id) }}" class="inline" {% if confirm %}data-confirm="{{ confirm }}"{% endif %}>{{ csrf() }}
+    <input type="hidden" name="action" value="{{ action }}">{% for k, v in extra.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+    <button class="btn {{ cls }}">{{ label }}</button></form>
+{%- endmacro %}
+{% macro yn(v) %}{% if v|string in ('y', '1') %}<span class="badge success">aktiv</span>{% else %}<span class="badge">inaktiv</span>{% endif %}{% endmacro %}
+{% block content %}
+{% set full = int_can('ispconfig', i.id, 'full') %}{% set op = int_can('ispconfig', i.id, 'operate') %}
+<div class="page-head">
+  <div class="grow"><h1>{{ i.name }} {{ int_status(i) }}</h1>
+    <p>ISPConfig {{ i.data.version or '?' }}{% if system %} · System <a href="{{ url_for('systems.detail', system_id=system.id) }}">{{ system.name }}</a>{% endif %}{% if i.public_url %} · <a href="{{ i.public_url }}" target="_blank" rel="noopener">{{ i.public_url }}</a>{% endif %}</p></div>
+  <div class="actions">{% if user.is_admin %}<a class="btn ghost" href="{{ url_for('ispc.edit', isp_id=i.id) }}"><svg class="icon"><use href="#i-edit"/></svg>Bearbeiten</a>{% endif %}</div>
+</div>
+{{ alerts_box(i) }}
+{% if not i.username %}<div class="alert info">Die Schnittstelle wird gerade eingerichtet bzw. ist noch nicht eingerichtet – siehe Reiter „Zugang“.</div>{% endif %}
+<nav class="tabs">{% for k, v in tabs.items() %}<a href="?tab={{ k }}" class="{{ 'active' if tab == k }}">{{ v }}</a>{% endfor %}</nav>
+{% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+
+{% if tab == 'overview' %}{% set d = i.data %}
+<div class="stats">
+  <a class="stat" href="?tab=clients"><div class="label">Kunden</div><div class="value">{{ d.clients if d.clients is defined else '–' }}</div></a>
+  <a class="stat" href="?tab=sites"><div class="label">Webseiten</div><div class="value">{{ d.websites if d.websites is defined else '–' }}</div><div class="sub">{{ d.websites_inactive or 0 }} inaktiv</div></a>
+  <a class="stat" href="?tab=mail"><div class="label">Postfächer</div><div class="value">{{ d.mailboxes if d.mailboxes is defined else '–' }}</div><div class="sub">{{ d.mail_domains or 0 }} Mail-Domain(s)</div></a>
+  <a class="stat" href="?tab=dns"><div class="label">DNS-Zonen</div><div class="value">{{ d.dns_zones if d.dns_zones is defined else '–' }}</div></a>
+  <a class="stat" href="?tab=databases"><div class="label">Datenbanken</div><div class="value">{{ d.databases if d.databases is defined else '–' }}</div></a>
+</div>
+{% if d.servers %}<div class="card"><div class="card-body"><strong>Server:</strong> {{ d.servers|join(', ') }}</div></div>{% endif %}
+{% if system and system.upd.ispconfig and system.upd.ispconfig.available %}<div class="alert warning">ISPConfig {{ system.upd.ispconfig.latest }} ist verfügbar – Update auf der <a href="{{ url_for('systems.detail', system_id=system.id) }}">System-Seite</a> oder im Wartungsplaner.</div>{% endif %}
+
+{% elif tab == 'clients' and not error %}
+<div class="card"><div class="card-head"><h2>Kunden</h2><input type="search" placeholder="Suchen …" data-filter-list="#cl tbody tr" style="max-width:220px"></div>
+  <div class="table-wrap"><table class="table compact" id="cl"><thead><tr><th>Nr.</th><th>Firma</th><th>Ansprechpartner</th><th>Benutzer</th><th>E-Mail</th><th>Status</th></tr></thead><tbody>
+  {% for c in clients %}<tr><td class="mono">{{ c.customer_no or c.client_id }}</td><td>{{ c.company_name }}</td><td>{{ c.contact_name }}</td><td class="mono">{{ c.username }}</td><td>{{ c.email }}</td>
+    <td>{% if c.locked == 'y' %}<span class="badge danger">gesperrt</span>{% elif c.canceled == 'y' %}<span class="badge">gekündigt</span>{% else %}<span class="badge success">aktiv</span>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="6" class="muted">Keine Kunden.</td></tr>{% endfor %}</tbody></table></div>
+  {% if full %}<div class="card-body"><h4>Kunde anlegen</h4>
+    <form method="post" action="{{ url_for('ispc.do', isp_id=i.id) }}" class="inline-form" autocomplete="off">{{ csrf() }}<input type="hidden" name="action" value="client_add">
+      <div class="field"><label>Firma</label><input type="text" name="company"></div>
+      <div class="field"><label>Ansprechpartner</label><input type="text" name="contact" required></div>
+      <div class="field"><label>E-Mail</label><input type="email" name="email" required></div>
+      <div class="field"><label>Benutzername</label><input type="text" name="username" required pattern="[a-z0-9._-]{2,64}" style="max-width:150px"></div>
+      <div class="field"><label>Passwort</label><input type="password" name="password" placeholder="leer = zufällig" autocomplete="new-password"></div>
+      <button class="btn primary">Anlegen</button></form>
+    <small class="muted">Mit unbegrenzten Limits und den Standard-Servern; Details in ISPConfig anpassen.</small></div>{% endif %}
+</div>
+
+{% elif tab == 'sites' and not error %}
+<div class="card"><div class="card-head"><h2>Webseiten</h2><input type="search" placeholder="Suchen …" data-filter-list="#ws tbody tr" style="max-width:220px"></div>
+  <div class="table-wrap"><table class="table compact" id="ws"><thead><tr><th>Domain</th><th>PHP</th><th>SSL</th><th>Speicher</th><th>Status</th><th></th></tr></thead><tbody>
+  {% for w in sites %}<tr class="{{ 'muted' if w.active != 'y' }}"><td class="mono"><a href="https://{{ w.domain }}" target="_blank" rel="noopener">{{ w.domain }}</a><span class="sub">{{ w.document_root }}</span></td>
+    <td><small>{{ w.php }}{% if w.server_php_id and w.server_php_id|string != '0' %} (#{{ w.server_php_id }}){% endif %}</small></td>
+    <td>{% if w.ssl == 'y' %}<span class="badge success">{{ "Let's Encrypt" if w.ssl_letsencrypt == 'y' else 'SSL' }}</span>{% else %}<span class="badge warning">kein SSL</span>{% endif %}</td>
+    <td><small>{% if w.hd_quota and w.hd_quota|int > 0 %}{{ w.hd_quota }} MB{% else %}unbegrenzt{% endif %}</small></td>
+    <td>{{ yn(w.active) }}</td>
+    <td class="text-right">{% if op %}{{ act('site_active', 'Deaktivieren' if w.active == 'y' else 'Aktivieren', 'xs', ('Webseite ' ~ w.domain ~ ' deaktivieren?') if w.active == 'y' else '', {'id': w.domain_id, 'active': '0' if w.active == 'y' else '1'}) }}{% endif %}</td></tr>
+  {% else %}<tr><td colspan="6" class="muted">Keine Webseiten.</td></tr>{% endfor %}</tbody></table></div></div>
+
+{% elif tab == 'mail' and not error %}
+<div class="card"><div class="card-head"><h2>Postfächer</h2><input type="search" placeholder="Suchen …" data-filter-list="#mb tbody tr" style="max-width:220px"></div>
+  <div class="table-wrap"><table class="table compact" id="mb"><thead><tr><th>Adresse</th><th>Name</th><th>Quota</th><th>Zugriff</th><th></th></tr></thead><tbody>
+  {% for b in boxes %}<tr><td class="mono">{{ b.email }}</td><td>{{ b.name }}</td><td><small>{% if b.quota|int > 0 %}{{ b.quota|int|bytes }}{% else %}unbegrenzt{% endif %}</small></td>
+    <td><small>{% if b.disableimap == 'y' %}kein IMAP {% endif %}{% if b.disablesmtp == 'y' %}kein SMTP{% endif %}{% if b.disableimap != 'y' and b.disablesmtp != 'y' %}IMAP/SMTP{% endif %}</small></td>
+    <td class="nowrap text-right">{% if op %}{{ act('mb_password', 'Neues Passwort', 'xs', 'Neues Passwort für ' ~ b.email ~ ' setzen?', {'id': b.mailuser_id}) }}{% endif %}
+      {% if full %}{{ act('mb_delete', 'Löschen', 'xs danger-outline', 'Postfach ' ~ b.email ~ ' mit allen Mails löschen?', {'id': b.mailuser_id}) }}{% endif %}</td></tr>
+  {% else %}<tr><td colspan="5" class="muted">Keine Postfächer.</td></tr>{% endfor %}</tbody></table></div>
+  {% if full and domains %}<div class="card-body"><h4>Postfach anlegen</h4>
+    <form method="post" action="{{ url_for('ispc.do', isp_id=i.id) }}" class="inline-form" autocomplete="off">{{ csrf() }}<input type="hidden" name="action" value="mb_add">
+      <div class="field"><label>Adresse</label><input type="text" name="local" required placeholder="max.muster" style="max-width:160px"></div>
+      <div class="field"><label>Domain</label><select name="domain_id">{% for d in domains %}<option value="{{ d.domain_id }}">{{ d.domain }}</option>{% endfor %}</select></div>
+      <div class="field"><label>Name</label><input type="text" name="name"></div>
+      <div class="field"><label>Quota (MB)</label><input type="number" name="quota" value="2048" min="0" style="max-width:110px"></div>
+      <div class="field"><label>Passwort</label><input type="password" name="password" placeholder="leer = zufällig" autocomplete="new-password"></div>
+      <button class="btn primary">Anlegen</button></form></div>{% endif %}
+</div>
+<div class="card"><div class="card-head"><h2>Mail-Domains</h2></div>
+  <div class="table-wrap"><table class="table compact"><thead><tr><th>Domain</th><th>DKIM</th><th>Status</th></tr></thead><tbody>
+  {% for d in domains %}<tr><td class="mono">{{ d.domain }}</td><td>{{ yn(d.dkim) }}</td><td>{{ yn(d.active) }}</td></tr>
+  {% else %}<tr><td colspan="3" class="muted">Keine Mail-Domains.</td></tr>{% endfor %}</tbody></table></div></div>
+
+{% elif tab == 'dns' and not error %}
+<div class="card"><div class="table-wrap"><table class="table compact"><thead><tr><th>Zone</th><th>Nameserver</th><th>Serial</th><th>DNSSEC</th><th>Status</th></tr></thead><tbody>
+  {% for z in zones %}<tr><td class="mono">{{ z.origin }}</td><td class="mono"><small>{{ z.ns }}</small></td><td class="mono"><small>{{ z.serial }}</small></td><td>{{ yn(z.dnssec_wanted) }}</td><td>{{ yn(z.active) }}</td></tr>
+  {% else %}<tr><td colspan="5" class="muted">Keine DNS-Zonen.</td></tr>{% endfor %}</tbody></table></div></div>
+
+{% elif tab == 'databases' and not error %}
+<div class="card"><div class="table-wrap"><table class="table compact"><thead><tr><th>Datenbank</th><th>Typ</th><th>Fernzugriff</th><th>Status</th></tr></thead><tbody>
+  {% for d in dbs %}<tr><td class="mono">{{ d.database_name }}</td><td>{{ d.type }}</td><td>{{ yn(d.remote_access) }}</td><td>{{ yn(d.active) }}</td></tr>
+  {% else %}<tr><td colspan="4" class="muted">Keine Datenbanken.</td></tr>{% endfor %}</tbody></table></div></div>
+
+{% elif tab == 'access' %}
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>Remote-API</h2></div><div class="card-body">
+    <dl class="kv"><dt>Adresse</dt><dd class="mono break">{{ i.api_url or '–' }}</dd><dt>Benutzer</dt><dd class="mono">{{ i.username or '–' }}</dd>
+      <dt>Zertifikat</dt><dd class="mono break"><small>{{ i.fingerprint or ('System-CAs' if i.verify_ca else '–') }}</small></dd>
+      {% if i.setup %}<dt>Eingerichtet</dt><dd>{{ (i.setup.at or '')|replace('T', ' ') }} per SSH{% if i.setup.allowed %}, erlaubt von {{ i.setup.allowed }}{% endif %}</dd>{% endif %}</dl>
+    {% if user.is_admin and system %}
+    <form method="post" action="{{ url_for('ispc.setup', isp_id=i.id) }}" class="inline-form mt-1" data-confirm="Remote-Benutzer per SSH neu einrichten (neues Passwort)?">{{ csrf() }}
+      <div class="field"><label>Erlaubte Adresse</label><input type="text" name="allowed" value="{{ i.setup.allowed if i.setup else '' }}" placeholder="automatisch"></div>
+      <button class="btn">{{ 'Neu einrichten' if i.username else 'Per SSH einrichten' }}</button></form>
+    {% endif %}
+    <p class="mt-1"><small class="muted">Der Remote-Benutzer „servermanager“ erhält nur die benötigten Funktionen (Kunden, Webseiten, E-Mail, DNS und Datenbanken lesen; Kunden und Postfächer anlegen; Webseiten aktivieren). Das Passwort ist zufällig und nur verschlüsselt im Servermanager gespeichert.</small></p>
+  </div></div>
+  <div class="card"><div class="card-head"><h2>Oberfläche über Pangolin</h2></div><div class="card-body">
+    <p>{% if i.public_url %}<span class="mono">{{ i.public_url }}</span> → intern <span class="mono">{{ publish.ip }}:{{ publish.port }}</span>{% else %}<span class="muted">Keine öffentliche Adresse hinterlegt.</span>{% endif %}</p>
+    {% if pangolin and publish.ip %}<a class="btn" href="{{ url_for('pangolin.publish', pg_id=pangolin.id, **publish) }}"><svg class="icon"><use href="#i-cloud"/></svg>Über {{ pangolin.name }} veröffentlichen</a>{% endif %}
+    <p class="mt-1"><small class="muted">Die Verwaltungsoberfläche (Port {{ publish.port }}) mit Pangolin-Anmeldung veröffentlichen statt den Port offen ins Internet zu stellen. Die Webseiten der Kunden laufen weiter über die üblichen Wege (Ports 80/443).</small></p>
+  </div></div>
+</div>
+{% endif %}
+{% endblock %}

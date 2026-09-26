@@ -119,7 +119,12 @@ def deep_check(conn: Connection, db: Session, system: System, logger: Optional[L
     apply_facts(system, facts, apt)
     if detect:
         types = set(system.type_list) | set(detect_types(facts))
+        new_types = types - set(system.type_list)
         system.types = sorted(types, key=lambda t: list(MODULES).index(t) if t in MODULES else 99)
+        if "ispconfig" in new_types:
+            from .integrations import ispconfig_auto
+            if ispconfig_auto(db, system):
+                say("ISPConfig erkannt – Einrichtung der Schnittstelle (Remote-API) ist eingeplant.\n")
     upd = dict(system.updates or {})
     for key, mod in MODULES.items():
         if key == "debian" or not mod.applies(system):

@@ -53,3 +53,8 @@ Wird erkannt, wenn `asterisk` installiert ist; FreePBX zusätzlich an `fwconsole
 - **Update-Prüfung:** verfügbare FreePBX-Modul-Updates (`fwconsole ma showupgrades`) erscheinen in der
   Update-Übersicht. Asterisk-Pakete des Betriebssystems laufen über die normalen Debian-Updates.
 - Überwachung, Nebenstellen und SIP-Erreichbarkeit: siehe [Telefonie](telefonie.md).
+
+### ISPConfig: Schnittstelle
+
+Wird ein System als ISPConfig erkannt, richtet der Servermanager automatisch die Remote-API ein und
+legt die Verbindung unter *Infrastruktur → ISPConfig* an – siehe [ISPConfig](ispconfig.md).

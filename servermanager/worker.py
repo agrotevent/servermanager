@@ -33,6 +33,7 @@ from .pveapi import PveError
 from .authentik import AuthentikError
 from .mailcow import MailcowError
 from .sso import SsoError
+from .ispconfig_api import IspError
 from .zabbix import ZabbixError
 
 log = logging.getLogger("servermanager.worker")
@@ -247,7 +248,7 @@ class Worker:
             status, summary = JOB_CANCELLED, "Abgebrochen"
             ctx.say("Job abgebrochen.")
         except (JobFailed, SSHError, ParamError, ValueError, PveError, MikroTikError, PangolinError,
-                AuthentikError, MailcowError, SsoError, ZabbixError) as exc:
+                AuthentikError, MailcowError, SsoError, ZabbixError, IspError) as exc:
             status, summary = JOB_FAILED, str(exc)
             ctx.say(f"FEHLER: {exc}")
         except Exception as exc:  # noqa: BLE001
@@ -1376,6 +1377,57 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
             audit(db, None, "zabbix.host", system.name, f"{zbx.name} hostid {hostid}")
         return (f"Host {host} in Zabbix {'angelegt' if created else 'aktualisiert'} (Agent 2, PSK, "
                 f"Schnittstelle {ip}:10050)")
+
+    # ------------------------------------------------------------------ ISPConfig
+    def job_ispconfig_setup(self, ctx, job_id, system_id, payload) -> str:
+        """Create the servermanager's remote API user via SSH and store the connection (password only here)."""
+        from urllib.parse import urlsplit
+        from . import tlspin
+        from .ispconfig_api import FUNCTIONS, random_password
+        from .models import IspServer
+        from .modules import get_module
+        from .modules.base import parse_kv, run_module_script
+        system = self._system(system_id)
+        with session_scope() as db:
+            isp = db.get(IspServer, int(payload["isp_id"]))
+            if isp is None:
+                raise JobFailed("ISPConfig-Verbindung existiert nicht mehr")
+            db.expunge(isp)
+        password = random_password(32)
+        allowed = (payload.get("allowed") or "").strip() or integrations.source_ip_for(f"https://{system.host}")
+        ctx.say(f"Remote-Benutzer „servermanager“ auf {system.name} anlegen (erlaubt von: {allowed or 'überall'}) …")
+        with self._connect(ctx, system) as conn:
+            text = run_module_script(conn, get_module("ispconfig"), "ispconfig.sh",
+                                     {"SM_TASK": "remote_user", "SM_ISPC_USER": "servermanager",
+                                      "SM_ISPC_PASS": password, "SM_ISPC_FUNCS": ",".join(FUNCTIONS),
+                                      "SM_ISPC_IPS": allowed}, timeout=300)
+        ctx.write(text.replace(password, "***"))
+        if "SM_OK" not in text:
+            raise JobFailed("Einrichtung des Remote-Benutzers fehlgeschlagen")
+        kv = {k: v[-1] for k, v in parse_kv(text).items()}
+        port = int(kv.get("port") or 8080)
+        url = isp.api_url or f"https://{system.host}:{port}/remote/json.php"
+        fingerprint = isp.fingerprint
+        if url.startswith("https://") and not fingerprint and not isp.verify_ca:
+            parts = urlsplit(url)
+            try:
+                fingerprint = tlspin.fetch_fingerprint(parts.hostname, parts.port or port)
+            except tlspin.PinError as exc:
+                raise JobFailed(f"Zertifikat der ISPConfig-Oberfläche nicht abrufbar: {exc}") from exc
+            ctx.say(f"Zertifikat der ISPConfig-Oberfläche gepinnt: {fingerprint}")
+        with session_scope() as db:
+            row = db.get(IspServer, isp.id)
+            row.api_url, row.fingerprint, row.username = url, fingerprint, "servermanager"
+            row.password_enc = security.encrypt(password)
+            row.setup = {"at": utcnow().isoformat(timespec="minutes"), "allowed": allowed, "via": "ssh",
+                         "groups": kv.get("groups", "")}
+            client = integrations.ispconfig_client(row)
+            with client:
+                version = client.version()
+            ctx.say(f"Anmeldung an der Remote-API erfolgreich (ISPConfig {version or kv.get('version', '?')}).")
+            integrations.poll(db, row)
+            audit(db, None, "ispconfig.setup", system.name, url)
+        return f"ISPConfig-Schnittstelle eingerichtet ({url})"
 
     # ------------------------------------------------------------------ SSO
     def _sso_env(self, ctx, kind: str, target_id: int):

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% set help_page = "ispconfig" %}
+{% from "_macros.html" import csrf, field, checkbox with context %}
+{% block title %}{{ 'ISPConfig hinzufügen' if is_new else 'ISPConfig bearbeiten' }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>{{ 'ISPConfig hinzufügen' if is_new else i.name ~ ' bearbeiten' }}</h1></div></div>
+<form method="post" autocomplete="off">{{ csrf() }}
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>ISPConfig</h2></div><div class="card-body"><div class="form-grid">
+    {{ field('Name', 'name', i.name, required=True) }}
+    <div class="field"><label>System (SSH)</label><select name="system_id"><option value="">– keins –</option>
+      {% for x in systems %}<option value="{{ x.id }}" {% if i.system_id == x.id %}selected{% endif %}>{{ x.name }}{% if x.has_type('ispconfig') %} (ISPConfig erkannt){% endif %}</option>{% endfor %}</select></div>
+    {{ field('Oberfläche über Pangolin', 'public_url', i.public_url, placeholder='https://panel.example.com', cls='full') }}
+    {{ field('Beschreibung', 'description', i.description, cls='full') }}
+    {{ checkbox('Überwachen', 'monitor', i.monitor) }}
+  </div></div></div>
+  <div class="card"><div class="card-head"><h2>Schnittstelle (Remote-API)</h2></div><div class="card-body"><div class="form-grid">
+    <div class="field full">
+      <label class="check"><input type="radio" name="mode" value="ssh" {% if mode == 'ssh' %}checked{% endif %}> Automatisch per SSH einrichten (empfohlen)</label>
+      <span class="help">Legt auf dem ISPConfig-Server den Remote-Benutzer „servermanager“ mit zufälligem Passwort und nur den benötigten Funktionen an, beschränkt auf die Adresse des Servermanagers, und pinnt das Zertifikat.</span>
+      <label class="check"><input type="radio" name="mode" value="manual" {% if mode == 'manual' %}checked{% endif %}> Vorhandenen Remote-Benutzer eintragen</label>
+    </div>
+    <div class="field full" data-show-for="mode=ssh"><label>Erlaubte Adresse (optional)</label><input type="text" name="allowed" placeholder="automatisch: Adresse des Servermanagers"></div>
+    <div class="field full" data-show-for="mode=manual"><label>API-Adresse</label><input type="text" name="api_url" value="{{ i.api_url }}" placeholder="https://10.20.0.70:8080/remote/json.php"></div>
+    <div class="field" data-show-for="mode=manual"><label>Remote-Benutzer</label><input type="text" name="username" value="{{ i.username }}"></div>
+    <div class="field" data-show-for="mode=manual"><label>Passwort</label><input type="password" name="password" placeholder="{{ 'hinterlegt – leer lassen' if i.password_enc else '' }}" autocomplete="new-password"></div>
+    <div class="field full" data-show-for="mode=manual"><label>Zertifikats-Fingerabdruck (SHA-256)</label>
+      <div class="flex"><input type="text" name="fingerprint" value="{{ i.fingerprint or '' }}" class="mono grow" placeholder="AA:BB:…"><button class="btn" name="fetch_fp" value="1" formnovalidate>Abrufen</button></div></div>
+    <div class="full" data-show-for="mode=manual">{{ checkbox('Zertifikat über die System-CAs prüfen', 'verify_ca', i.verify_ca) }}</div>
+  </div></div></div>
+</div>
+<div class="actions mt-1"><button class="btn primary">Speichern</button><a class="btn" href="{{ url_for('ispc.index') if is_new else url_for('ispc.detail', isp_id=i.id) }}">Abbrechen</a></div>
+</form>
+{% if not is_new %}
+<div class="card danger-zone mt-2"><div class="card-head"><h2>Verbindung entfernen</h2></div><div class="card-body">
+  <form method="post" action="{{ url_for('ispc.delete', isp_id=i.id) }}" data-confirm="Verbindung {{ i.name }} entfernen?">{{ csrf() }}<button class="btn danger">Entfernen</button></form>
+</div></div>
+{% endif %}
+{% endblock %}

@@ -20,7 +20,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import discovery, integrations, pve, routeros, settings
-from .models import MailcowServer, PangolinServer, PbxServer, PveServer, RouterDevice, SsoClient, SsoServer, System
+from .models import (IspServer, MailcowServer, PangolinServer, PbxServer, PveServer, RouterDevice, SsoClient,
+                     SsoServer, System)
 from .pveapi import PveError
 
 HTTP_PORTS = {80: "http", 8080: "http", 8000: "http", 3000: "http", 443: "https", 8443: "https"}
@@ -454,6 +455,8 @@ def scan_apps(db: Session, pangolins: list[PangolinServer], services: dict) -> l
         apps.append(("mailcow", mc, mc.public_url, mc.api_url, f"Mailcow {mc.name}"))
     for p in db.execute(select(PbxServer)).scalars():
         apps.append(("pbx", p, p.public_url, p.web_url, f"Telefonanlage {p.name}"))
+    for i in db.execute(select(IspServer)).scalars():
+        apps.append(("ispconfig", i, i.public_url, i.panel_url, f"ISPConfig {i.name}"))
     for cl in db.execute(select(SsoClient).where(SsoClient.target_kind == "nextcloud")).scalars():
         system = db.get(System, cl.target_id)
         if system:

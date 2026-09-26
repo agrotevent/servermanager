@@ -2,6 +2,17 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.10.0 – 26.09.2026
+
+### Neu
+
+- **ISPConfig** unter *Infrastruktur*: Kunden, Webseiten, E-Mail, DNS und Datenbanken über die
+  Remote-API; Kunden und Postfächer anlegen, Postfach-Passwörter setzen, Webseiten (de)aktivieren.
+- Die Schnittstelle wird **automatisch per SSH eingerichtet**, sobald ein System als ISPConfig erkannt
+  wird: eigener Remote-Benutzer mit Zufallspasswort, nur den benötigten Funktionen und Beschränkung auf
+  die Adresse des Servermanagers; Zertifikat wird gepinnt. Vorhandene Systeme per Klick.
+- Die ISPConfig-Oberfläche wird in den Optimierungen zur Veröffentlichung über Pangolin vorgeschlagen.
+
 ## 1.9.0 – 26.09.2026
 
 ### Neu

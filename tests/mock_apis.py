@@ -30,6 +30,7 @@ PVE_TOKEN = "servermanager@pve!sm"
 PVE_SECRET = "11111111-2222-3333-4444-555555555555"
 ROS_USER, ROS_PASS = "servermanager", "routerpass"
 ZBX_TOKEN = "zbx-token-123"
+ISP_USER, ISP_PASS = "servermanager", "IspPass1234567890abcdef"
 PG_KEY = "pgkey.secret"
 MC_KEY = "mc-api-key"
 AK_TOKEN = "ak-token"
@@ -189,9 +190,83 @@ class MockApp:
                 resp = self.authentik(req, req.path[len("/api/v3/"):])
             elif req.path == "/zabbix/api_jsonrpc.php":
                 resp = self.zabbix(req)
+            elif req.path == "/remote/json.php":
+                resp = self.ispconfig(req)
             else:
                 resp = Response("not found", 404)
         return resp(environ, start_response)
+
+    # ------------------------------------------------------------------ ispconfig
+    def ispconfig(self, req: Request) -> Response:
+        s = self.s
+        st = s.__dict__.setdefault("isp", {
+            "users": {ISP_USER: ISP_PASS}, "sessions": set(), "seq": 10,
+            "clients": [{"client_id": "1", "company_name": "Muster GmbH", "contact_name": "Max Muster",
+                         "username": "muster", "email": "max@muster.de", "locked": "n", "canceled": "n"}],
+            "sites": [{"domain_id": "3", "domain": "muster.de", "type": "vhost", "active": "y", "ssl": "y",
+                       "ssl_letsencrypt": "y", "php": "php-fpm", "sys_groupid": "2", "hd_quota": "-1",
+                       "document_root": "/var/www/clients/client1/web1"},
+                      {"domain_id": "4", "domain": "alias.muster.de", "type": "alias", "active": "y"}],
+            "mail_domains": [{"domain_id": "5", "domain": "muster.de", "server_id": "1", "sys_groupid": "2",
+                              "active": "y", "dkim": "y"}],
+            "mail_users": [{"mailuser_id": "7", "email": "info@muster.de", "name": "Info", "quota": "1073741824",
+                            "sys_groupid": "2", "disableimap": "n", "disablesmtp": "n"}],
+            "dns": [{"id": "9", "origin": "muster.de.", "ns": "ns1.muster.de.", "serial": "2026092601",
+                     "active": "Y", "dnssec_wanted": "N"}],
+            "dbs": [{"database_id": "11", "database_name": "c1_wp", "type": "mysql", "active": "y",
+                     "remote_access": "n"}],
+            "calls": []})
+        function = req.query_string.decode()
+        body = req.get_json(silent=True, force=True) or {}
+        st["calls"].append((function, body))
+
+        def ok(resp):
+            return _json({"code": "ok", "message": "", "response": resp})
+
+        def fail(msg):
+            return _json({"code": "remote_fault", "message": msg, "response": False}, 500)
+        if function == "login":
+            if st["users"].get(body.get("username")) != body.get("password"):
+                return fail("The login failed. Username or password wrong.")
+            sid = f"sess{len(st['sessions']) + 1}"
+            st["sessions"].add(sid)
+            return ok(sid)
+        if body.get("session_id") not in st["sessions"]:
+            return fail("The session ID is empty or wrong.")
+        if function == "logout":
+            st["sessions"].discard(body["session_id"])
+            return ok(True)
+        tables = {"client_get": "clients", "sites_web_domain_get": "sites", "mail_domain_get": "mail_domains",
+                  "mail_user_get": "mail_users", "dns_zone_get": "dns", "sites_database_get": "dbs"}
+        if function in tables:
+            return ok(st[tables[function]] if body.get("primary_id") == -1 else [])
+        if function == "server_get_app_version":
+            return ok({"ispc_app_version": "3.2.12p1", "ispc_app_version_major": "3"})
+        if function == "server_get_all":
+            return ok([{"server_id": "1", "server_name": "web01.muster.de"}])
+        if function == "client_get_by_groupid":
+            return ok({"client_id": "1"} if body.get("group_id") == 2 else False)
+        if function == "sites_web_domain_update":
+            site = next(w for w in st["sites"] if w["domain_id"] == str(body["primary_id"]))
+            site.update(body["params"])
+            return ok(1)
+        if function == "mail_user_add":
+            st["seq"] += 1
+            st["mail_users"].append(dict(body["params"], mailuser_id=str(st["seq"]), sys_groupid="2",
+                                         _client_id=body.get("client_id")))
+            return ok(st["seq"])
+        if function == "mail_user_update":
+            box = next(b for b in st["mail_users"] if b["mailuser_id"] == str(body["primary_id"]))
+            box.update(body["params"])
+            return ok(1)
+        if function == "mail_user_delete":
+            st["mail_users"] = [b for b in st["mail_users"] if b["mailuser_id"] != str(body["primary_id"])]
+            return ok(1)
+        if function == "client_add":
+            st["seq"] += 1
+            st["clients"].append(dict(body["params"], client_id=str(st["seq"])))
+            return ok(st["seq"])
+        return fail(f"You do not have the permissions to access this function ({function}).")
 
     # ------------------------------------------------------------------ zabbix
     def zabbix(self, req: Request) -> Response:

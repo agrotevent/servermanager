@@ -33,6 +33,7 @@ KIND_LABELS = {
     "sso_connect": "SSO verbinden",
     "sso_disconnect": "SSO trennen",
     "zabbix_agent": "Zabbix-Agent einrichten",
+    "ispconfig_setup": "ISPConfig-Schnittstelle einrichten",
 }
 
 # steps of "pve_create"; a failed job is retried from the step it failed in

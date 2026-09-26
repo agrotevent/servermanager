@@ -36,6 +36,7 @@
           <div class="full">
             {{ checkbox('Paketlisten automatisch aktualisieren (apt-get update)', 'checks__apt_refresh', v['checks.apt_refresh']) }}
             {{ checkbox('Warnungen der API-Verbindungen per E-Mail melden (neu/behoben)', 'integrations__notify', v['integrations.notify']) }}
+            {{ checkbox('ISPConfig-Schnittstelle automatisch per SSH einrichten, sobald ein System als ISPConfig erkannt wird', 'ispconfig__auto_setup', v['ispconfig.auto_setup']) }}
             {{ checkbox('Docker-Images regelmäßig auf neue Versionen prüfen (lädt Images per docker pull)', 'checks__docker_image_check', v['checks.docker_image_check']) }}
           </div>
         </div>

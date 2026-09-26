@@ -10,9 +10,10 @@ from . import notify, pve, security, settings
 from .mikrotik import MikroTik, MikroTikError
 from .authentik import Authentik, AuthentikError
 from .mailcow import Mailcow, MailcowError
-from .models import (KIND_MAILCOW, KIND_PANGOLIN, KIND_PBX, KIND_PVE, KIND_ROUTER, KIND_SSO, KIND_ZABBIX,
-                     STATUS_ERROR, STATUS_ONLINE, MailcowServer, PangolinServer, PbxServer, PveServer, RouterDevice,
-                     SsoServer, System, ZabbixHost, ZabbixServer, utcnow)
+from .ispconfig_api import IspConfig, IspError
+from .models import (KIND_ISPC, KIND_MAILCOW, KIND_PANGOLIN, KIND_PBX, KIND_PVE, KIND_ROUTER, KIND_SSO,
+                     KIND_ZABBIX, STATUS_ERROR, STATUS_ONLINE, IspServer, MailcowServer, PangolinServer, PbxServer,
+                     PveServer, RouterDevice, SsoServer, System, ZabbixHost, ZabbixServer, utcnow)
 from .pangolin import Pangolin, PangolinError
 from .pbx import PbxError
 from .pveapi import PveError
@@ -22,12 +23,14 @@ from .zabbix import Zabbix, ZabbixError
 log = logging.getLogger(__name__)
 
 MODELS = {KIND_PVE: PveServer, KIND_ROUTER: RouterDevice, KIND_PANGOLIN: PangolinServer,
-          KIND_MAILCOW: MailcowServer, KIND_SSO: SsoServer, KIND_PBX: PbxServer, KIND_ZABBIX: ZabbixServer}
+          KIND_MAILCOW: MailcowServer, KIND_SSO: SsoServer, KIND_PBX: PbxServer, KIND_ZABBIX: ZabbixServer,
+          KIND_ISPC: IspServer}
 LABELS = {KIND_PVE: "Proxmox", KIND_ROUTER: "RouterOS", KIND_PANGOLIN: "Pangolin", KIND_MAILCOW: "Mailcow",
-          KIND_SSO: "SSO", KIND_PBX: "Telefonie", KIND_ZABBIX: "Zabbix"}
-Integration = Union[PveServer, RouterDevice, PangolinServer, MailcowServer, SsoServer, PbxServer, ZabbixServer]
-ApiError = (PveError, MikroTikError, PangolinError, MailcowError, AuthentikError, PbxError, ZabbixError, SSHError,
-            ValueError)
+          KIND_SSO: "SSO", KIND_PBX: "Telefonie", KIND_ZABBIX: "Zabbix", KIND_ISPC: "ISPConfig"}
+Integration = Union[PveServer, RouterDevice, PangolinServer, MailcowServer, SsoServer, PbxServer, ZabbixServer,
+                    IspServer]
+ApiError = (PveError, MikroTikError, PangolinError, MailcowError, AuthentikError, PbxError, ZabbixError, IspError,
+            SSHError, ValueError)
 
 
 def kind_of(obj: Integration) -> str:
@@ -105,6 +108,38 @@ def zabbix_overview(db: Session, z: ZabbixServer, zx: Zabbix) -> tuple[dict, lis
     return data, alerts
 
 
+def ispconfig_client(i: IspServer, timeout: int = 30) -> IspConfig:
+    if not i.api_url or not i.username:
+        raise IspError("Schnittstelle noch nicht eingerichtet")
+    return IspConfig(i.api_url, i.username, security.decrypt(i.password_enc), fingerprint=i.fingerprint or "",
+                     verify_ca=bool(i.verify_ca), timeout=timeout)
+
+
+def ispconfig_overview(isp: IspConfig) -> dict:
+    with isp:
+        sites = isp.websites()
+        boxes = isp.mailboxes()
+        return {"version": isp.version(), "clients": len(isp.clients()), "websites": len(sites),
+                "websites_inactive": sum(1 for w in sites if str(w.get("active")) == "n"),
+                "mail_domains": len(isp.mail_domains()), "mailboxes": len(boxes), "databases": len(isp.databases()),
+                "dns_zones": len(isp.dns_zones()), "servers": [s.get("server_name") for s in isp.servers()]}
+
+
+def ispconfig_auto(db: Session, system: System) -> Optional[int]:
+    """A system was detected as ISPConfig: create the connection and queue the SSH setup (once)."""
+    from . import jobs
+    if not settings.get(db, "ispconfig.auto_setup") or not system.id:
+        return None
+    if db.query(IspServer).filter(IspServer.system_id == system.id).first():
+        return None
+    isp = IspServer(name=system.name, system_id=system.id, monitor=True, verify_ca=False)
+    db.add(isp)
+    db.flush()
+    job = jobs.enqueue(db, kind="ispconfig_setup", title=f"ISPConfig-Schnittstelle: {system.name}", system=system,
+                       payload={"isp_id": isp.id, "auto": True})
+    return job.id
+
+
 def pangolin_client(p: PangolinServer, timeout: int = 20) -> Pangolin:
     return Pangolin(p.api_url, security.decrypt(p.api_key_enc), p.org_id, fingerprint=p.fingerprint or "",
                     timeout=timeout)
@@ -174,6 +209,8 @@ def poll(db: Session, obj: Integration) -> list[dict]:
             alerts = pbx.alerts(data)
         elif kind == KIND_ZABBIX:
             data, alerts = zabbix_overview(db, obj, zabbix_client(obj))
+        elif kind == KIND_ISPC:
+            data = ispconfig_overview(ispconfig_client(obj))
         elif kind == KIND_SSO:
             au = sso_client(obj)
             data = {"version": au.version(), "applications": len(au.applications())}

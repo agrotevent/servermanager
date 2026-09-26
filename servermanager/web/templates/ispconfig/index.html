@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% set help_page = "ispconfig" %}
+{% from "_macros.html" import csrf, empty with context %}
+{% from "integrations/_macros.html" import int_status with context %}
+{% block title %}ISPConfig{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>ISPConfig</h1><p>Kunden, Webseiten, E-Mail, DNS und Datenbanken über die Remote-API. Die Schnittstelle richtet der Servermanager per SSH selbst ein.</p></div>
+  {% if user.is_admin %}<div class="actions"><a class="btn primary" href="{{ url_for('ispc.new') }}"><svg class="icon"><use href="#i-plus"/></svg>ISPConfig hinzufügen</a></div>{% endif %}
+</div>
+{% if unlinked %}
+<div class="card"><div class="card-head"><h2>Erkannte ISPConfig-Systeme ohne Schnittstelle</h2></div>
+  <div class="card-body"><ul class="list-plain">{% for s in unlinked %}<li><a class="grow" href="{{ url_for('systems.detail', system_id=s.id) }}">{{ s.name }}</a><small class="muted">ISPConfig {{ s.fact.ispconfig_version or '?' }}</small>
+    <form method="post" action="{{ url_for('ispc.quick', system_id=s.id) }}" class="inline" data-confirm="Auf {{ s.name }} per SSH einen Remote-Benutzer „servermanager“ anlegen und die Schnittstelle einrichten?">{{ csrf() }}<button class="btn sm primary">Schnittstelle einrichten</button></form></li>{% endfor %}</ul></div>
+</div>
+{% endif %}
+{% if items %}
+<div class="card"><div class="table-wrap"><table class="table">
+  <thead><tr><th>ISPConfig</th><th>Status</th><th>Version</th><th>Kunden</th><th>Webseiten</th><th>Postfächer</th><th>DNS-Zonen</th></tr></thead>
+  <tbody>{% for i in items %}{% set d = i.data %}
+    <tr><td><a href="{{ url_for('ispc.detail', isp_id=i.id) }}"><strong>{{ i.name }}</strong></a><span class="sub">{{ i.public_url or i.api_url or 'Schnittstelle wird eingerichtet' }}</span></td>
+      <td>{{ int_status(i) }}<span class="sub">{{ i.last_poll|ago }}</span></td><td>{{ d.version or '–' }}</td>
+      <td>{{ d.clients if d.clients is defined else '–' }}</td>
+      <td>{{ d.websites if d.websites is defined else '–' }}{% if d.websites_inactive %} <small class="muted">({{ d.websites_inactive }} inaktiv)</small>{% endif %}</td>
+      <td>{{ d.mailboxes if d.mailboxes is defined else '–' }}</td><td>{{ d.dns_zones if d.dns_zones is defined else '–' }}</td></tr>
+  {% endfor %}</tbody></table></div></div>
+{% elif not unlinked %}<div class="card"><div class="card-body">{{ empty('Noch kein ISPConfig angebunden. Systeme mit ISPConfig werden beim Hinzufügen erkannt und automatisch eingerichtet.', 'i-globe') }}</div></div>{% endif %}
+{% endblock %}

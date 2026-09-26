@@ -62,6 +62,7 @@
       {% if 'router' in ni %}<a href="{{ url_for('routers.index') }}" class="{{ 'active' if bp == 'routers' }}"><svg class="icon"><use href="#i-router"/></svg>RouterOS</a>{% endif %}
       {% if 'pangolin' in ni %}<a href="{{ url_for('pangolin.index') }}" class="{{ 'active' if bp == 'pangolin' }}"><svg class="icon"><use href="#i-globe"/></svg>Pangolin</a>{% endif %}
       {% if 'mailcow' in ni %}<a href="{{ url_for('mailcow.index') }}" class="{{ 'active' if bp == 'mailcow' }}"><svg class="icon"><use href="#i-archive"/></svg>Mailcow</a>{% endif %}
+      {% if 'ispconfig' in ni %}<a href="{{ url_for('ispc.index') }}" class="{{ 'active' if bp == 'ispc' }}"><svg class="icon"><use href="#i-globe"/></svg>ISPConfig</a>{% endif %}
       {% if 'zabbix' in ni %}<a href="{{ url_for('zabbix.index') }}" class="{{ 'active' if bp == 'zabbix' }}"><svg class="icon"><use href="#i-pulse"/></svg>Zabbix</a>{% endif %}
       {% if 'pbx' in ni %}<a href="{{ url_for('pbx.index') }}" class="{{ 'active' if bp == 'pbx' }}"><svg class="icon"><use href="#i-phone"/></svg>Telefonie</a>{% endif %}
       {% if 'sso' in ni %}<a href="{{ url_for('sso.index') }}" class="{{ 'active' if bp == 'sso' }}"><svg class="icon"><use href="#i-user"/></svg>SSO</a>{% endif %}

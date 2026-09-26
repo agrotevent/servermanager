@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # Env: SM_TASK
-ISPC=/usr/local/ispconfig
+ISPC="${SM_ISPC_DIR:-/usr/local/ispconfig}"
 CFG=$ISPC/server/lib/config.inc.php
 [ -f "$CFG" ] || die "ISPConfig ist nicht installiert ($CFG fehlt)"
 
@@ -25,7 +25,56 @@ fetch() {
     fi
 }
 
+ispc_db() {  # query the ISPConfig database with the credentials of the ISPConfig server part
+    local user pass name host
+    user="$(sed -n "s/^\$conf\['db_user'\][[:space:]]*=[[:space:]]*'\([^']*\)'.*/\1/p" "$CFG" | head -n 1)"
+    pass="$(sed -n "s/^\$conf\['db_password'\][[:space:]]*=[[:space:]]*'\([^']*\)'.*/\1/p" "$CFG" | head -n 1)"
+    name="$(sed -n "s/^\$conf\['db_database'\][[:space:]]*=[[:space:]]*'\([^']*\)'.*/\1/p" "$CFG" | head -n 1)"
+    host="$(sed -n "s/^\$conf\['db_host'\][[:space:]]*=[[:space:]]*'\([^']*\)'.*/\1/p" "$CFG" | head -n 1)"
+    MYSQL_PWD="$pass" mysql -h "${host:-localhost}" -u "${user:-ispconfig}" -B -N "${name:-dbispconfig}" -e "$1"
+}
+
 case "${SM_TASK}" in
+    remote_user)
+        # dedicated remote API user for the servermanager (only the needed function groups)
+        [[ "${SM_ISPC_USER:-}" =~ ^[a-z][a-z0-9_-]{2,31}$ ]] || die "Ungültiger Benutzername"
+        [[ "${SM_ISPC_PASS:-}" =~ ^[A-Za-z0-9]{20,64}$ ]] || die "Ungültiges Passwort"
+        [[ "${SM_ISPC_FUNCS:-}" =~ ^[a-z_,]+$ ]] || die "Ungültige Funktionsliste"
+        [[ "${SM_ISPC_IPS:-}" =~ ^[0-9a-fA-F.:/,]*$ ]] || die "Ungültige Adressliste"
+        [ -d "$ISPC/interface/web" ] || die "Auf diesem Server ist keine ISPConfig-Oberfläche installiert (nur Server-Teil einer Multiserver-Installation?) - die Schnittstelle am Master einrichten"
+        command -v php >/dev/null 2>&1 || die "php nicht gefunden"
+        # shellcheck disable=SC2016 # PHP code
+        groups="$(SM_ISPC_FUNCS="$SM_ISPC_FUNCS" SM_ISPC_DIR="$ISPC" php -r '
+            $function_list = array();
+            foreach (glob(getenv("SM_ISPC_DIR") . "/interface/web/*/lib/remote.conf.php") as $f) { include $f; }
+            $need = explode(",", getenv("SM_ISPC_FUNCS"));
+            $out = array();
+            foreach (array_keys($function_list) as $k) {
+                if (array_intersect(explode(",", $k), $need)) { $out[] = $k; }
+            }
+            echo implode(";", $out);')"
+        [[ "$groups" =~ ^[A-Za-z0-9_,\;]+$ ]] || die "Funktionsgruppen der Remote-API nicht gefunden"
+        hash="$(printf '%s' "$SM_ISPC_PASS" | openssl passwd -6 -stdin)"
+        [[ "$hash" =~ ^\$6\$[./A-Za-z0-9]+\$[./A-Za-z0-9]+$ ]] || die "Passwort-Hash fehlgeschlagen"
+        has_ips="$(ispc_db "SHOW COLUMNS FROM remote_user LIKE 'remote_ips'" | head -n 1)"
+        id="$(ispc_db "SELECT remote_userid FROM remote_user WHERE remote_username='$SM_ISPC_USER'" | head -n 1)"
+        if [ -n "$id" ]; then
+            ispc_db "UPDATE remote_user SET remote_password='$hash', remote_functions='$groups', remote_access='y' WHERE remote_userid=$id" \
+                || die "Remote-Benutzer konnte nicht aktualisiert werden"
+            log "Remote-Benutzer $SM_ISPC_USER aktualisiert"
+        else
+            ispc_db "INSERT INTO remote_user (sys_userid, sys_groupid, sys_perm_user, sys_perm_group, sys_perm_other, remote_username, remote_password, remote_functions, remote_access) VALUES (1, 1, 'riud', 'riud', '', '$SM_ISPC_USER', '$hash', '$groups', 'y')" \
+                || die "Remote-Benutzer konnte nicht angelegt werden"
+            log "Remote-Benutzer $SM_ISPC_USER angelegt"
+        fi
+        if [ -n "$has_ips" ]; then
+            ispc_db "UPDATE remote_user SET remote_ips='${SM_ISPC_IPS:-}' WHERE remote_username='$SM_ISPC_USER'"
+        fi
+        echo "version=$(ispc_version)"
+        echo "port=$(ispc_port)"
+        echo "groups=$(printf '%s\n' "$groups" | tr ';' '\n' | wc -l)"
+        echo "SM_OK"
+        ;;
     check)
         echo "installed=$(ispc_version)"
         tmp="$(mktemp)"

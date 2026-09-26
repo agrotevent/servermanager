@@ -75,6 +75,7 @@ DEFAULTS: dict[str, Any] = {
     "integrations.poll_min": 5,
     "integrations.disk_alert_pct": 90,
     "integrations.notify": True,
+    "ispconfig.auto_setup": True,        # set up the remote API when an ISPConfig system is detected
     # cached state
     "state.ispconfig_latest": "",
     "state.ispconfig_checked": "",
