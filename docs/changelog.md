@@ -2,6 +2,15 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.6.1 – 26.09.2026
+
+### Verbessert
+
+- RouterOS-Ping-Test: Bei „Keine Antwort“ werden der Grund je Paket (z. B. Zeitüberschreitung, keine
+  Route) und eine Diagnose angezeigt – fehlende/inaktive Default-Route (mit Hinweis für das Hetzner-Gateway
+  172.31.1.1), Erreichbarkeit des Gateways, verwerfende Regeln in `chain=output` und Routing-Marken für
+  Router-eigene Pakete.
+
 ## 1.6.0 – 26.09.2026
 
 ### Neu

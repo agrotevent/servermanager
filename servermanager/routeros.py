@@ -1042,3 +1042,82 @@ def apply_ops(mt: MikroTik, ops: list[dict], log: Callable[[str], None]) -> int:
         log(op_to_cli(op))
         done += 1
     return done
+
+
+# --------------------------------------------------------------------------
+# ping test diagnosis
+# --------------------------------------------------------------------------
+PING_STATUS = {"timeout": "Zeitüberschreitung", "no route to host": "keine Route zum Ziel",
+               "net unreachable": "Netz nicht erreichbar", "host unreachable": "Host nicht erreichbar"}
+_IP_IN = re.compile(r"(\d{1,3}(?:\.\d{1,3}){3})")
+
+
+def ping_result(res: Any) -> dict:
+    """Summary of a /ping reply (list of per-packet entries, the last one carries the totals)."""
+    rows = res if isinstance(res, list) else ([res] if isinstance(res, dict) else [])
+    last = rows[-1] if rows else {}
+    statuses = []
+    for r in rows:
+        st = str(r.get("status") or "").strip()
+        if st and st not in statuses:
+            statuses.append(st)
+    return {"sent": str(last.get("sent", "?")), "received": str(last.get("received", "")),
+            "avg": last.get("avg-rtt", "?"), "statuses": statuses}
+
+
+def ping_diagnosis(mt: MikroTik, target: str, src: str = "") -> list[str]:
+    """Likely causes when the router itself cannot reach a host (each check is best effort)."""
+    hints: list[str] = []
+    try:
+        routes = [r for r in mt.get("ip/route") if r.get("dst-address") == "0.0.0.0/0" and enabled(r)
+                  and r.get("routing-table", "main") in ("main", "")]
+    except MikroTikError:
+        routes = None
+    gw_ip = ""
+    if routes is not None:
+        active = [r for r in routes if yes(r.get("active"))]
+        if not routes:
+            hints.append("Keine Default-Route (0.0.0.0/0) in der Tabelle main – DHCP-Client mit "
+                         "add-default-route=yes oder /ip route add dst-address=0.0.0.0/0 gateway=<GATEWAY>.")
+        elif not active:
+            gws = ", ".join(str(r.get("gateway", "?")) for r in routes)
+            hints.append(f"Default-Route vorhanden, aber nicht aktiv (Gateway {gws} nicht erreichbar). Liegt das "
+                         "Gateway außerhalb des eigenen Netzes (z. B. Hetzner Cloud: 172.31.1.1 bei einer /32-Adresse), "
+                         "das Interface mit angeben: gateway=172.31.1.1%<WAN-Interface>.")
+        else:
+            m = _IP_IN.search(str(active[0].get("immediate-gw") or active[0].get("gateway") or ""))
+            gw_ip = m.group(1) if m else ""
+    if gw_ip and gw_ip != target:
+        try:
+            gw = ping_result(mt.command("ping", {"address": gw_ip, "count": "2"}, timeout=20))
+            if gw["received"] in ("0", ""):
+                hints.append(f"Auch das Gateway {gw_ip} antwortet nicht – Anbindung zum Provider prüfen "
+                             "(manche Gateways beantworten allerdings keinen Ping).")
+            else:
+                hints.append(f"Das Gateway {gw_ip} antwortet – das Problem liegt dahinter oder in einer Filterregel.")
+        except MikroTikError:
+            pass
+    try:
+        drops = [r for r in mt.get("ip/firewall/filter") if r.get("chain") == "output" and enabled(r)
+                 and r.get("action") in ("drop", "reject")]
+        if drops:
+            hints.append(f"{len(drops)} Firewall-Regel(n) in chain=output verwerfen Pakete des Routers selbst.")
+    except MikroTikError:
+        pass
+    try:
+        marks = [r for r in mt.get("ip/firewall/mangle") if r.get("chain") == "output" and enabled(r)
+                 and r.get("action") == "mark-routing"]
+        if marks:
+            tables = ", ".join(sorted({str(r.get("new-routing-mark", "?")) for r in marks}))
+            hints.append(f"Mangle-Regeln in chain=output leiten Pakete des Routers über die Tabelle(n) {tables} "
+                         "– dort muss eine funktionierende Default-Route existieren.")
+    except MikroTikError:
+        pass
+    if src:
+        try:
+            local = {str(a.get("address", "")).split("/")[0] for a in mt.get("ip/address")}
+            if src not in local:
+                hints.append(f"Die Quelladresse {src} ist keine Adresse des Routers.")
+        except MikroTikError:
+            pass
+    return hints

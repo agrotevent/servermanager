@@ -54,7 +54,7 @@ erlauben und später unter *Bearbeiten → API-Benutzer* auf das Management-Netz
 | Reiter | Inhalt | Aktionen |
 |---|---|---|
 | Geräte | alle Geräte im Netz (DHCP-Leases + ARP) mit Lease-Art, Portfreigaben und zugehörigem System | Lease statisch machen, als System anlegen |
-| Übersicht | CPU, RAM, Laufzeit, Interfaces mit Traffic, Adressen, Routen | Ping-Test vom Router (optional mit LAN-IP als Quelle – prüft NAT/Policy-Routing) |
+| Übersicht | CPU, RAM, Laufzeit, Interfaces mit Traffic, Adressen, Routen | Ping-Test vom Router (optional mit LAN-IP als Quelle – prüft NAT/Policy-Routing); ohne Antwort werden Default-Route, Gateway und Filterregeln geprüft ([Fehlerbehebung](fehlerbehebung.md)) |
 | DHCP | Leases, Server, Netze | Lease **statisch machen**, statische Lease anlegen/löschen |
 | NAT | alle NAT-Regeln | aktivieren/deaktivieren, Portweiterleitung anlegen, löschen |
 | Routing & Mangle | Routing-Tabellen, -Regeln, Mangle, statische Routen | Route anlegen/löschen |

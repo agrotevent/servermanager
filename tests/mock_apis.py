@@ -458,6 +458,10 @@ class MockApp:
         if path == "export":
             return _json([])
         if path == "ping":
+            if body.get("address") in s.ros.get("_unreachable", []):
+                n = body.get("count", "3")
+                return _json([{"seq": "0", "sent": "1", "received": "0", "status": "timeout"},
+                              {"sent": n, "received": "0", "packet-loss": "100", "status": "timeout"}])
             return _json([{"seq": "0", "sent": "1", "received": "1"}, {"sent": "3", "received": "3", "avg-rtt": "5ms"}])
         return _json({"error": 400, "message": f"no such command {path}"}, 400)
 

@@ -10,6 +10,26 @@
 | MikroTik-API: 401 | Benutzer, Passwort, `address=`-Einschränkung und Gruppe (`rest-api`, `read`, `write`) prüfen |
 | Passwort vergessen | `servermanager-cli reset-password NAME` |
 
+## RouterOS: Ping-Test „Keine Antwort von 1.1.1.1“
+
+Der Router selbst erreicht das Ziel nicht. Bei einem Fehlschlag prüft der Servermanager automatisch und
+nennt die wahrscheinliche Ursache:
+
+- **Keine oder keine aktive Default-Route** in der Tabelle `main`. Bei Hetzner Cloud liegt das Gateway
+  `172.31.1.1` außerhalb der /32-Adresse – die Route braucht das Interface:
+  `/ip route add dst-address=0.0.0.0/0 gateway=172.31.1.1%ether1` (Interface anpassen). Bei einem
+  DHCP-Client auf dem WAN-Interface `add-default-route=yes` prüfen.
+- **Gateway antwortet nicht:** Anbindung/Provider prüfen (einige Gateways beantworten keinen Ping).
+- **Gateway antwortet, Ziel nicht:** Filterregeln prüfen – Regeln in `chain=output` mit `drop`/`reject`
+  betreffen Pakete des Routers selbst.
+- **Mangle in `chain=output` mit `mark-routing`:** Pakete des Routers laufen dann über diese
+  Routing-Tabelle, die eine funktionierende Default-Route braucht.
+- Mit **Quelle** (LAN-Adresse) muss die Adresse auf dem Router existieren; ohne Antwort dann
+  NAT (masquerade) und Policy-Routing der Konfigurationsanalyse prüfen.
+
+Von Hand auf dem Router: `/ip route print where dst-address=0.0.0.0/0`, `/ping 1.1.1.1` und
+`/ping <Gateway>`.
+
 ## RouterOS: „Anmeldung … fehlgeschlagen“
 
 Der Router antwortet mit 401. Häufigste Ursachen:

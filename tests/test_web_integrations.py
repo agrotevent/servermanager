@@ -336,3 +336,34 @@ def test_system_resetup_via_proxmox(app, env, db):
     assert op.post(f"/proxmox/system/{env['system']}/resetup", data={"csrf_token": op.csrf}).status_code == 403
     # import page offers the guest again while the system is not online
     assert "Einrichtung wiederholen" in admin.get(f"/proxmox/{env['pve']}/import").text
+
+
+def test_router_ping_failure_is_diagnosed(app, env, mock):
+    c = login(app, "i-admin")
+    ros = mock.state.ros
+    saved = {k: ros.get(k) for k in ("ip/route", "ip/firewall/filter", "_unreachable")}
+    try:
+        ros["_unreachable"] = ["1.1.1.1", "172.31.1.1"]
+        ros["ip/firewall/filter"] = [{".id": "*F1", "chain": "output", "action": "drop", "disabled": "false"}]
+        ros["ip/route"] = [{".id": "*R1", "dst-address": "0.0.0.0/0", "gateway": "172.31.1.1", "active": "false",
+                            "disabled": "false"}]
+        r = c.post(f"/routeros/{env['router']}/do", data={"action": "ping", "address": "1.1.1.1",
+                                                          "csrf_token": c.csrf}, follow_redirects=True)
+        assert "Keine Antwort von 1.1.1.1 – 3 gesendet (Zeitüberschreitung)" in r.text
+        assert "nicht aktiv" in r.text and "172.31.1.1%" in r.text and "chain=output" in r.text
+        ros["ip/route"][0].update({"active": "true", "immediate-gw": "172.31.1.1%ether1"})
+        r = c.post(f"/routeros/{env['router']}/do", data={"action": "ping", "address": "1.1.1.1",
+                                                          "csrf_token": c.csrf}, follow_redirects=True)
+        assert "Auch das Gateway 172.31.1.1 antwortet nicht" in r.text
+        ros["_unreachable"] = ["1.1.1.1"]
+        r = c.post(f"/routeros/{env['router']}/do", data={"action": "ping", "address": "1.1.1.1",
+                                                          "csrf_token": c.csrf}, follow_redirects=True)
+        assert "Das Gateway 172.31.1.1 antwortet" in r.text
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                ros.pop(k, None)
+            else:
+                ros[k] = v
+    r = c.post(f"/routeros/{env['router']}/do", data={"action": "ping", "csrf_token": c.csrf}, follow_redirects=True)
+    assert "3/3 Antworten" in r.text

@@ -371,13 +371,15 @@ def _do(mt, action: str, item_id: str, f) -> str:
         data = {"address": target, "count": "3"}
         if f.get("src"):
             data["src-address"] = _ip(f["src"])
-        res = mt.command("ping", data, timeout=30) or []
-        last = res[-1] if isinstance(res, list) and res else (res if isinstance(res, dict) else {})
-        sent, recv = last.get("sent", "?"), last.get("received", "?")
+        res = routeros.ping_result(mt.command("ping", data, timeout=30) or [])
+        sent, recv = res["sent"], res["received"]
         via = f" (Quelle {data['src-address']})" if "src-address" in data else ""
-        if str(recv) in ("0", ""):
-            raise ValueError(f"Keine Antwort von {target}{via} – {sent} gesendet")
-        return f"Ping {target}{via}: {recv}/{sent} Antworten, Ø {last.get('avg-rtt', '?')}"
+        if recv in ("0", ""):
+            why = ", ".join(routeros.PING_STATUS.get(x, x) for x in res["statuses"])
+            hints = routeros.ping_diagnosis(mt, target, data.get("src-address", ""))
+            raise ValueError(f"Keine Antwort von {target}{via} – {sent} gesendet" + (f" ({why})" if why else "")
+                             + (". " + " ".join(hints) if hints else ""))
+        return f"Ping {target}{via}: {recv}/{sent} Antworten, Ø {res['avg']}"
     raise ValueError("Unbekannte Aktion")
 
 
