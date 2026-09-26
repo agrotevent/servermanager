@@ -2,6 +2,15 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.6.3 – 26.09.2026
+
+### Verbessert
+
+- Updates installieren: Bei unterbrochenem dpkg oder fehlerhaften Abhängigkeiten repariert der
+  Servermanager automatisch (`dpkg --configure -a` bzw. `apt-get -f install`) und versucht es erneut.
+- Die Ursache eines fehlgeschlagenen Schritts (z. B. „Fehler beim Einrichten von: nginx“, „kein freier
+  Speicherplatz“) steht jetzt in der Job-Zusammenfassung statt nur „Exit-Code 1“.
+
 ## 1.6.2 – 26.09.2026
 
 ### Verbessert

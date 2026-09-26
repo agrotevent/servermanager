@@ -10,6 +10,25 @@
 | MikroTik-API: 401 | Benutzer, Passwort, `address=`-Einschränkung und Gruppe (`rest-api`, `read`, `write`) prüfen |
 | Passwort vergessen | `servermanager-cli reset-password NAME` |
 
+## Updates: „apt-get upgrade fehlgeschlagen“
+
+Die eigentliche Ursache steht im Job-Protokoll direkt über der Meldung (Zeilen mit `E:` oder
+`dpkg: error`). Ab 1.6.3 steht sie auch in der Zusammenfassung des Jobs. Der Servermanager repariert
+zwei häufige Fälle selbst und versucht es dann noch einmal:
+
+- **dpkg unterbrochen / Paket ließ sich nicht einrichten** → `dpkg --configure -a`
+- **nicht erfüllte Abhängigkeiten** → `apt-get -f install`
+
+Bleibt der Fehler, auf dem System als root prüfen:
+
+- `dpkg --configure -a` und `apt-get -f install` von Hand – die Ausgabe zeigt das fehlerhafte Paket
+  (oft ein Dienst, dessen Start im post-install-Skript scheitert, z. B. wegen einer fehlerhaften
+  Konfiguration: `systemctl status <dienst>`, `journalctl -xeu <dienst>`).
+- Speicherplatz: `df -h / /var /boot` (volles `/boot` bei Kernel-Updates).
+- Sperre: läuft `unattended-upgrades` oder ein anderes `apt`? (`ps aux | grep -E 'apt|dpkg'`)
+- Proxmox-Hosts ohne Subscription: das Enterprise-Repository deaktivieren bzw. das
+  No-Subscription-Repository eintragen.
+
 ## Pangolin: „Connection refused“ auf Port 3003
 
 Port 3003 ist der interne Port der Integration-API im Docker-Netz von Pangolin und von außen nicht

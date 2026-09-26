@@ -12,11 +12,11 @@ fi
 case "$mode" in
     upgrade)
         log "Installiere Updates (apt-get upgrade --with-new-pkgs)"
-        apt-get "${APT_OPTS[@]}" --with-new-pkgs upgrade || die "apt-get upgrade fehlgeschlagen"
+        apt_run "${APT_OPTS[@]}" --with-new-pkgs upgrade || apt_fail "apt-get upgrade fehlgeschlagen"
         ;;
     full-upgrade)
         log "Installiere Updates (apt-get dist-upgrade)"
-        apt-get "${APT_OPTS[@]}" dist-upgrade || die "apt-get dist-upgrade fehlgeschlagen"
+        apt_run "${APT_OPTS[@]}" dist-upgrade || apt_fail "apt-get dist-upgrade fehlgeschlagen"
         ;;
     security)
         pkgs="$(apt-get -s dist-upgrade 2>/dev/null | awk '/^Inst / && /[Ss]ecurity/ {print $2}' | sort -u | tr '\n' ' ')"
@@ -25,7 +25,7 @@ case "$mode" in
         else
             log "Installiere Sicherheitsupdates: $pkgs"
             # shellcheck disable=SC2086
-            apt-get "${APT_OPTS[@]}" install --only-upgrade $pkgs || die "Installation der Sicherheitsupdates fehlgeschlagen"
+            apt_run "${APT_OPTS[@]}" install --only-upgrade $pkgs || apt_fail "Installation der Sicherheitsupdates fehlgeschlagen"
         fi
         ;;
     *) die "Unbekannter Modus $mode" ;;

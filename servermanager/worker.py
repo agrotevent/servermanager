@@ -501,8 +501,25 @@ class Worker:
         if code == 0:
             ctx.say(f"✔ {label} erfolgreich")
         else:
-            ctx.say(f"✘ {label} fehlgeschlagen (Exit-Code {code})")
-            failures.append(f"{label} fehlgeschlagen (Exit-Code {code})")
+            reason = self._last_error(ctx)
+            msg = f"{label} fehlgeschlagen (Exit-Code {code})" + (f": {reason}" if reason else "")
+            ctx.say(f"✘ {msg}")
+            failures.append(msg)
+
+    @staticmethod
+    def _last_error(ctx: JobContext) -> str:
+        """Last "[FEHLER] ..." line the step's script wrote (the reason behind a non-zero exit code)."""
+        try:
+            with open(log_path(ctx.job_id), "rb") as fh:
+                fh.seek(0, 2)
+                fh.seek(max(0, fh.tell() - 65536))
+                tail = fh.read().decode("utf-8", "replace")
+        except OSError:
+            return ""
+        # only look at output after the step header
+        tail = tail.rsplit("── Schritt", 1)[-1]
+        lines = [ln.strip() for ln in tail.splitlines() if ln.strip().startswith("[FEHLER] ")]
+        return lines[-1][len("[FEHLER] "):][:500] if lines else ""
 
     def _run_step(self, ctx: JobContext, conn: Connection, system: System, step: dict, idx: int,
                   state: dict, failures: list[str]) -> Connection:
