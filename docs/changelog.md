@@ -2,6 +2,17 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.5.1 – 26.09.2026
+
+### Behoben
+
+- Update-Prüfung schlug mit „couldn't find remote ref main“ fehl, wenn der eingestellte Branch im
+  Repository nicht existiert. Jetzt gibt es eine verständliche Meldung und unter *Update → Update-Branch*
+  die Auswahl der vorhandenen Branches.
+- Das Installationsskript übernimmt ohne `--branch` den bisher eingestellten Branch bzw. den Branch des
+  lokalen Checkouts und weicht auf den Standard-Branch des Repositorys aus, falls der Branch fehlt.
+- Entwicklungsstand in den Branch `main` übernommen (Standard für Installation und Updates).
+
 ## 1.5.0 – 26.09.2026
 
 ### Neu

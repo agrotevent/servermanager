@@ -97,6 +97,29 @@ case "$cmd" in
         git_cred -C "$APP_DIR" fetch --quiet origin "$BRANCH" 2>&1
         ;;
 
+    git-branches)
+        # remote branches (one per line) and the default branch of the repository
+        git_cred -C "$APP_DIR" ls-remote --heads origin 2>&1 | sed -n 's#^[0-9a-f]*[[:space:]]*refs/heads/#branch=#p'
+        git_cred -C "$APP_DIR" ls-remote --symref origin HEAD 2>/dev/null \
+            | sed -n 's#^ref: refs/heads/\([^[:space:]]*\)[[:space:]]*HEAD$#default=\1#p'
+        echo "current=$BRANCH"
+        ;;
+
+    set-branch)
+        new="${1:-}"
+        [[ "$new" =~ ^[A-Za-z0-9._/-]{1,200}$ ]] || die "ungültiger Branch-Name"
+        git_cred -C "$APP_DIR" ls-remote --exit-code --heads origin "$new" >/dev/null 2>&1 \
+            || die "Branch '$new' gibt es im Repository nicht"
+        [ -f "$CONF" ] && [ ! -L "$CONF" ] || die "$CONF fehlt"
+        if grep -q '^branch = ' "$CONF"; then
+            sed -i "s|^branch = .*|branch = \"$new\"|" "$CONF"
+        else
+            sed -i "s|^\[update\]|[update]\nbranch = \"$new\"|" "$CONF"
+        fi
+        git_cred -C "$APP_DIR" fetch --quiet origin "$new" 2>&1
+        echo "Update-Branch ist jetzt '$new'."
+        ;;
+
     git-token-status)
         # prints "none" or "set <user> <host> …<last 4 characters>" - never the token itself
         if [ -f "$CRED_FILE" ]; then
@@ -217,7 +240,7 @@ case "$cmd" in
         ;;
 
     *)
-        echo "Verwendung: sm-helper {wg-apply|wg-show|wg-down IFACE | git-fetch | git-token-status | set-git-token [USER] | self-update | restore | restart}" >&2
+        echo "Verwendung: sm-helper {wg-apply|wg-show|wg-down IFACE | git-fetch | git-branches | set-branch NAME | git-token-status | set-git-token [USER] | self-update | restore | restart}" >&2
         exit 2
         ;;
 esac

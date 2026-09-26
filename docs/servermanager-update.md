@@ -6,6 +6,17 @@ aktualisiert die Python-Abhängigkeiten, systemd-Units und die Datenbank und sta
 Startet die Weboberfläche danach nicht, wird automatisch auf den vorherigen Stand zurückgesetzt.
 Laufende Hintergrund-Jobs auf den Zielsystemen laufen weiter und werden danach wieder aufgenommen.
 
+## Update-Branch
+
+Updates kommen aus dem eingestellten Branch (Standard `main`). Unter *Update → Update-Branch* zeigt der
+Servermanager alle Branches des Repositorys und stellt nach Bestätigung um. Der Branch wird in
+`/etc/servermanager/servermanager.conf` gespeichert.
+
+Gibt es den eingestellten Branch im Repository nicht (Meldung *„couldn't find remote ref …“*), weist die
+Seite darauf hin und schlägt den Standard-Branch des Repositorys vor. Das Installationsskript erkennt
+diesen Fall selbst: Ohne `--branch` übernimmt es den eingestellten Branch bzw. den Branch des lokalen
+Checkouts; existiert dieser nicht, verwendet es den Standard-Branch des Repositorys und trägt ihn ein.
+
 ## Privates Repository / Zugriffstoken
 
 Bei einem privaten Repository verwenden Update-Prüfung und Update das bei der Installation mit

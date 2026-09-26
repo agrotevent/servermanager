@@ -12,7 +12,8 @@
 #     --tls MODUS            letsencrypt | selfsigned | none   (Standard: letsencrypt bei Domain, sonst selfsigned;
 #                            none = ohne nginx/TLS, z. B. hinter einem vorhandenen Reverse-Proxy)
 #     --repo URL             Git-Repository (Standard: https://github.com/agrotevent/servermanager.git)
-#     --branch NAME          Branch für Installation und Updates (Standard: main)
+#     --branch NAME          Branch für Installation und Updates (Standard: vorhandene Einstellung bzw.
+#                            Standard-Branch des Repositorys)
 #     --token TOKEN          Zugriffstoken (nur Leserechte) für ein privates Repository; wird nach der
 #                            Installation root-only in /etc/servermanager/git-credentials hinterlegt und
 #                            von allen Updates verwendet (alternativ Umgebungsvariable SM_GIT_TOKEN)
@@ -28,6 +29,7 @@ set -euo pipefail
 
 REPO_URL="https://github.com/agrotevent/servermanager.git"
 BRANCH="main"
+BRANCH_SET=0
 APP_DIR="/opt/servermanager"
 DATA_DIR="/var/lib/servermanager"
 CONF_DIR="/etc/servermanager"
@@ -69,7 +71,7 @@ while [ $# -gt 0 ]; do
         --email) EMAIL="${2:-}"; shift ;;
         --tls) TLS_MODE="${2:-}"; shift ;;
         --repo) REPO_URL="${2:-}"; shift ;;
-        --branch) BRANCH="${2:-}"; shift ;;
+        --branch) BRANCH="${2:-}"; BRANCH_SET=1; shift ;;
         --token) GIT_TOKEN="${2:-}"; shift ;;
         --token-user) GIT_USER="${2:-}"; shift ;;
         --admin-user) ADMIN_USER="${2:-}"; shift ;;
@@ -78,7 +80,7 @@ while [ $# -gt 0 ]; do
         --timezone) TIMEZONE="${2:-}"; shift ;;
         --no-nginx) WITH_NGINX=0 ;;
         --yes|-y) ASSUME_YES=1 ;;
-        -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
         *) die "Unbekannte Option: $1 (--help für Hilfe)" ;;
     esac
     shift
@@ -224,6 +226,32 @@ ask_token() {  # interactive fallback when the repository needs authentication
     GIT_TOKEN="$t"
 }
 
+remote_default_branch() {  # remote_default_branch URL
+    git_cred ls-remote --symref "$1" HEAD 2>/dev/null \
+        | sed -n 's#^ref: refs/heads/\([^[:space:]]*\)[[:space:]]*HEAD$#\1#p' | head -n 1
+}
+resolve_branch() {  # resolve_branch URL - use an existing branch (fallback: default branch of the repository)
+    local url="$1" def
+    [ -n "$url" ] || return 0
+    if git_cred ls-remote --exit-code --heads "$url" "$BRANCH" >/dev/null 2>&1; then
+        return 0
+    fi
+    def="$(remote_default_branch "$url")"
+    if [ -n "$def" ] && [ "$def" != "$BRANCH" ]; then
+        c_yellow "Branch '$BRANCH' gibt es im Repository nicht - verwende den Standard-Branch '$def'."
+        BRANCH="$def"
+    fi
+}
+if [ "$BRANCH_SET" = "0" ]; then
+    if [ -f "$CONF_DIR/servermanager.conf" ]; then
+        b="$(sed -n 's/^[[:space:]]*branch[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' "$CONF_DIR/servermanager.conf" | head -n 1)"
+        [[ "$b" =~ ^[A-Za-z0-9._/-]+$ ]] && BRANCH="$b"
+    elif [ -n "$SCRIPT_DIR" ] && [ -d "$SCRIPT_DIR/.git" ]; then
+        b="$(git -C "$SCRIPT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+        [[ "$b" =~ ^[A-Za-z0-9._/-]+$ ]] && [ "$b" != "HEAD" ] && BRANCH="$b"
+    fi
+fi
+
 take_url_creds "$REPO_URL"
 REPO_URL="$(url_strip_creds "$REPO_URL")"
 [ -n "$GIT_TOKEN" ] && write_git_credentials "$REPO_URL"
@@ -241,6 +269,7 @@ if [ -d "$APP_DIR/.git" ]; then
         write_git_credentials "$origin"
     fi
     use_git_credentials
+    resolve_branch "$origin"
     if git -C "$APP_DIR" fetch --quiet origin "$BRANCH"; then
         git -C "$APP_DIR" reset --quiet --hard "origin/$BRANCH"
     else
@@ -262,6 +291,7 @@ elif [ -n "$SCRIPT_DIR" ] && [ -d "$SCRIPT_DIR/.git" ] && [ -f "$SCRIPT_DIR/serv
         write_git_credentials "$origin"
     fi
     use_git_credentials
+    resolve_branch "$origin"
     if ! git -C "$APP_DIR" fetch --quiet origin "$BRANCH" 2>/dev/null; then
         if [ ! -f "$CRED_FILE" ] && ask_token; then
             write_git_credentials "$origin"
@@ -271,6 +301,7 @@ elif [ -n "$SCRIPT_DIR" ] && [ -d "$SCRIPT_DIR/.git" ] && [ -f "$SCRIPT_DIR/serv
             || c_yellow "Hinweis: origin/$BRANCH nicht erreichbar - Updates prüfen (privates Repository: --token angeben)!"
     fi
 else
+    resolve_branch "$REPO_URL"
     if ! git_cred clone --quiet --branch "$BRANCH" "$REPO_URL" "$APP_DIR"; then
         rm -rf "$APP_DIR"
         if ask_token; then
@@ -332,6 +363,10 @@ use_sudo = true
 EOF
 else
     echo "Behalte vorhandene $CONF_DIR/servermanager.conf"
+    if ! grep -q "^branch = \"$BRANCH\"" "$CONF_DIR/servermanager.conf"; then
+        sed -i "s|^branch = .*|branch = \"$BRANCH\"|" "$CONF_DIR/servermanager.conf"
+        echo "Update-Branch auf '$BRANCH' gesetzt"
+    fi
     LISTEN="$(sed -n 's/^[[:space:]]*listen[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' "$CONF_DIR/servermanager.conf" | head -n 1)"
     LISTEN="${LISTEN:-127.0.0.1:8000}"
 fi

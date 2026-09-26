@@ -37,6 +37,20 @@
     </div>
   </div>
 </div>
+<div class="card" id="branch">
+  <div class="card-head"><h2>Update-Branch</h2></div>
+  <div class="card-body">
+    {% if branches.missing %}<div class="alert danger">Der eingestellte Branch <code>{{ branches.current }}</code> existiert im Repository nicht – Updates sind so nicht möglich. Bitte einen vorhandenen Branch wählen{% if branches.default %} (Standard des Repositorys: <code>{{ branches.default }}</code>){% endif %}.</div>{% endif %}
+    {% if branches.error %}<p class="muted">Branches konnten nicht gelesen werden: {{ branches.error }}</p>{% endif %}
+    {% if branches.branches %}
+    <form method="post" action="{{ url_for('admin.update_branch') }}" class="inline-form" data-confirm="Update-Branch wechseln? Beim nächsten Update wird der Stand dieses Branches installiert.">{{ csrf() }}
+      <div class="field"><label>Branch</label><select name="branch">{% for b in branches.branches %}<option value="{{ b }}" {% if b == branches.current %}selected{% endif %}>{{ b }}{% if b == branches.default %} (Standard){% endif %}</option>{% endfor %}</select></div>
+      <button class="btn">Übernehmen</button>
+    </form>
+    {% endif %}
+    <p class="muted mt-1"><small>Aus diesem Branch werden Updates geholt. Aktuell eingestellt: <code>{{ branches.current }}</code>.</small></p>
+  </div>
+</div>
 <div class="card">
   <div class="card-head"><h2>Zugriff auf das Repository</h2></div>
   <div class="card-body">

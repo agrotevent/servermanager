@@ -34,13 +34,23 @@ def current() -> dict:
     return info
 
 
+class BranchMissing(HelperError):
+    """The configured update branch does not exist in the repository."""
+
+
 def check() -> dict:
     """Fetch the remote branch and list pending commits."""
     cfg = get_config()
-    if cfg.use_sudo:
-        run_helper("git-fetch", timeout=120)
-    else:
-        _git("fetch", "--quiet", "origin", cfg.branch, timeout=120)
+    try:
+        if cfg.use_sudo:
+            run_helper("git-fetch", timeout=120)
+        else:
+            _git("fetch", "--quiet", "origin", cfg.branch, timeout=120)
+    except HelperError as exc:
+        if "couldn't find remote ref" in str(exc) or "Couldn't find remote ref" in str(exc):
+            raise BranchMissing(f"Der eingestellte Update-Branch „{cfg.branch}“ existiert im Repository nicht. "
+                                "Bitte unten unter „Update-Branch“ einen vorhandenen Branch wählen.") from exc
+        raise
     ref = f"origin/{cfg.branch}"
     head = _git("rev-parse", "HEAD")
     remote = _git("rev-parse", ref)
@@ -83,6 +93,51 @@ def set_token(token: str, user: str = "x-access-token") -> str:
     if not TOKEN_USER_RE.match(user):
         raise HelperError("Ungültiger Token-Benutzer")
     return run_helper("set-git-token", user, stdin=token + "\n", timeout=60).strip()
+
+
+BRANCH_RE = re.compile(r"^[A-Za-z0-9._/-]{1,200}$")
+
+
+def branches() -> dict:
+    """Remote branches, the repository's default branch and the configured branch."""
+    cfg = get_config()
+    out = {"branches": [], "default": "", "current": cfg.branch, "error": ""}
+    try:
+        if cfg.use_sudo:
+            text = run_helper("git-branches", timeout=60)
+        else:
+            heads = _git("ls-remote", "--heads", "origin", timeout=60)
+            text = "\n".join("branch=" + line.split("refs/heads/", 1)[1] for line in heads.splitlines()
+                             if "refs/heads/" in line)
+            sym = _git("ls-remote", "--symref", "origin", "HEAD", timeout=60)
+            m = re.search(r"ref: refs/heads/(\S+)\s+HEAD", sym)
+            if m:
+                text += f"\ndefault={m.group(1)}"
+    except HelperError as exc:
+        out["error"] = str(exc)
+        return out
+    for line in text.splitlines():
+        key, _, val = line.partition("=")
+        if key == "branch" and BRANCH_RE.match(val):
+            out["branches"].append(val)
+        elif key == "default" and BRANCH_RE.match(val):
+            out["default"] = val
+    out["branches"].sort(key=lambda b: (b != out["default"], b))
+    out["missing"] = bool(out["branches"]) and cfg.branch not in out["branches"]
+    return out
+
+
+def set_branch(name: str) -> str:
+    """Switch the update branch (as root in servermanager.conf) and reload the configuration."""
+    from . import config as config_mod
+    if not BRANCH_RE.match(name or ""):
+        raise HelperError("Ungültiger Branch-Name")
+    cfg = get_config()
+    if not cfg.use_sudo:
+        raise HelperError("Ohne sudo-Hilfsdienst bitte den Branch in der Konfigurationsdatei ändern")
+    msg = run_helper("set-branch", name, timeout=120).strip()
+    config_mod.set_config(config_mod.load_config())
+    return msg
 
 
 def start() -> str:

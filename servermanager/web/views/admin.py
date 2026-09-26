@@ -248,7 +248,22 @@ def update_page():
     running = g.db.execute(select(Job).where(Job.status == JOB_RUNNING)).scalars().all()
     return render_template("admin/update.html", info=selfupdate.current(), check=session.pop("update_check", None),
                            log=selfupdate.log_text(), running=running, token=selfupdate.token_status(),
+                           branches=selfupdate.branches(),
                            last_check=settings.get(g.db, "state.update_checked"))
+
+
+@bp.post("/update/branch")
+@admin_required
+def update_branch():
+    name = request.form.get("branch", "").strip()
+    try:
+        msg = selfupdate.set_branch(name)
+        audit(g.db, g.user, "update.branch", name, ip=client_ip())
+        g.db.commit()
+        flash(msg or f"Update-Branch: {name}", "success")
+    except HelperError as exc:
+        flash(f"Branch nicht geändert: {exc}", "danger")
+    return redirect(url_for("admin.update_page"))
 
 
 @bp.post("/update/token")

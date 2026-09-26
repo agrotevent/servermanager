@@ -197,3 +197,37 @@ def test_operator_sees_and_cancels_pve_jobs(app, env, db):
     assert r.status_code == 302
     v = login(app, "i-viewer")
     assert v.post(f"/jobs/{job.id}/cancel", data={"csrf_token": v.csrf}).status_code == 403
+
+
+def test_update_branch_missing_and_switch(app, db, monkeypatch):
+    import dataclasses
+    from servermanager import config, selfupdate
+    from servermanager.helper import HelperError
+    cfg = dataclasses.replace(config.get_config(), use_sudo=True, branch="main")
+    monkeypatch.setattr(selfupdate, "get_config", lambda: cfg)
+    calls = []
+
+    def fake_helper(*args, **kw):
+        calls.append(args)
+        if args[0] == "git-fetch":
+            raise HelperError("fatal: couldn't find remote ref main")
+        if args[0] == "git-branches":
+            return "branch=claude/dev\nbranch=stable\ndefault=claude/dev\ncurrent=main\n"
+        if args[0] == "set-branch":
+            return f"Update-Branch ist jetzt '{args[1]}'."
+        return "none"
+    monkeypatch.setattr(selfupdate, "run_helper", fake_helper)
+    monkeypatch.setattr(config, "load_config", lambda: cfg)
+    with pytest.raises(selfupdate.BranchMissing):
+        selfupdate.check()
+    b = selfupdate.branches()
+    assert b["missing"] and b["default"] == "claude/dev" and b["branches"][0] == "claude/dev"
+    c = login(app, "i-admin")
+    r = c.get("/update")
+    assert "existiert im Repository nicht" in r.text and "claude/dev (Standard)" in r.text
+    r = c.post("/update/check", data={"csrf_token": c.csrf}, follow_redirects=True)
+    assert "Update-Branch" in r.text and "couldn" not in r.text
+    r = c.post("/update/branch", data={"branch": "stable", "csrf_token": c.csrf}, follow_redirects=True)
+    assert "Update-Branch ist jetzt" in r.text and ("set-branch", "stable") in calls
+    r = c.post("/update/branch", data={"branch": "bad;rm", "csrf_token": c.csrf}, follow_redirects=True)
+    assert "Ungültiger Branch-Name" in r.text

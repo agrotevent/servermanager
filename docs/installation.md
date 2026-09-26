@@ -27,8 +27,8 @@ cd /root/servermanager
 bash install.sh --domain sm.example.com --email admin@example.com
 ```
 
-> Solange die Entwicklung noch nicht in `main` übernommen ist, den Branch angeben:
-> `git clone -b <branch> …` und `bash install.sh --branch <branch> …`
+> Installiert und aktualisiert wird standardmäßig aus dem Branch `main`. Ein anderer Branch lässt sich
+> mit `--branch NAME` wählen oder später in der Weboberfläche unter *Update → Update-Branch* umstellen.
 
 ### Installation aus einem privaten Repository (Token)
 
