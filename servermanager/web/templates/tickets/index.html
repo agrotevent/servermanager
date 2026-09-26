@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% set help_page = "zabbix" %}
+{% from "_macros.html" import empty with context %}
+{% block title %}Tickets{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>Tickets</h1><p>Probleme aus Zabbix zur Bearbeitung: übernehmen, kommentieren, schließen – mit Rückmeldung an Zabbix.</p></div></div>
+<div class="card"><div class="card-body flex" style="gap:8px;flex-wrap:wrap;align-items:center">
+  {% for key, label in [('active', 'Aktiv'), ('mine', 'Meine'), ('open', 'Offen'), ('progress', 'In Bearbeitung'), ('resolved', 'Behoben'), ('closed', 'Geschlossen'), ('all', 'Alle')] %}
+    <a class="btn sm {{ 'primary' if status == key else 'ghost' }}" href="{{ url_for('tickets.index', status=key, severity=severity) }}">{{ label }}</a>
+  {% endfor %}
+  <span class="grow"></span>
+  <form method="get" class="inline"><input type="hidden" name="status" value="{{ status }}">
+    <select name="severity" onchange="this.form.submit()"><option value="">alle Schweregrade</option>{% for k, v in severities.items() %}{% if k >= 2 %}<option value="{{ k }}" {% if severity == k|string %}selected{% endif %}>ab {{ v }}</option>{% endif %}{% endfor %}</select></form>
+</div></div>
+{% if rows %}
+<div class="card"><div class="table-wrap"><table class="table">
+  <thead><tr><th>#</th><th>Schweregrad</th><th>Problem</th><th>Host / System</th><th>Status</th><th>Bearbeiter</th><th>Seit</th></tr></thead>
+  <tbody>{% for t in rows %}
+    <tr class="{{ 'muted' if not t.is_active }}"><td class="mono"><a href="{{ url_for('tickets.detail', ticket_id=t.id) }}">#{{ t.id }}</a></td>
+      <td><span class="badge {{ sev_class[t.severity] }}">{{ severities[t.severity] }}</span></td>
+      <td><a href="{{ url_for('tickets.detail', ticket_id=t.id) }}"><strong>{{ t.title }}</strong></a>{% if t.resolved_at and t.status != 'resolved' %} <small class="muted">(in Zabbix behoben)</small>{% endif %}</td>
+      <td>{{ t.host }}{% if t.system %}<span class="sub"><a href="{{ url_for('systems.detail', system_id=t.system_id) }}">{{ t.system.name }}</a></span>{% endif %}</td>
+      <td><span class="badge {{ {'open': 'danger', 'progress': 'warning', 'resolved': 'success'}.get(t.status, '') }}">{{ statuses[t.status] }}</span></td>
+      <td>{{ t.assignee.label if t.assignee else '–' }}</td>
+      <td class="nowrap"><small>{{ t.opened_at|dt }}</small><span class="sub">{{ t.opened_at|ago }}</span></td></tr>
+  {% endfor %}</tbody></table></div></div>
+{% else %}<div class="card"><div class="card-body">{{ empty('Keine Tickets in dieser Ansicht.', 'i-ticket') }}</div></div>{% endif %}
+{% endblock %}

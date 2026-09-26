@@ -312,9 +312,14 @@ def detail(system_id: int):
                          "can_resetup": bool(guest) and access.system_level(g.db, g.user, system.id) == LEVEL_FULL
                          and (g.user.is_admin or access.has_integration_level(g.db, g.user, KIND_PVE, srv.id,
                                                                               LEVEL_FULL))}
+    from ...models import TICKET_OPEN, TICKET_PROGRESS, Ticket
+    system_tickets = g.db.execute(select(Ticket).where(Ticket.system_id == system.id,
+                                                     Ticket.status.in_([TICKET_OPEN, TICKET_PROGRESS]))
+                                .order_by(Ticket.severity.desc(), Ticket.id.desc()).limit(20)).scalars().all()
     return render_template("systems/detail.html", system=system, tab=tab, mods=mods, jobs=jobs, backups=backups,
                            summary=inventory.update_summary(system), access_rows=access_rows, users=users,
-                           level=access.system_level(g.db, g.user, system.id), pve_guest=pve_guest)
+                           level=access.system_level(g.db, g.user, system.id), pve_guest=pve_guest,
+                           system_tickets=system_tickets)
 
 
 @bp.get("/<int:system_id>/panel/<module_key>")

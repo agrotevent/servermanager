@@ -199,10 +199,10 @@ def create_app(testing: bool = False) -> Flask:
 
     # ---- blueprints ------------------------------------------------------------
     from .views import (admin, auth_views, enroll, help, jobs, mailcow, main, nextcloud_users, optimize, pangolin,
-                        pbx, pve, routers, schedules, sso, systems, updates, users, wg)
+                        pbx, pve, routers, schedules, sso, systems, tickets, updates, users, wg, zabbix)
     for bp in (auth_views.bp, main.bp, systems.bp, updates.bp, schedules.bp, jobs.bp, enroll.bp,
                wg.bp, users.bp, admin.bp, help.bp, pve.bp, routers.bp, pangolin.bp, optimize.bp, mailcow.bp, sso.bp,
-               nextcloud_users.bp, pbx.bp):
+               nextcloud_users.bp, pbx.bp, zabbix.bp, tickets.bp):
         app.register_blueprint(bp)
 
     @app.get("/healthz")

@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% set help_page = "zabbix" %}
+{% from "_macros.html" import csrf with context %}
+{% block title %}Ticket #{{ t.id }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>#{{ t.id }} {{ t.title }}</h1>
+    <p><span class="badge {{ sev_class[t.severity] }}">{{ severities[t.severity] }}</span>
+      <span class="badge {{ {'open': 'danger', 'progress': 'warning', 'resolved': 'success'}.get(t.status, '') }}">{{ statuses[t.status] }}</span>
+      · {{ t.host }}{% if t.host_ip %} ({{ t.host_ip }}){% endif %}{% if t.system %} · System <a href="{{ url_for('systems.detail', system_id=t.system_id) }}">{{ t.system.name }}</a>{% endif %}
+      {% if zbx %} · <a href="{{ url_for('zabbix.detail', zid=zbx.id) }}">{{ zbx.name }}</a>, Event {{ t.event_id }}{% endif %}</p></div>
+  <div class="actions"><a class="btn ghost" href="{{ url_for('tickets.index') }}">Zur Liste</a></div>
+</div>
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>Verlauf</h2></div><div class="card-body">
+    <ul class="timeline">{% for c in t.comments %}
+      <li class="{{ c.kind }}"><div class="meta">{{ c.created_at|dt('%d.%m.%Y %H:%M') }} · {{ c.user.label if c.user else ('Zabbix' if c.kind == 'zabbix' else 'System') }}</div><div class="text">{{ c.text }}</div></li>
+    {% endfor %}</ul>
+    {% if can_edit %}
+    <form method="post" class="mt-2">{{ csrf() }}<input type="hidden" name="op" value="comment">
+      <div class="field"><label>Kommentar</label><textarea name="text" rows="3" required></textarea></div>
+      {% if zbx and not t.resolved_at %}<label class="check"><input type="checkbox" name="to_zabbix" value="1" checked> auch in Zabbix als Nachricht am Problem speichern</label>{% endif %}
+      <button class="btn">Kommentar speichern</button></form>
+    {% endif %}
+  </div></div>
+  <div class="card"><div class="card-head"><h2>Details</h2></div><div class="card-body">
+    <dl class="kv">
+      <dt>Geöffnet</dt><dd>{{ t.opened_at|dt }} <small class="muted">({{ t.opened_at|ago }})</small></dd>
+      <dt>Behoben</dt><dd>{{ t.resolved_at|dt if t.resolved_at else '– (Problem besteht)' }}</dd>
+      {% if t.closed_at %}<dt>Geschlossen</dt><dd>{{ t.closed_at|dt }}</dd>{% endif %}
+      <dt>Bearbeiter</dt><dd>{{ t.assignee.label if t.assignee else '–' }}</dd>
+      {% if t.opdata %}<dt>Messwerte</dt><dd class="mono">{{ t.opdata }}</dd>{% endif %}
+    </dl>
+    {% if can_edit %}
+    <div class="flex mt-2" style="gap:8px;flex-wrap:wrap">
+      {% if t.is_active and t.assignee_id != user.id %}
+      <form method="post" class="inline">{{ csrf() }}<input type="hidden" name="op" value="take"><button class="btn primary">Übernehmen{% if zbx and not t.resolved_at %} & in Zabbix bestätigen{% endif %}</button></form>
+      {% endif %}
+      {% if t.status == 'closed' %}
+      <form method="post" class="inline">{{ csrf() }}<input type="hidden" name="op" value="reopen"><button class="btn">Wieder öffnen</button></form>
+      {% endif %}
+    </div>
+    {% if t.status != 'closed' %}
+    <form method="post" class="mt-2" data-confirm="Ticket #{{ t.id }} schließen?">{{ csrf() }}<input type="hidden" name="op" value="close">
+      <div class="field"><label>Abschluss-Notiz</label><input type="text" name="text" placeholder="optional, z. B. Ursache und Lösung"></div>
+      {% if zbx and not t.resolved_at %}<label class="check"><input type="checkbox" name="close_zabbix" value="1" {% if not t.manual_close %}disabled title="Der Trigger erlaubt kein manuelles Schließen"{% endif %}> Problem auch in Zabbix schließen{% if not t.manual_close %} <small class="muted">(Trigger erlaubt es nicht)</small>{% endif %}</label>{% endif %}
+      <button class="btn">Ticket schließen</button></form>
+    {% endif %}
+    {% if users %}
+    <form method="post" class="inline-form mt-2">{{ csrf() }}<input type="hidden" name="op" value="assign">
+      <div class="field"><label>Zuweisen an</label><select name="user_id"><option value="">– niemand –</option>{% for u in users %}<option value="{{ u.id }}" {% if t.assignee_id == u.id %}selected{% endif %}>{{ u.label }}</option>{% endfor %}</select></div>
+      <button class="btn">Zuweisen</button></form>
+    {% endif %}
+    {% endif %}
+  </div></div>
+</div>
+{% endblock %}

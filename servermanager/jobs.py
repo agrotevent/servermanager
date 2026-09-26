@@ -32,6 +32,7 @@ KIND_LABELS = {
     "newt_setup": "Newt einrichten",
     "sso_connect": "SSO verbinden",
     "sso_disconnect": "SSO trennen",
+    "zabbix_agent": "Zabbix-Agent einrichten",
 }
 
 # steps of "pve_create"; a failed job is retried from the step it failed in

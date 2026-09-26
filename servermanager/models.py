@@ -364,8 +364,10 @@ KIND_PANGOLIN = "pangolin"
 KIND_MAILCOW = "mailcow"
 KIND_SSO = "sso"
 KIND_PBX = "pbx"
+KIND_ZABBIX = "zabbix"
 INTEGRATION_KINDS = {KIND_PVE: "Proxmox VE", KIND_ROUTER: "RouterOS", KIND_PANGOLIN: "Pangolin",
-                     KIND_MAILCOW: "Mailcow", KIND_SSO: "SSO (authentik)", KIND_PBX: "Telefonie (Asterisk/FreePBX)"}
+                     KIND_MAILCOW: "Mailcow", KIND_SSO: "SSO (authentik)", KIND_PBX: "Telefonie (Asterisk/FreePBX)",
+                     KIND_ZABBIX: "Zabbix & Tickets"}
 MAIL_PORTS_DEFAULT = "25,465,587,143,993,110,995,4190,80"
 PANGOLIN_ROLES = {"primary": "Primär", "backup": "Backup-Weg"}
 PVE_HOSTING = {"local": "Lokal (gemeinsames Netz)", "hetzner": "Hetzner (vSwitch)"}
@@ -499,6 +501,95 @@ class PbxServer(IntegrationMixin, Base):
     def source_list(self) -> list[str]:
         import re as _re
         return [x for x in _re.split(r"[,\s]+", self.sip_sources or "") if x]
+
+
+class ZabbixServer(IntegrationMixin, Base):
+    """Zabbix: monitoring of the managed systems (agent 2 with PSK), problems become tickets."""
+
+    __tablename__ = "zabbix_servers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    api_url: Mapped[str] = mapped_column(String(255), default="")        # https://zabbix.example.com
+    token_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    agent_server: Mapped[str] = mapped_column(String(255), default="")   # address the agents talk to
+    host_group: Mapped[str] = mapped_column(String(128), default="Servermanager")
+    min_severity: Mapped[int] = mapped_column(Integer, default=2)        # tickets from this severity on
+    tickets: Mapped[bool] = mapped_column(Boolean, default=True)
+    ticket_mail: Mapped[str] = mapped_column(String(255), default="")    # external ticket system (e-mail)
+    webhook_hash: Mapped[str] = mapped_column(String(128), default="")   # sha256 of the webhook token
+    setup: Mapped[Optional[dict]] = mapped_column(JSONText, default=dict)
+
+
+class ZabbixHost(Base):
+    """A managed system as a host in Zabbix (agent 2, PSK encrypted)."""
+
+    __tablename__ = "zabbix_hosts"
+    __table_args__ = (UniqueConstraint("zabbix_id", "system_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    zabbix_id: Mapped[int] = mapped_column(ForeignKey("zabbix_servers.id", ondelete="CASCADE"), index=True)
+    system_id: Mapped[int] = mapped_column(ForeignKey("systems.id", ondelete="CASCADE"), index=True)
+    hostid: Mapped[str] = mapped_column(String(32), default="")
+    host: Mapped[str] = mapped_column(String(128), default="")
+    psk_identity: Mapped[str] = mapped_column(String(128), default="")
+    psk_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+TICKET_OPEN = "open"
+TICKET_PROGRESS = "progress"
+TICKET_RESOLVED = "resolved"
+TICKET_CLOSED = "closed"
+TICKET_STATUSES = {TICKET_OPEN: "Offen", TICKET_PROGRESS: "In Bearbeitung", TICKET_RESOLVED: "Behoben",
+                   TICKET_CLOSED: "Geschlossen"}
+
+
+class Ticket(Base):
+    __tablename__ = "tickets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source: Mapped[str] = mapped_column(String(16), default="zabbix")    # zabbix | manual
+    zabbix_id: Mapped[Optional[int]] = mapped_column(ForeignKey("zabbix_servers.id", ondelete="SET NULL"),
+                                                     nullable=True, index=True)
+    event_id: Mapped[str] = mapped_column(String(32), default="", index=True)
+    trigger_id: Mapped[str] = mapped_column(String(32), default="")
+    title: Mapped[str] = mapped_column(String(500), default="")
+    severity: Mapped[int] = mapped_column(Integer, default=0)
+    host: Mapped[str] = mapped_column(String(255), default="")
+    host_ip: Mapped[str] = mapped_column(String(64), default="")
+    opdata: Mapped[str] = mapped_column(Text, default="")
+    system_id: Mapped[Optional[int]] = mapped_column(ForeignKey("systems.id", ondelete="SET NULL"), nullable=True,
+                                                     index=True)
+    status: Mapped[str] = mapped_column(String(16), default=TICKET_OPEN, index=True)
+    manual_close: Mapped[bool] = mapped_column(Boolean, default=False)
+    assignee_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    opened_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+    system: Mapped[Optional[System]] = relationship()
+    assignee: Mapped[Optional[User]] = relationship()
+    comments: Mapped[list["TicketComment"]] = relationship(back_populates="ticket", cascade="all, delete-orphan",
+                                                           order_by="TicketComment.id")
+
+    @property
+    def is_active(self) -> bool:
+        return self.status in (TICKET_OPEN, TICKET_PROGRESS)
+
+
+class TicketComment(Base):
+    __tablename__ = "ticket_comments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    kind: Mapped[str] = mapped_column(String(16), default="comment")     # comment | event | zabbix
+    text: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    ticket: Mapped[Ticket] = relationship(back_populates="comments")
+    user: Mapped[Optional[User]] = relationship()
 
 
 class SsoServer(IntegrationMixin, Base):

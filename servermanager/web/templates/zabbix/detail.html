@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% set help_page = "zabbix" %}
+{% from "_macros.html" import csrf, empty with context %}
+{% from "integrations/_macros.html" import int_status, alerts_box with context %}
+{% block title %}{{ z.name }} · Zabbix{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>{{ z.name }} {{ int_status(z) }}</h1>
+    <p>Zabbix {{ z.data.version or '?' }} · <span class="mono">{{ z.api_url }}</span> · Stand {{ z.last_poll|ago }}</p></div>
+  <div class="actions">
+    {% if int_can('zabbix', z.id, 'operate') %}<form method="post" action="{{ url_for('zabbix.sync', zid=z.id) }}" class="inline">{{ csrf() }}<input type="hidden" name="next" value="{{ request.full_path }}"><button class="btn ghost"><svg class="icon"><use href="#i-refresh"/></svg>Abgleichen</button></form>{% endif %}
+    {% if user.is_admin %}<a class="btn ghost" href="{{ url_for('zabbix.edit', zid=z.id) }}"><svg class="icon"><use href="#i-edit"/></svg>Bearbeiten</a>{% endif %}
+  </div>
+</div>
+{{ alerts_box(z) }}
+<nav class="tabs">{% for k, v in tabs.items() %}<a href="?tab={{ k }}" class="{{ 'active' if tab == k }}">{{ v }}</a>{% endfor %}</nav>
+{% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+
+{% if tab == 'overview' %}{% set d = z.data %}{% set bs = d.by_severity or {} %}
+<div class="stats">
+  <div class="stat"><div class="label">Hosts</div><div class="value">{{ d.hosts or 0 }}</div><div class="sub">{{ d.hosts_unavailable or 0 }} Agent(en) nicht erreichbar</div></div>
+  <div class="stat"><div class="label">Offene Probleme</div><div class="value">{{ d.problems or 0 }}</div><div class="sub">{{ (bs['4'] or 0) + (bs['5'] or 0) }} hoch/Katastrophe</div></div>
+  <a class="stat" href="{{ url_for('tickets.index') }}"><div class="label">Tickets</div><div class="value">{{ 'an' if z.tickets else 'aus' }}</div><div class="sub">{% if z.tickets %}ab „{{ severities[z.min_severity] }}“{% endif %}{% if z.webhook_hash %} · Webhook aktiv{% endif %}</div></a>
+</div>
+<div class="card"><div class="card-head"><h2>Aktuelle Probleme</h2><a class="btn sm ghost" href="?tab=problems">Alle</a></div>
+  <div class="table-wrap"><table class="table compact"><thead><tr><th>Schweregrad</th><th>Host</th><th>Problem</th><th>Seit</th></tr></thead><tbody>
+  {% for p in d.top or [] %}<tr><td><span class="badge {{ 'danger' if p.severity >= 4 else ('warning' if p.severity >= 2 else 'info') }}">{{ severities[p.severity] }}</span></td><td>{{ p.host_name }}</td><td>{{ p.name }}{% if p.acknowledged == '1' %} <small class="muted">(bestätigt)</small>{% endif %}</td><td class="nowrap"><small>{{ p.clock|int|dt }}</small></td></tr>
+  {% else %}<tr><td colspan="4" class="muted">Keine offenen Probleme.</td></tr>{% endfor %}</tbody></table></div></div>
+
+{% elif tab == 'problems' and not error %}
+<div class="card"><div class="table-wrap"><table class="table compact"><thead><tr><th>Schweregrad</th><th>Host</th><th>Problem</th><th>Messwerte</th><th>Seit</th><th>Ticket</th></tr></thead><tbody>
+  {% for p in problems %}<tr><td><span class="badge {{ 'danger' if p.severity >= 4 else ('warning' if p.severity >= 2 else 'info') }}">{{ severities[p.severity] }}</span></td><td>{{ p.host_name or p.host }}</td>
+    <td>{{ p.name }}{% if p.acknowledged == '1' %} <small class="muted">(bestätigt)</small>{% endif %}</td><td><small class="mono">{{ p.opdata }}</small></td><td class="nowrap"><small>{{ p.clock|int|dt }}</small></td>
+    <td>{% if p.severity >= z.min_severity and z.tickets %}<small class="muted">ja</small>{% else %}<small class="muted">–</small>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="6" class="muted">Keine offenen Probleme.</td></tr>{% endfor %}</tbody></table></div></div>
+
+{% elif tab == 'hosts' %}
+<form method="post" action="{{ url_for('zabbix.agent', zid=z.id) }}">{{ csrf() }}
+<div class="card">
+  <div class="card-body"><small class="muted">„In Zabbix aufnehmen“ installiert per SSH den Zabbix-Agent 2 (offizielle Paketquelle, sonst Paket der Distribution), konfiguriert ihn mit PSK-Verschlüsselung für <span class="mono">{{ z.agent_server or '(Server-Adresse fehlt – Bearbeiten)' }}</span> und legt den Host mit der Vorlage „Linux by Zabbix agent“ (bei Docker zusätzlich „Docker by Zabbix agent 2“) in der Gruppe <strong>{{ z.host_group }}</strong> an. Erneut ausführen aktualisiert Agent und Host.</small></div>
+  <div class="table-wrap"><table class="table compact">
+    <thead><tr><th class="cb"><input type="checkbox" data-check-all="input[name=system]"></th><th>System</th><th>Adresse für Zabbix</th><th>Zabbix-Host</th><th>Agent</th><th>Vorlagen</th></tr></thead><tbody>
+    {% for r in rows %}{% set h = r.host %}
+      <tr><td>{% if can(r.system.id, 'full') %}<input type="checkbox" name="system" value="{{ r.system.id }}">{% endif %}</td>
+        <td><a href="{{ url_for('systems.detail', system_id=r.system.id) }}">{{ r.system.name }}</a><span class="sub">{{ r.system.types|join(', ') }}</span></td>
+        <td>{% if can(r.system.id, 'full') %}<input type="text" name="ip_{{ r.system.id }}" value="{{ (h.interfaces[0].ip if h and h.interfaces else r.system.host) }}" style="max-width:150px">{% else %}<span class="mono">{{ r.system.host }}</span>{% endif %}</td>
+        <td>{% if h %}<span class="mono">{{ h.host }}</span>{% if r.managed %} <span class="badge info" title="PSK {{ r.managed.psk_identity }}">verwaltet</span>{% endif %}{% elif r.managed %}<span class="muted">angelegt, nicht gefunden</span>{% else %}<span class="muted">–</span>{% endif %}</td>
+        <td>{% if h %}{% if h.available == 1 %}<span class="badge success">erreichbar</span>{% elif h.available == 2 %}<span class="badge danger">nicht erreichbar</span>{% else %}<span class="badge">unbekannt</span>{% endif %}{% if h.tls_connect|string == '2' %} <small class="muted">PSK</small>{% endif %}{% else %}–{% endif %}</td>
+        <td><small class="muted">{{ (h.parentTemplates or [])|map(attribute='name')|join(', ') if h else '' }}</small></td></tr>
+    {% else %}<tr><td colspan="6" class="muted">Keine Systeme.</td></tr>{% endfor %}</tbody></table></div>
+  <div class="card-body bulkbar">
+    <span class="count" data-bulk-count="input[name=system]">Keine Auswahl</span>
+    <button class="btn primary" data-confirm="Zabbix-Agent auf den ausgewählten Systemen einrichten und die Hosts in Zabbix anlegen?">In Zabbix aufnehmen</button>
+  </div>
+</div>
+</form>
+
+{% elif tab == 'tickets' %}
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>Webhook (sofortige Übergabe)</h2></div><div class="card-body">
+    {% if z.webhook_hash %}
+      <p><span class="badge success">eingerichtet</span>{% if z.setup and z.setup.at %} <small class="muted">am {{ z.setup.at|replace('T', ' ') }}</small>{% endif %}</p>
+      <dl class="kv"><dt>URL</dt><dd class="mono break">{{ z.setup.url if z.setup else webhook_url }}</dd>
+        <dt>In Zabbix</dt><dd><small>Medientyp „Servermanager Tickets“, Benutzer „servermanager-tickets“ (ohne Web-Zugang), Aktion „Servermanager: Probleme als Tickets“ ab „{{ severities[z.min_severity] }}“</small></dd></dl>
+    {% else %}
+      <p>Noch nicht eingerichtet – Tickets entstehen dann nur beim regelmäßigen Abgleich.</p>
+    {% endif %}
+    {% if user.is_admin %}
+    <form method="post" action="{{ url_for('zabbix.setup_webhook', zid=z.id) }}" class="mt-1" data-confirm="{{ 'Webhook neu einrichten? Ein neues Token wird erzeugt, das alte wird ungültig.' if z.webhook_hash else 'Medientyp, Benutzer und Aktion in Zabbix anlegen?' }}">{{ csrf() }}
+      <button class="btn {{ '' if z.webhook_hash else 'primary' }}">{{ 'Neu einrichten' if z.webhook_hash else 'In Zabbix einrichten' }}</button></form>
+    {% if not webhook_url %}<p class="mt-1"><small style="color:var(--danger)">Die öffentliche URL des Servermanagers ist nicht gesetzt (Einstellungen → Allgemein).</small></p>{% endif %}
+    {% endif %}
+    <p class="mt-1"><small class="muted">Zabbix muss <span class="mono">{{ webhook_url or '…/api/zabbix/' ~ z.id ~ '/event' }}</span> erreichen können. Die Übergabe ist mit einem Token abgesichert, das nur als Hash gespeichert wird. Benötigt ein API-Token mit Super-Admin-Rolle.</small></p>
+  </div></div>
+  <div class="card"><div class="card-head"><h2>Abgleich & Weiterleitung</h2></div><div class="card-body">
+    <dl class="kv">
+      <dt>Tickets</dt><dd>{{ 'an – ab „' ~ severities[z.min_severity] ~ '“' if z.tickets else 'aus' }}</dd>
+      <dt>Abgleich</dt><dd>bei jeder Abfrage der Verbindung (Integrations-Intervall) und per „Abgleichen“ – legt fehlende Tickets an und markiert behobene Probleme</dd>
+      <dt>Ticketsystem</dt><dd>{{ z.ticket_mail or '–' }}</dd>
+    </dl>
+    <p class="mt-1"><small class="muted">An ein externes Ticketsystem (Zammad, OTRS/Znuny, osTicket …) gehen neue, behobene und geschlossene Tickets per E-Mail mit „[SM#Nummer]“ im Betreff, damit sie dort demselben Vorgang zugeordnet werden. Übernehmen, Kommentare und Schließen im Servermanager werden an Zabbix zurückgemeldet.</small></p>
+  </div></div>
+</div>
+{% endif %}
+{% endblock %}

@@ -45,6 +45,11 @@
 </nav>
 
 {# ------------------------------------------------------------------ overview #}
+{% if tab == 'overview' and system_tickets %}
+<div class="card"><div class="card-head"><h2>Offene Tickets</h2><a class="btn sm ghost" href="{{ url_for('tickets.index') }}">Alle Tickets</a></div>
+  <ul class="list-plain card-body">{% for t in system_tickets %}<li><span class="badge {{ 'danger' if t.severity >= 4 else 'warning' }}">#{{ t.id }}</span> <a class="grow" href="{{ url_for('tickets.detail', ticket_id=t.id) }}">{{ t.title }}</a><small class="muted">{{ t.opened_at|ago }}{% if t.assignee %} · {{ t.assignee.label }}{% endif %}</small></li>{% endfor %}</ul>
+</div>
+{% endif %}
 {% if tab == 'overview' and pve_guest %}
 {% set pg = pve_guest.guest %}
 <div class="card">

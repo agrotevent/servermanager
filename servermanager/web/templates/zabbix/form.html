@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% set help_page = "zabbix" %}
+{% from "_macros.html" import csrf, field, checkbox with context %}
+{% from "integrations/_macros.html" import conn_fields with context %}
+{% block title %}{{ 'Zabbix hinzufügen' if is_new else 'Zabbix bearbeiten' }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>{{ 'Zabbix hinzufügen' if is_new else z.name ~ ' bearbeiten' }}</h1>
+  <p>API-Token in Zabbix unter <em>Benutzer → API-Token</em> für einen Benutzer mit Admin- bzw. Super-Admin-Rolle erzeugen (für die Einrichtung der Ticket-Schnittstelle wird Super-Admin benötigt).</p></div></div>
+<form method="post" autocomplete="off">{{ csrf() }}
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>API</h2></div><div class="card-body"><div class="form-grid">
+    {{ conn_fields(z, 'Adresse', 'https://zabbix.example.com', 'Weboberfläche oder direkt …/api_jsonrpc.php', 'Bei Let’s-Encrypt-Zertifikat die CA-Prüfung verwenden.') }}
+    {{ field('API-Token', 'token', '', type='password', help=('Hinterlegt – leer lassen, um es zu behalten' if z.token_enc else ''), attrs='autocomplete="new-password"', cls='full') }}
+  </div></div></div>
+  <div class="card"><div class="card-head"><h2>Agenten & Tickets</h2></div><div class="card-body"><div class="form-grid">
+    {{ field('Zabbix-Server für die Agenten', 'agent_server', z.agent_server, placeholder='10.20.0.5', help='Adresse, unter der die Agenten den Server bzw. Proxy erreichen (Server/ServerActive)') }}
+    {{ field('Host-Gruppe', 'host_group', z.host_group or 'Servermanager') }}
+    <div class="field"><label>Tickets ab Schweregrad</label><select name="min_severity">{% for k, v in severities.items() %}<option value="{{ k }}" {% if z.min_severity == k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></div>
+    {{ field('Weiterleitung an Ticketsystem (E-Mail)', 'ticket_mail', z.ticket_mail, placeholder='support@example.com', help='z. B. Zammad, OTRS/Znuny, osTicket – Betreff mit [SM#Nummer]') }}
+    {{ checkbox('Probleme als Tickets übernehmen', 'tickets', z.tickets) }}
+  </div></div></div>
+</div>
+<div class="actions mt-1"><button class="btn primary">Speichern</button><a class="btn" href="{{ url_for('zabbix.index') if is_new else url_for('zabbix.detail', zid=z.id) }}">Abbrechen</a></div>
+</form>
+{% if not is_new %}
+<div class="card danger-zone mt-2"><div class="card-head"><h2>Verbindung entfernen</h2></div><div class="card-body">
+  <form method="post" action="{{ url_for('zabbix.delete', zid=z.id) }}" data-confirm="Verbindung {{ z.name }} entfernen? Zabbix selbst und die Tickets bleiben erhalten.">{{ csrf() }}<button class="btn danger">Entfernen</button></form>
+</div></div>
+{% endif %}
+{% endblock %}

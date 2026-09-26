@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% set help_page = "zabbix" %}
+{% from "_macros.html" import empty with context %}
+{% from "integrations/_macros.html" import int_status with context %}
+{% block title %}Zabbix{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>Zabbix</h1><p>Überwachung der Systeme mit Zabbix-Agent 2 (PSK-verschlüsselt); Probleme werden zu <a href="{{ url_for('tickets.index') }}">Tickets</a>.</p></div>
+  {% if user.is_admin %}<div class="actions"><a class="btn primary" href="{{ url_for('zabbix.new') }}"><svg class="icon"><use href="#i-plus"/></svg>Zabbix hinzufügen</a></div>{% endif %}
+</div>
+{% if items %}
+<div class="card"><div class="table-wrap"><table class="table">
+  <thead><tr><th>Zabbix</th><th>Status</th><th>Version</th><th>Hosts</th><th>Probleme</th><th>Tickets</th></tr></thead>
+  <tbody>{% for z in items %}{% set d = z.data %}
+    <tr><td><a href="{{ url_for('zabbix.detail', zid=z.id) }}"><strong>{{ z.name }}</strong></a><span class="sub">{{ z.api_url }}</span></td>
+      <td>{{ int_status(z) }}<span class="sub">{{ z.last_poll|ago }}</span></td><td>{{ d.version or '–' }}</td>
+      <td>{{ d.hosts or 0 }}{% if d.hosts_unavailable %} <span class="badge danger">{{ d.hosts_unavailable }} nicht erreichbar</span>{% endif %}</td>
+      <td>{% set bs = d.by_severity or {} %}{% for sev in ['5', '4', '3', '2'] %}{% if bs[sev] %}<span class="badge {{ 'danger' if sev in ('4', '5') else 'warning' }}" title="{{ severities[sev|int] }}">{{ bs[sev] }}</span> {% endif %}{% endfor %}{% if not d.problems %}<span class="badge success">keine</span>{% endif %}</td>
+      <td>{% if z.tickets %}ab {{ severities[z.min_severity] }}{% if z.webhook_hash %} · Webhook{% endif %}{% else %}<span class="muted">aus</span>{% endif %}</td></tr>
+  {% endfor %}</tbody></table></div></div>
+{% else %}<div class="card"><div class="card-body">{{ empty('Noch kein Zabbix-Server angebunden.', 'i-pulse') }}</div></div>{% endif %}
+{% endblock %}

@@ -2,6 +2,17 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.9.0 – 26.09.2026
+
+### Neu
+
+- **Zabbix** unter *Infrastruktur*: Übersicht, Probleme, Hosts; *In Zabbix aufnehmen* installiert per
+  SSH den Zabbix-Agent 2 mit eigenem PSK und legt den Host mit passenden Vorlagen an.
+- **Tickets** aus Zabbix-Problemen: sofort per Webhook (Medientyp, Benutzer und Aktion richtet der
+  Servermanager in Zabbix ein) und per Abgleich; übernehmen, kommentieren, zuweisen, schließen mit
+  Rückmeldung an Zabbix; Weiterleitung an ein externes Ticketsystem per E-Mail; offene Tickets auf der
+  System-Seite und als Zähler im Menü.
+
 ## 1.8.0 – 26.09.2026
 
 ### Neu

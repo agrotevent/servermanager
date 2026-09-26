@@ -29,6 +29,7 @@ from werkzeug.wrappers import Request, Response
 PVE_TOKEN = "servermanager@pve!sm"
 PVE_SECRET = "11111111-2222-3333-4444-555555555555"
 ROS_USER, ROS_PASS = "servermanager", "routerpass"
+ZBX_TOKEN = "zbx-token-123"
 PG_KEY = "pgkey.secret"
 MC_KEY = "mc-api-key"
 AK_TOKEN = "ak-token"
@@ -186,9 +187,102 @@ class MockApp:
                 resp = self.mailcow(req, req.path[len("/api/v1/"):])
             elif req.path.startswith("/api/v3/"):
                 resp = self.authentik(req, req.path[len("/api/v3/"):])
+            elif req.path == "/zabbix/api_jsonrpc.php":
+                resp = self.zabbix(req)
             else:
                 resp = Response("not found", 404)
         return resp(environ, start_response)
+
+    # ------------------------------------------------------------------ zabbix
+    def zabbix(self, req: Request) -> Response:
+        s = self.s
+        z = s.__dict__.setdefault("zbx", {
+            "seq": 100, "hostgroups": [{"groupid": "2", "name": "Linux servers"}],
+            "templates": [{"templateid": "10001", "host": "Linux by Zabbix agent", "name": "Linux by Zabbix agent"}],
+            "hosts": [], "problems": [], "triggers": {}, "acks": [], "mediatypes": [], "usergroups": [],
+            "users": [], "actions": [], "roles": [{"roleid": "1", "name": "User role", "type": "1"},
+                                                  {"roleid": "3", "name": "Super admin role", "type": "3"}]})
+        body = req.get_json(silent=True, force=True) or {}
+        method, params, rid = body.get("method"), body.get("params") or {}, body.get("id")
+
+        def ok(result):
+            return _json({"jsonrpc": "2.0", "result": result, "id": rid})
+
+        def err(data, code=-32602):
+            return _json({"jsonrpc": "2.0", "error": {"code": code, "message": "Invalid params.", "data": data},
+                          "id": rid})
+        if method == "apiinfo.version":
+            return ok(z.get("version", "7.0.5"))
+        if req.headers.get("Authorization") != f"Bearer {ZBX_TOKEN}":
+            return err("Not authorized.", -32602)
+
+        def new_id() -> str:
+            z["seq"] += 1
+            return str(z["seq"])
+
+        def by_name(coll, key="name"):
+            names = (params.get("filter") or {}).get(key)
+            items = z[coll]
+            return [i for i in items if names is None or i.get(key) in names]
+        obj, _, op = method.partition(".")
+        colls = {"hostgroup": ("hostgroups", "groupid"), "mediatype": ("mediatypes", "mediatypeid"),
+                 "usergroup": ("usergroups", "usrgrpid"), "user": ("users", "userid"),
+                 "action": ("actions", "actionid")}
+        if obj in colls:
+            coll, idk = colls[obj]
+            if op == "get":
+                return ok(by_name(coll, "username" if obj == "user" else "name"))
+            if op == "create":
+                item = dict(params, **{idk: new_id()})
+                z[coll].append(item)
+                return ok({idk + "s": [item[idk]]})
+            if op == "update":
+                item = next(i for i in z[coll] if i[idk] == params[idk])
+                item.update(params)
+                return ok({idk + "s": [item[idk]]})
+        if method == "role.get":
+            return ok(z["roles"])
+        if method == "template.get":
+            return ok(by_name("templates"))
+        if method == "host.get":
+            hosts = [h for h in z["hosts"] if not (params.get("filter") or {}).get("host")
+                     or h["host"] in params["filter"]["host"]]
+            out = []
+            for h in hosts:
+                h2 = dict(h)
+                h2["hostgroups"] = [g for g in z["hostgroups"] if g["groupid"] in {x["groupid"] for x in h["groups"]}]
+                h2["parentTemplates"] = [t for t in z["templates"]
+                                         if t["templateid"] in {x["templateid"] for x in h.get("templates", [])}]
+                out.append(h2)
+            return ok(out)
+        if method == "host.create":
+            if any(h["host"] == params["host"] for h in z["hosts"]):
+                return err("Host already exists.")
+            h = dict(params, hostid=new_id(), status="0")
+            h["interfaces"] = [dict(i, interfaceid=new_id(), available="0") for i in params["interfaces"]]
+            z["hosts"].append(h)
+            return ok({"hostids": [h["hostid"]]})
+        if method == "host.update":
+            h = next(h for h in z["hosts"] if h["hostid"] == params["hostid"])
+            h.update(params)
+            return ok({"hostids": [h["hostid"]]})
+        if method in ("hostinterface.update", "hostinterface.create"):
+            return ok({"interfaceids": [params.get("interfaceid") or new_id()]})
+        if method == "problem.get":
+            return ok([p for p in z["problems"] if int(p["severity"]) in params.get("severities", range(6))])
+        if method == "trigger.get":
+            return ok([z["triggers"][t] for t in params["triggerids"] if t in z["triggers"]])
+        if method == "event.acknowledge":
+            ev = params["eventids"][0]
+            prob = next((p for p in z["problems"] if p["eventid"] == ev), None)
+            if params["action"] & 1:
+                trig = z["triggers"].get(prob["objectid"]) if prob else None
+                if not trig or trig.get("manual_close") != "1":
+                    return err("Cannot close problem: trigger does not allow manual closing.")
+                z["problems"].remove(prob)
+            z["acks"].append(params)
+            return ok({"eventids": [ev]})
+        return err(f"unknown method {method}", -32601)
 
     # ------------------------------------------------------------------ proxmox
     def pve(self, req: Request, path: str) -> Response:

@@ -78,9 +78,10 @@ def dashboard():
     int_alerts = []
     from ... import integrations
     endpoints = {"pve": "pve.server", "router": "routers.detail", "pangolin": "pangolin.detail",
-                 "mailcow": "mailcow.detail", "sso": "sso.detail", "pbx": "pbx.detail"}
+                 "mailcow": "mailcow.detail", "sso": "sso.detail", "pbx": "pbx.detail",
+                 "zabbix": "zabbix.detail"}
     params = {"pve": "pve_id", "router": "router_id", "pangolin": "pg_id", "mailcow": "mc_id", "sso": "sso_id",
-              "pbx": "pbx_id"}
+              "pbx": "pbx_id", "zabbix": "zid"}
     for kind, model in integrations.MODELS.items():
         levels = access.integration_levels(g.db, g.user, kind)
         for obj in g.db.execute(select(model).order_by(model.name)).scalars():

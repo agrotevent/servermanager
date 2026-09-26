@@ -33,6 +33,7 @@ from .pveapi import PveError
 from .authentik import AuthentikError
 from .mailcow import MailcowError
 from .sso import SsoError
+from .zabbix import ZabbixError
 
 log = logging.getLogger("servermanager.worker")
 
@@ -246,7 +247,7 @@ class Worker:
             status, summary = JOB_CANCELLED, "Abgebrochen"
             ctx.say("Job abgebrochen.")
         except (JobFailed, SSHError, ParamError, ValueError, PveError, MikroTikError, PangolinError,
-                AuthentikError, MailcowError, SsoError) as exc:
+                AuthentikError, MailcowError, SsoError, ZabbixError) as exc:
             status, summary = JOB_FAILED, str(exc)
             ctx.say(f"FEHLER: {exc}")
         except Exception as exc:  # noqa: BLE001
@@ -1317,6 +1318,64 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
             job.payload = {**(job.payload or {}), "newt": {k: v for k, v in payload["newt"].items()
                                                           if k != "secret_enc"}}
         return msg
+
+    # ------------------------------------------------------------------ Zabbix
+    def job_zabbix_agent(self, ctx, job_id, system_id, payload) -> str:
+        """Install/configure Zabbix agent 2 (PSK) via SSH and create/update the host via the API."""
+        import re as _re
+        from .models import ZabbixHost, ZabbixServer
+        from .modules.base import load_script
+        from .zabbix import psk as new_psk
+        system = self._system(system_id)
+        with session_scope() as db:
+            zbx = db.get(ZabbixServer, int(payload["zabbix_id"]))
+            if zbx is None:
+                raise JobFailed("Zabbix-Verbindung existiert nicht mehr")
+            db.expunge(zbx)
+            zh = db.execute(select(ZabbixHost).where(ZabbixHost.zabbix_id == zbx.id,
+                                                     ZabbixHost.system_id == system.id)).scalar_one_or_none()
+            if zh is None:
+                zh = ZabbixHost(zabbix_id=zbx.id, system_id=system.id, psk_identity=f"servermanager-{system.id}",
+                                psk_enc=security.encrypt(new_psk()))
+                db.add(zh)
+                db.flush()
+            psk_identity, psk_value = zh.psk_identity, security.decrypt(zh.psk_enc)
+        if not zbx.agent_server:
+            raise JobFailed("In der Zabbix-Verbindung ist keine Server-Adresse für die Agenten eingetragen")
+        zx = integrations.zabbix_client(zbx, timeout=60)
+        version = zx.version()
+        ctx.say(f"Zabbix {version} erreichbar.")
+        host = _re.sub(r"[^A-Za-z0-9._ -]", "-", system.name).strip()[:128] or f"system-{system.id}"
+        ip = (payload.get("ip") or system.host).strip()
+        env = {"SM_ZBX_SERVER": zbx.agent_server, "SM_ZBX_HOSTNAME": host, "SM_ZBX_PSK_ID": psk_identity,
+               "SM_ZBX_PSK": psk_value, "SM_ZBX_VERSION": ".".join(version.split(".")[:2])}
+        ctx.say(f"── Agent auf {system.name} einrichten")
+        out: list[str] = []
+
+        def write(chunk: str) -> None:
+            out.append(chunk)
+            ctx.write(chunk.replace(psk_value, "***"))
+        with self._connect(ctx, system) as conn:
+            body = load_script("lib.sh") + "\n" + load_script("zabbix_agent.sh")
+            code = conn.run_script(body, env=env, root=True, on_output=write, cancel=ctx.cancelled, timeout=1800)
+        text = "".join(out)
+        if code != 0 or "SM_OK" not in text:
+            raise JobFailed(f"Agent-Einrichtung fehlgeschlagen (Exit-Code {code})")
+        ctx.say("── Host in Zabbix anlegen/aktualisieren")
+        groupid = zx.ensure_hostgroup(zbx.host_group or "Servermanager")
+        wanted = ["Linux by Zabbix agent"] + (["Docker by Zabbix agent 2"] if system.has_type("docker") else [])
+        found = zx.templates(wanted)
+        for name in wanted:
+            ctx.say(f"Vorlage {name}: " + ("zugeordnet" if name in found else "nicht gefunden – übersprungen"))
+        hostid, created = zx.upsert_host(host, system.name, ip, groupid, list(found.values()), psk_identity,
+                                         psk_value)
+        with session_scope() as db:
+            row = db.execute(select(ZabbixHost).where(ZabbixHost.zabbix_id == zbx.id,
+                                                      ZabbixHost.system_id == system.id)).scalar_one()
+            row.hostid, row.host = str(hostid), host
+            audit(db, None, "zabbix.host", system.name, f"{zbx.name} hostid {hostid}")
+        return (f"Host {host} in Zabbix {'angelegt' if created else 'aktualisiert'} (Agent 2, PSK, "
+                f"Schnittstelle {ip}:10050)")
 
     # ------------------------------------------------------------------ SSO
     def _sso_env(self, ctx, kind: str, target_id: int):

@@ -32,6 +32,7 @@ PAGES: list[tuple[str, str, str]] = [
     ("pangolin", "Pangolin: Dienste veröffentlichen", "Infrastruktur"),
     ("apps", "Nextcloud, Mailcow & SSO", "Infrastruktur"),
     ("telefonie", "Telefonie: Asterisk & FreePBX", "Infrastruktur"),
+    ("zabbix", "Zabbix & Tickets", "Infrastruktur"),
     ("backup", "Backup und Restore", "Betrieb"),
     ("servermanager-update", "Update des Servermanagers", "Betrieb"),
     ("installation", "Installation", "Betrieb"),
