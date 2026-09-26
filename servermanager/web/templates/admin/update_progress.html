@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% set help_page = "servermanager-update" %}
+{% block title %}Update läuft{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>Update läuft</h1>
+  <p>Der Servermanager wird aktualisiert. Die Seite zeigt den Fortschritt live – sie kann auch geschlossen und später wieder geöffnet werden.</p></div></div>
+<div class="card" id="update-progress" data-status="{{ url_for('admin.update_status', since=since) }}"
+     data-next="{{ url_for('admin.update_page') }}" data-version="{{ version }}" data-state="{{ st.state }}">
+  <div class="card-body">
+    <div class="update-head">
+      <strong id="up-title">{% if st.state in ('starting', 'unknown') %}Update wird gestartet …{% else %}{{ st.label }}{% endif %}</strong>
+      <span class="muted" id="up-pct">0 %</span>
+    </div>
+    <div class="progress update-bar"><span id="up-bar" style="width:0"></span></div>
+    <ol class="update-steps" id="up-steps">
+      {% for label in st.steps %}<li data-step="{{ loop.index }}"><span class="mark"></span>{{ label }}</li>{% endfor %}
+    </ol>
+    <div class="alert info" id="up-offline" hidden>Die Dienste starten neu – die Verbindung wird automatisch wiederhergestellt …</div>
+    <div class="alert success" id="up-success" hidden><strong>Update erfolgreich abgeschlossen.</strong> <span id="up-success-text"></span>
+      <a class="btn sm primary" href="{{ url_for('admin.update_page') }}">Weiter</a></div>
+    <div class="alert info" id="up-uptodate" hidden>Der Servermanager ist bereits auf dem neuesten Stand. <a class="btn sm" href="{{ url_for('admin.update_page') }}">Zurück</a></div>
+    <div class="alert danger" id="up-failed" hidden><strong>Update fehlgeschlagen:</strong> <span id="up-failed-text"></span>
+      <a class="btn sm" href="{{ url_for('admin.update_page') }}">Zurück</a></div>
+    <details class="mt-2" id="up-log-box"><summary>Protokoll <small class="muted" id="up-elapsed"></small></summary>
+      <pre class="log" id="up-log" style="min-height:120px;max-height:420px">{{ log }}</pre></details>
+  </div>
+</div>
+{% endblock %}

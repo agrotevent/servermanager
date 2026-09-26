@@ -384,3 +384,24 @@ pre.small, .small pre { font-size: 12px; }
 @media (prefers-color-scheme: dark) {
   .chart { --series-1: #3987e5; --series-2: #d95926; }
 }
+
+/* servermanager self-update progress */
+.update-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 8px; }
+.update-bar { height: 12px; border-radius: 6px; }
+.update-bar > span { background: var(--primary); transition: width .6s ease; }
+.update-bar.done > span { background: var(--success); }
+.update-bar.failed > span { background: var(--danger); }
+.update-bar.active > span { background-image: linear-gradient(45deg, rgba(255,255,255,.18) 25%, transparent 25%, transparent 50%, rgba(255,255,255,.18) 50%, rgba(255,255,255,.18) 75%, transparent 75%); background-size: 20px 20px; animation: update-stripes 1s linear infinite; }
+@keyframes update-stripes { from { background-position: 0 0; } to { background-position: 20px 0; } }
+.update-steps { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 6px; }
+.update-steps li { display: flex; align-items: center; gap: 10px; color: var(--muted); }
+.update-steps .mark { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--border-strong); flex: none; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; line-height: 1; }
+.update-steps li.done { color: inherit; }
+.update-steps li.done .mark { background: var(--success); border-color: var(--success); color: #fff; }
+.update-steps li.done .mark::after { content: "✓"; }
+.update-steps li.current { color: inherit; font-weight: 600; }
+.update-steps li.current .mark { border-color: var(--primary); border-top-color: transparent; animation: spin 0.9s linear infinite; }
+.update-steps li.failed { color: var(--danger); font-weight: 600; }
+.update-steps li.failed .mark { background: var(--danger); border-color: var(--danger); color: #fff; }
+.update-steps li.failed .mark::after { content: "✕"; }
+[hidden] { display: none !important; }

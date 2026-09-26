@@ -244,8 +244,8 @@ def test_update_start_survives_service_restart(app, db, monkeypatch):
     def killed():
         raise HelperError("sm-helper self-update wurde durch Signal 15 beendet", -15)
     monkeypatch.setattr(selfupdate, "start", killed)
-    r = c.post("/update/start", data={"csrf_token": c.csrf})
-    assert r.status_code == 200 and "Update läuft" in r.text
+    r = c.post("/update/start", data={"csrf_token": c.csrf}, follow_redirects=True)
+    assert r.status_code == 200 and "Update läuft" in r.text and "update-progress" in r.text
 
     def failed():
         raise HelperError("Update-Dienst konnte nicht gestartet werden (systemd-run)", 1)
@@ -367,3 +367,53 @@ def test_router_ping_failure_is_diagnosed(app, env, mock):
                 ros[k] = v
     r = c.post(f"/routeros/{env['router']}/do", data={"action": "ping", "csrf_token": c.csrf}, follow_redirects=True)
     assert "3/3 Antworten" in r.text
+
+
+def test_update_progress(app, db, monkeypatch, tmp_path):
+    import time
+    from servermanager import selfupdate, settings
+    status_file = tmp_path / "update.status"
+    monkeypatch.setattr(selfupdate, "UPDATE_STATUS", status_file)
+    settings.set(db, "backup.before_update", False)
+    db.commit()
+    c = login(app, "i-admin")
+    now = int(time.time())
+
+    def write(state, step, label, started=now, updated=now):
+        status_file.write_text(f"state={state}\nstep={step}\ntotal=7\nlabel={label}\nstarted={started}\n"
+                               f"updated={updated}\nold=aaaaaaaaaaaaaaaa\nnew=bbbbbbbbbbbbbbbb\n")
+    # no status file yet (update started by an older sm-update)
+    d = c.get("/update/status").get_json()
+    assert d["status"]["state"] == "unknown" and d["version"]
+    # a status file of the previous run is not mistaken for the new one
+    write("success", 7, "Update erfolgreich abgeschlossen", started=now - 3600)
+    assert c.get(f"/update/status?since={now}").get_json()["status"]["state"] == "starting"
+    write("running", 3, "Python-Abhängigkeiten installieren")
+    d = c.get(f"/update/status?since={now}").get_json()["status"]
+    assert (d["state"], d["step"], d["total"], d["new"]) == ("running", 3, 7, "bbbbbbbbbbbb")
+    assert d["steps"][2] == "Python-Abhängigkeiten installieren"
+    page = c.get(f"/update/progress?since={now}").text
+    assert "Datenbank migrieren" in page and "update-progress" in page
+    # while running: the update page links to the progress, a second start is refused
+    assert "Fortschritt anzeigen" in c.get("/update").text
+    started = []
+    monkeypatch.setattr(selfupdate, "start", lambda: started.append(1))
+    r = c.post("/update/start", data={"csrf_token": c.csrf})
+    assert r.status_code == 302 and "/update/progress" in r.headers["Location"] and not started
+    # no progress for 30 min
+    write("running", 5, "Datenbank migrieren", updated=now - 4000)
+    assert c.get("/update/status").get_json()["status"]["state"] == "stale"
+    write("failed", 5, "Migration fehlgeschlagen (vorherige Version wiederhergestellt)")
+    r = c.post("/update/start", data={"csrf_token": c.csrf})
+    assert r.status_code == 302 and "since=" in r.headers["Location"] and started
+    settings.set(db, "backup.before_update", True)
+    db.commit()
+
+
+def test_sm_update_steps_match_web():
+    from pathlib import Path
+    from servermanager import selfupdate
+    script = (Path(__file__).resolve().parent.parent / "bin" / "sm-update").read_text()
+    for n, label in enumerate(selfupdate.STEPS, 1):
+        assert f'step {n} "{label}"' in script
+    assert f"TOTAL={len(selfupdate.STEPS)}" in script

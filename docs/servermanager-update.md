@@ -6,6 +6,20 @@ aktualisiert die Python-Abhängigkeiten, systemd-Units und die Datenbank und sta
 Startet die Weboberfläche danach nicht, wird automatisch auf den vorherigen Stand zurückgesetzt.
 Laufende Hintergrund-Jobs auf den Zielsystemen laufen weiter und werden danach wieder aufgenommen.
 
+## Fortschrittsanzeige
+
+Nach dem Start zeigt *Update läuft* die sieben Schritte (herunterladen, Code aktualisieren,
+Python-Abhängigkeiten, Systemdienste, Datenbank, Neustart, Erreichbarkeit) mit Fortschrittsbalken
+und Live-Protokoll. Während des Neustarts ist die Weboberfläche kurz nicht erreichbar – die Seite
+verbindet sich selbst wieder und wechselt nach dem erfolgreichen Abschluss zur Update-Seite. Bei einem
+Fehler wird der Schritt rot markiert, die Ursache angezeigt und das Protokoll geöffnet (die vorherige
+Version ist dann wiederhergestellt). Die Seite kann geschlossen werden; solange ein Update läuft, führt
+die Update-Seite über *Fortschritt anzeigen* zurück, ein zweiter Start ist gesperrt.
+
+Der Fortschritt steht in `/var/log/servermanager/update.status`, das Protokoll in
+`/var/log/servermanager/update.log`. Beim ersten Update auf eine Version mit Fortschrittsanzeige
+läuft noch das alte Update-Skript: dann erscheinen nur Protokoll und Abschlussmeldung.
+
 ## Update-Branch
 
 Updates kommen aus dem eingestellten Branch (Standard `main`). Unter *Update → Update-Branch* zeigt der

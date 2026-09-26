@@ -4,6 +4,7 @@
 {% block title %}Update{% endblock %}
 {% block content %}
 <div class="page-head"><div class="grow"><h1>Servermanager aktualisieren</h1><p>Aktualisierung per Klick aus dem Git-Repository.</p></div></div>
+{% if st.state in ('running', 'rollback') %}<div class="alert info">Gerade läuft ein Update ({{ st.step }}/{{ st.total }}: {{ st.label }}). <a class="btn sm primary" href="{{ url_for('admin.update_progress') }}">Fortschritt anzeigen</a></div>{% endif %}
 <div class="grid grid-2">
   <div class="card">
     <div class="card-head"><h2>Installierte Version</h2></div>

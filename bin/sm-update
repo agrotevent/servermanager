@@ -29,6 +29,24 @@ exec >>"$LOG" 2>&1
 
 say() { echo "[$(date '+%H:%M:%S')] $*"; }
 
+# progress for the web interface (read by the update progress page)
+STATUS=/var/log/servermanager/update.status
+STARTED="$(date +%s)"
+TOTAL=7
+OLD=""
+NEW=""
+progress() {  # progress <state> <step> <label>
+    local tmp="$STATUS.tmp"
+    ( umask 022; printf 'state=%s\nstep=%s\ntotal=%s\nlabel=%s\nstarted=%s\nupdated=%s\nold=%s\nnew=%s\n' \
+        "$1" "$2" "$TOTAL" "$3" "$STARTED" "$(date +%s)" "$OLD" "$NEW" > "$tmp" ) && mv -f "$tmp" "$STATUS"
+}
+STEP=0
+step() {  # step <n> <label>
+    STEP="$1"
+    progress running "$1" "$2"
+    say "[$1/$TOTAL] $2"
+}
+
 # Access token for a private repository (written by install.sh --token or the web interface)
 CRED_FILE="$CONF_DIR/git-credentials"
 export GIT_TERMINAL_PROMPT=0
@@ -40,37 +58,44 @@ git_fetch() {
     fi
 }
 
-cd "$APP_DIR" || { say "FEHLER: $APP_DIR nicht gefunden"; exit 1; }
+progress running 0 "Update wird gestartet"
+cd "$APP_DIR" || { say "FEHLER: $APP_DIR nicht gefunden"; progress failed 0 "$APP_DIR nicht gefunden"; exit 1; }
 say "Servermanager-Update gestartet (Branch $BRANCH)"
 OLD="$(git rev-parse HEAD)"
 
 rollback() {
     say "FEHLER: $1 - setze auf $OLD zurück"
+    progress rollback "$STEP" "$1 – Rückkehr zur vorherigen Version"
     git reset --hard "$OLD"
     "$APP_DIR/.venv/bin/pip" install -q -r requirements.txt || true
     systemctl restart servermanager-worker servermanager-web
     say "Rollback abgeschlossen. Hinweis: Eine bereits migrierte Datenbank kann aus der Sicherung vor dem Update wiederhergestellt werden."
+    progress failed "$STEP" "$1 (vorherige Version wiederhergestellt)"
     exit 1
 }
 
-git_fetch || { say "FEHLER: git fetch fehlgeschlagen (Netzwerk/Zugriffstoken prüfen)"; exit 1; }
+step 1 "Neue Version herunterladen"
+git_fetch || { say "FEHLER: git fetch fehlgeschlagen (Netzwerk/Zugriffstoken prüfen)"
+               progress failed 1 "git fetch fehlgeschlagen (Netzwerk/Zugriffstoken prüfen)"; exit 1; }
 NEW="$(git rev-parse "origin/$BRANCH")"
 if [ "$OLD" = "$NEW" ]; then
     say "Bereits auf dem neuesten Stand ($OLD)."
+    progress uptodate "$TOTAL" "Bereits auf dem neuesten Stand"
     exit 0
 fi
+step 2 "Programmcode aktualisieren"
 say "Aktualisiere ${OLD:0:12} -> ${NEW:0:12}"
 git log --format='  %h %s' "$OLD..$NEW" | head -n 50
 git reset --hard "$NEW" || rollback "git reset fehlgeschlagen"
 chmod 755 bin/sm-helper bin/sm-update bin/servermanager-cli 2>/dev/null || true
 
-say "Python-Abhängigkeiten aktualisieren"
+step 3 "Python-Abhängigkeiten installieren"
 "$APP_DIR/.venv/bin/pip" install -q --upgrade pip >/dev/null 2>&1 || true
 "$APP_DIR/.venv/bin/pip" install -q -r requirements.txt || rollback "pip install fehlgeschlagen"
 SITE="$("$APP_DIR/.venv/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
 echo "$APP_DIR" > "$SITE/servermanager-app.pth"
 
-say "systemd-Units prüfen"
+step 4 "Systemdienste prüfen"
 changed=0
 for unit in servermanager-web.service servermanager-worker.service; do
     if ! cmp -s "deploy/$unit" "/etc/systemd/system/$unit"; then
@@ -81,15 +106,17 @@ done
 install -m 755 bin/servermanager-cli /usr/local/bin/servermanager-cli
 [ "$changed" = "1" ] && systemctl daemon-reload
 
-say "Datenbank migrieren"
+step 5 "Datenbank migrieren"
 runuser -u "$SVC_USER" -- env SM_CONFIG="$CONF" "$APP_DIR/.venv/bin/python" -m servermanager.cli migrate \
     || rollback "Migration fehlgeschlagen"
 
-say "Dienste neu starten"
+step 6 "Dienste neu starten"
 systemctl restart servermanager-worker servermanager-web
+step 7 "Erreichbarkeit prüfen"
 for _ in $(seq 1 30); do
     if curl -fsS "http://$LISTEN/healthz" >/dev/null 2>&1; then
         say "Update erfolgreich abgeschlossen: $(git log -1 --format='%h %s')"
+        progress success "$TOTAL" "Update erfolgreich abgeschlossen"
         exit 0
     fi
     sleep 2

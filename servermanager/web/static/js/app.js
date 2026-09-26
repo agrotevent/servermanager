@@ -262,6 +262,85 @@
     setTimeout(check, 3000);
   }
 
+  // ---------------------------------------------------------------- self-update progress
+  const up = document.getElementById("update-progress");
+  if (up) {
+    const $ = (id) => document.getElementById(id);
+    const t0 = Date.now();
+    let offlineSince = 0, sawOffline = false, finished = false, lastLog = null;
+    const fmt = (s) => (s >= 60 ? Math.floor(s / 60) + " min " : "") + (s % 60) + " s";
+    const render = (st, version, log) => {
+      const total = st.total || 7;
+      const state = st.state;
+      let done = 0;
+      if (state === "success" || state === "uptodate") done = total;
+      else if (state === "running") done = Math.max(0, st.step - 1);
+      else if (state === "rollback" || state === "failed" || state === "stale") done = Math.max(0, st.step - 1);
+      // the new version answering means the restart worked, even with an old status format
+      const upgraded = (version && version !== up.dataset.version) || sawOffline;
+      const pct = state === "running" ? Math.round((done + 0.5) / total * 100) : Math.round(done / total * 100);
+      $("up-bar").style.width = pct + "%";
+      $("up-pct").textContent = pct + " %";
+      const bar = $("up-bar").parentElement;
+      bar.classList.toggle("done", state === "success" || state === "uptodate");
+      bar.classList.toggle("failed", ["failed", "rollback", "stale"].includes(state));
+      bar.classList.toggle("active", state === "running" || state === "starting" || state === "unknown");
+      $("up-steps").querySelectorAll("li").forEach((li) => {
+        const n = Number(li.dataset.step);
+        li.className = n <= done ? "done"
+          : (n === st.step && state === "running") ? "current"
+          : (n === st.step && ["failed", "rollback", "stale"].includes(state)) ? "failed" : "";
+      });
+      let title = st.label || "";
+      if (state === "starting" || state === "unknown") title = "Update wird gestartet …";
+      if (state === "stale") title = "Keine Rückmeldung mehr vom Update";
+      $("up-title").textContent = title;
+      if (log !== undefined && log !== lastLog) {
+        lastLog = log;
+        const el = $("up-log");
+        el.textContent = log;
+        el.scrollTop = el.scrollHeight;
+      }
+      if (state === "success" || (state === "unknown" && upgraded)) {
+        finished = true;
+        $("up-success").hidden = false;
+        $("up-success-text").textContent = "Version " + (version || "") + (st.new ? " (" + st.new + ")" : "") + " ist aktiv.";
+        $("up-bar").style.width = "100%"; $("up-pct").textContent = "100 %";
+        bar.classList.add("done"); bar.classList.remove("active");
+        setTimeout(() => { window.location.href = up.dataset.next; }, 8000);
+      } else if (state === "uptodate") {
+        finished = true; $("up-uptodate").hidden = false;
+      } else if (state === "failed" || state === "stale") {
+        finished = true;
+        $("up-failed").hidden = false;
+        $("up-failed-text").textContent = state === "stale"
+          ? "Seit über 30 Minuten keine Rückmeldung – Protokoll prüfen." : (st.label || "");
+        $("up-log-box").open = true;
+      }
+    };
+    const poll = () => {
+      $("up-elapsed").textContent = "(" + fmt(Math.round((Date.now() - t0) / 1000)) + ")";
+      fetch(up.dataset.status, { credentials: "same-origin", cache: "no-store" })
+        .then((r) => {
+          if (r.redirected && r.url.includes("/login")) { window.location.href = up.dataset.next; throw new Error("login"); }
+          if (!r.ok || !(r.headers.get("content-type") || "").includes("json")) throw new Error(); return r.json(); })
+        .then((d) => {
+          offlineSince = 0; $("up-offline").hidden = true;
+          render(d.status, d.version, d.log);
+          if (!finished) setTimeout(poll, 1500);
+        })
+        .catch(() => {
+          // web service restarting (or login needed after the restart)
+          if (!offlineSince) offlineSince = Date.now();
+          sawOffline = true;
+          $("up-offline").hidden = false;
+          setTimeout(poll, 2000);
+        });
+    };
+    render({ state: up.dataset.state, step: 0, total: 7, label: "" });
+    poll();
+  }
+
   // expose for inline use
   window.SM = { csrf };
 

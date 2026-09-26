@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import time
 from pathlib import Path
 
 from . import __version__
@@ -154,3 +155,41 @@ def log_text(max_bytes: int = 200_000) -> str:
         return ""
     data = p.read_bytes()[-max_bytes:]
     return data.decode("utf-8", "replace")
+
+
+# progress written by bin/sm-update (key=value lines); the step labels are the same as there
+UPDATE_STATUS = Path("/var/log/servermanager/update.status")
+STEPS = ["Neue Version herunterladen", "Programmcode aktualisieren", "Python-Abhängigkeiten installieren",
+         "Systemdienste prüfen", "Datenbank migrieren", "Dienste neu starten", "Erreichbarkeit prüfen"]
+STATES_ACTIVE = ("running", "rollback")
+STALE_AFTER = 1800
+
+
+def status(since: float = 0) -> dict:
+    """Progress of the (last) update. since: start of the update the caller waits for - an older status
+    file belongs to a previous run and is reported as "starting"."""
+    p = UPDATE_STATUS if UPDATE_STATUS.exists() else Path(get_config().data_dir) / "update.status"
+    try:
+        raw = p.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {"state": "unknown", "step": 0, "total": len(STEPS), "label": "", "steps": STEPS}
+    d = dict(line.partition("=")[::2] for line in raw.splitlines() if "=" in line)
+
+    def num(key: str) -> int:
+        try:
+            return int(d.get(key) or 0)
+        except ValueError:
+            return 0
+    started, updated = num("started"), num("updated")
+    state = d.get("state") or "unknown"
+    if since and started < since - 5:
+        state = "starting"
+    elif state in STATES_ACTIVE and updated and time.time() - updated > STALE_AFTER:
+        state = "stale"
+    return {"state": state, "step": num("step"), "total": num("total") or len(STEPS),
+            "label": d.get("label", "")[:300], "started": started, "updated": updated,
+            "old": d.get("old", "")[:12], "new": d.get("new", "")[:12], "steps": STEPS}
+
+
+def running() -> bool:
+    return status()["state"] in STATES_ACTIVE

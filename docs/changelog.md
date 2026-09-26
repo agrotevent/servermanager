@@ -2,6 +2,18 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.7.0 – 26.09.2026
+
+### Neu
+
+- Fortschrittsanzeige beim Update des Servermanagers: Schritte mit Häkchen, Fortschrittsbalken,
+  Live-Protokoll, automatisches Wiederverbinden während des Neustarts, klare Erfolgs-/Fehlermeldung.
+  Ein laufendes Update lässt sich über die Update-Seite wieder öffnen; ein zweiter Start ist gesperrt.
+
+### Behoben
+
+- Die Warteseite leitete nach 20 Sekunden weiter, auch wenn das Update noch lief.
+
 ## 1.6.3 – 26.09.2026
 
 ### Verbessert

@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import os
+import time
 from datetime import datetime
 from zoneinfo import available_timezones
 
 from flask import Blueprint, abort, flash, g, redirect, render_template, request, send_file, session, url_for
 from sqlalchemy import select
 
-from ... import backup, notify, selfupdate, settings, sshkeys
+from ... import __version__, backup, notify, selfupdate, settings, sshkeys
 from ...config import get_config
 from ...core import audit
 from ...helper import HelperError, run_helper
@@ -250,7 +251,7 @@ def backups_restore_confirm():
 @admin_required
 def update_page():
     running = g.db.execute(select(Job).where(Job.status == JOB_RUNNING)).scalars().all()
-    return render_template("admin/update.html", info=selfupdate.current(), check=session.pop("update_check", None),
+    return render_template("admin/update.html", st=selfupdate.status(), info=selfupdate.current(), check=session.pop("update_check", None),
                            log=selfupdate.log_text(), running=running, token=selfupdate.token_status(),
                            branches=selfupdate.branches(),
                            last_check=settings.get(g.db, "state.update_checked"))
@@ -307,12 +308,16 @@ def update_check():
 @bp.post("/update/start")
 @admin_required
 def update_start():
+    if selfupdate.running():
+        flash("Es läuft bereits ein Update.", "info")
+        return redirect(url_for("admin.update_progress"))
     try:
         if settings.get(g.db, "backup.before_update"):
             path = backup.create_backup(g.db, note="automatisch vor Update")
             flash(f"Sicherung vor dem Update: {path.name}", "info")
         audit(g.db, g.user, "update.start", "", ip=client_ip())
         g.db.commit()
+        started = time.time()
         try:
             selfupdate.start()
         except HelperError as exc:
@@ -323,10 +328,28 @@ def update_start():
     except (HelperError, backup.BackupError, OSError) as exc:
         flash(f"Update konnte nicht gestartet werden: {exc}", "danger")
         return redirect(url_for("admin.update_page"))
-    return render_template("admin/restarting.html", title="Update läuft",
-                           message="Der Servermanager wird aktualisiert und neu gestartet. Die Seite lädt "
-                                   "automatisch neu, sobald er wieder erreichbar ist.",
-                           next_url=url_for("admin.update_page"))
+    return redirect(url_for("admin.update_progress", since=int(started)))
+
+
+@bp.get("/update/progress")
+@admin_required
+def update_progress():
+    try:
+        since = int(request.args.get("since", "0"))
+    except ValueError:
+        since = 0
+    return render_template("admin/update_progress.html", since=since, st=selfupdate.status(since),
+                           version=__version__, log=selfupdate.log_text(50_000))
+
+
+@bp.get("/update/status")
+@admin_required
+def update_status():
+    try:
+        since = int(request.args.get("since", "0"))
+    except ValueError:
+        since = 0
+    return {"status": selfupdate.status(since), "version": __version__, "log": selfupdate.log_text(50_000)}
 
 
 @bp.get("/update/log")
