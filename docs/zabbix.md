@@ -71,7 +71,12 @@ Menü **Tickets** (mit Zähler der aktiven Tickets):
 Nachrichten, die in Zabbix an einem Problem hinterlassen werden, erscheinen im Verlauf des Tickets.
 Behebt Zabbix das Problem, wird das Ticket *Behoben*.
 
-### Externes Ticketsystem
+### Zammad
+
+Tickets können direkt in einem Zammad angelegt und in beide Richtungen abgeglichen werden – siehe
+[Zammad](zammad.md). Dazu in der Zabbix-Verbindung *Tickets in Zammad anlegen* wählen.
+
+### Andere Ticketsysteme (E-Mail)
 
 Ist eine Adresse für das Ticketsystem hinterlegt (Zammad, OTRS/Znuny, osTicket …), gehen neue,
 behobene und geschlossene Tickets dorthin per E-Mail mit `[SM#<Nummer>]` im Betreff, damit das

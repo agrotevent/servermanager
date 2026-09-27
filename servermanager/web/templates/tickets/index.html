@@ -14,7 +14,7 @@
 </div></div>
 {% if rows %}
 <div class="card"><div class="table-wrap"><table class="table">
-  <thead><tr><th>#</th><th>Schweregrad</th><th>Problem</th><th>Host / System</th><th>Status</th><th>Bearbeiter</th><th>Seit</th></tr></thead>
+  <thead><tr><th>#</th><th>Schweregrad</th><th>Problem</th><th>Host / System</th><th>Status</th><th>Bearbeiter</th><th>Zammad</th><th>Seit</th></tr></thead>
   <tbody>{% for t in rows %}
     <tr class="{{ 'muted' if not t.is_active }}"><td class="mono"><a href="{{ url_for('tickets.detail', ticket_id=t.id) }}">#{{ t.id }}</a></td>
       <td><span class="badge {{ sev_class[t.severity] }}">{{ severities[t.severity] }}</span></td>
@@ -22,6 +22,8 @@
       <td>{{ t.host }}{% if t.system %}<span class="sub"><a href="{{ url_for('systems.detail', system_id=t.system_id) }}">{{ t.system.name }}</a></span>{% endif %}</td>
       <td><span class="badge {{ {'open': 'danger', 'progress': 'warning', 'resolved': 'success'}.get(t.status, '') }}">{{ statuses[t.status] }}</span></td>
       <td>{{ t.assignee.label if t.assignee else '–' }}</td>
+      <td>{% if t.zammad_number %}<span class="mono">#{{ t.zammad_number }}</span>{% elif t.zammad_error %}<span class="badge danger" title="{{ t.zammad_error }}">Fehler</span>{% else %}–{% endif %}</td>
+      <td>{% if t.zammad_number %}<span class="mono">#{{ t.zammad_number }}</span>{% elif t.zammad_error %}<span class="badge danger" title="{{ t.zammad_error }}">Fehler</span>{% else %}–{% endif %}</td>
       <td class="nowrap"><small>{{ t.opened_at|dt }}</small><span class="sub">{{ t.opened_at|ago }}</span></td></tr>
   {% endfor %}</tbody></table></div></div>
 {% else %}<div class="card"><div class="card-body">{{ empty('Keine Tickets in dieser Ansicht.', 'i-ticket') }}</div></div>{% endif %}

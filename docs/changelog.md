@@ -2,6 +2,16 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.11.0 – 27.09.2026
+
+### Neu
+
+- **Zammad** direkt angebunden: Tickets aus Zabbix-Problemen werden in Zammad angelegt (Gruppe,
+  Kunde, Priorität nach Schweregrad, Tags); Übernehmen, Kommentare, Schließen und Wiederöffnen werden
+  übertragen; Schließen, Wiederöffnen und neue Notizen in Zammad kommen per signiertem Webhook zurück
+  (Webhook und Trigger richtet der Servermanager in Zammad ein). Fehlgeschlagene Übergaben werden beim
+  Abgleich nachgeholt.
+
 ## 1.10.0 – 26.09.2026
 
 ### Neu

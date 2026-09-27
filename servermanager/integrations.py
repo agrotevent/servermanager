@@ -12,25 +12,28 @@ from .authentik import Authentik, AuthentikError
 from .mailcow import Mailcow, MailcowError
 from .ispconfig_api import IspConfig, IspError
 from .models import (KIND_ISPC, KIND_MAILCOW, KIND_PANGOLIN, KIND_PBX, KIND_PVE, KIND_ROUTER, KIND_SSO,
-                     KIND_ZABBIX, STATUS_ERROR, STATUS_ONLINE, IspServer, MailcowServer, PangolinServer, PbxServer,
-                     PveServer, RouterDevice, SsoServer, System, ZabbixHost, ZabbixServer, utcnow)
+                     KIND_ZABBIX, KIND_ZAMMAD, STATUS_ERROR, STATUS_ONLINE, IspServer, MailcowServer, PangolinServer,
+                     PbxServer, PveServer, RouterDevice, SsoServer, System, ZabbixHost, ZabbixServer, ZammadServer,
+                     utcnow)
 from .pangolin import Pangolin, PangolinError
 from .pbx import PbxError
 from .pveapi import PveError
 from .ssh import SSHError
 from .zabbix import Zabbix, ZabbixError
+from .zammad import Zammad, ZammadError
 
 log = logging.getLogger(__name__)
 
 MODELS = {KIND_PVE: PveServer, KIND_ROUTER: RouterDevice, KIND_PANGOLIN: PangolinServer,
           KIND_MAILCOW: MailcowServer, KIND_SSO: SsoServer, KIND_PBX: PbxServer, KIND_ZABBIX: ZabbixServer,
-          KIND_ISPC: IspServer}
+          KIND_ISPC: IspServer, KIND_ZAMMAD: ZammadServer}
 LABELS = {KIND_PVE: "Proxmox", KIND_ROUTER: "RouterOS", KIND_PANGOLIN: "Pangolin", KIND_MAILCOW: "Mailcow",
-          KIND_SSO: "SSO", KIND_PBX: "Telefonie", KIND_ZABBIX: "Zabbix", KIND_ISPC: "ISPConfig"}
+          KIND_SSO: "SSO", KIND_PBX: "Telefonie", KIND_ZABBIX: "Zabbix", KIND_ISPC: "ISPConfig",
+          KIND_ZAMMAD: "Zammad"}
 Integration = Union[PveServer, RouterDevice, PangolinServer, MailcowServer, SsoServer, PbxServer, ZabbixServer,
-                    IspServer]
+                    IspServer, ZammadServer]
 ApiError = (PveError, MikroTikError, PangolinError, MailcowError, AuthentikError, PbxError, ZabbixError, IspError,
-            SSHError, ValueError)
+            ZammadError, SSHError, ValueError)
 
 
 def kind_of(obj: Integration) -> str:
@@ -140,6 +143,34 @@ def ispconfig_auto(db: Session, system: System) -> Optional[int]:
     return job.id
 
 
+def zammad_client(z: ZammadServer, timeout: int = 20) -> Zammad:
+    return Zammad(z.api_url, security.decrypt(z.token_enc), fingerprint=z.fingerprint or "",
+                  verify_ca=bool(z.verify_ca) or not z.fingerprint, timeout=timeout)
+
+
+def zammad_overview(db: Session, z: ZammadServer) -> tuple[dict, list[dict]]:
+    from . import tickets
+    from .models import Ticket
+    client = zammad_client(z)
+    me = client.me()
+    if me.get("id"):
+        z.agent_id = int(me["id"])
+    groups = [g.get("name") for g in client.groups()]
+    result = tickets.sync_zammad(db, z)
+    failed = db.query(Ticket).filter(Ticket.zabbix_id.in_(
+        [x.id for x in db.query(ZabbixServer).filter(ZabbixServer.zammad_id == z.id)]),
+        Ticket.zammad_ticket_id.is_(None), Ticket.zammad_error != "").count()
+    alerts = []
+    if z.group_name and groups and z.group_name not in groups:
+        alerts.append({"key": "group", "severity": "warn", "text": f"Gruppe „{z.group_name}“ gibt es in Zammad nicht"})
+    if failed:
+        alerts.append({"key": "create", "severity": "warn",
+                       "text": f"{failed} Ticket(s) konnten nicht in Zammad angelegt werden"})
+    data = {"user": me.get("login") or me.get("email") or "", "groups": groups,
+            "linked": db.query(Ticket).filter(Ticket.zammad_server_id == z.id).count(), **result}
+    return data, alerts
+
+
 def pangolin_client(p: PangolinServer, timeout: int = 20) -> Pangolin:
     return Pangolin(p.api_url, security.decrypt(p.api_key_enc), p.org_id, fingerprint=p.fingerprint or "",
                     timeout=timeout)
@@ -209,6 +240,8 @@ def poll(db: Session, obj: Integration) -> list[dict]:
             alerts = pbx.alerts(data)
         elif kind == KIND_ZABBIX:
             data, alerts = zabbix_overview(db, obj, zabbix_client(obj))
+        elif kind == KIND_ZAMMAD:
+            data, alerts = zammad_overview(db, obj)
         elif kind == KIND_ISPC:
             data = ispconfig_overview(ispconfig_client(obj))
         elif kind == KIND_SSO:

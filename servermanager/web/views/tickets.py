@@ -81,7 +81,13 @@ def detail(ticket_id: int):
     users = g.db.execute(select(User).where(User.active.is_(True)).order_by(User.username)).scalars().all() \
         if g.user.is_admin else []
     zbx = g.db.get(ZabbixServer, t.zabbix_id) if t.zabbix_id else None
+    zs = tickets.zammad_of(g.db, t)
+    zammad_url = ""
+    if zs is not None and t.zammad_ticket_id:
+        from ...zammad import normalize_url
+        zammad_url = f"{normalize_url(zs.api_url)}/#ticket/zoom/{t.zammad_ticket_id}"
     return render_template("tickets/detail.html", t=t, can_edit=level(t) == LEVEL_OPERATE, users=users, zbx=zbx,
+                           zs=zs, zammad_url=zammad_url,
                            statuses=TICKET_STATUSES, severities=SEVERITIES, sev_class=SEVERITY_CLASS)
 
 
@@ -109,12 +115,15 @@ def act(ticket_id: int):
     text = (request.form.get("text") or "").strip()[:4000]
     who = g.user.label
     warn = ""
+    zwarn = ""
     if op == "take":
         t.assignee_id = g.user.id
         if t.status == TICKET_OPEN:
             t.status = TICKET_PROGRESS
         tickets.add_comment(g.db, t, f"Übernommen von {who}." + (f"\n{text}" if text else ""), "event", g.user)
         warn = _zabbix(t, ACK_ACK, f"Übernommen von {who}" + (f": {text}" if text else ""))
+        zwarn = tickets.zammad_owner(g.db, t, g.user) or tickets.zammad_note(
+            g.db, t, f"Übernommen von {who}" + (f": {text}" if text else ""))
         msg = "Ticket übernommen" + (" und in Zabbix bestätigt." if t.zabbix_id and not warn else ".")
     elif op == "assign" and g.user.is_admin:
         uid = request.form.get("user_id", "")
@@ -130,6 +139,8 @@ def act(ticket_id: int):
         tickets.add_comment(g.db, t, text, "comment", g.user)
         if request.form.get("to_zabbix"):
             warn = _zabbix(t, 0, f"{who}: {text}")
+        if request.form.get("to_zammad"):
+            zwarn = tickets.zammad_note(g.db, t, f"{who}: {text}", internal=not request.form.get("public"))
         msg = "Kommentar gespeichert."
     elif op == "close":
         close_zbx = bool(request.form.get("close_zabbix")) and not t.resolved_at
@@ -143,12 +154,21 @@ def act(ticket_id: int):
                                                                   else "") + (f"\n{text}" if text else ""),
                             "event", g.user)
         tickets.send_mail(g.db, g.db.get(ZabbixServer, t.zabbix_id) if t.zabbix_id else None, t, "closed")
+        zwarn = tickets.zammad_note(g.db, t, f"Geschlossen von {who}" + (f": {text}" if text else ""),
+                                    internal=False, state="closed")
         msg = "Ticket geschlossen."
     elif op == "reopen":
         t.status, t.closed_at = TICKET_PROGRESS if t.assignee_id else TICKET_OPEN, None
         tickets.add_comment(g.db, t, f"Wieder geöffnet von {who}." + (f"\n{text}" if text else ""), "event",
                             g.user)
+        zwarn = tickets.zammad_note(g.db, t, f"Wieder geöffnet von {who}", state="open")
         msg = "Ticket wieder geöffnet."
+    elif op == "zammad":
+        if not tickets.zammad_create(g.db, t):
+            g.db.commit()
+            flash(f"Nicht an Zammad übergeben: {t.zammad_error or 'keine Zammad-Verbindung zugeordnet'}", "danger")
+            return redirect(url_for("tickets.detail", ticket_id=t.id))
+        msg = f"In Zammad als Ticket #{t.zammad_number} angelegt."
     else:
         abort(400)
     audit(g.db, g.user, f"ticket.{op}", f"#{t.id}", t.title[:200], ip=client_ip())
@@ -156,6 +176,8 @@ def act(ticket_id: int):
     flash(msg, "success")
     if warn:
         flash(f"Rückmeldung an Zabbix fehlgeschlagen: {warn}", "warning")
+    if zwarn:
+        flash(f"Übertragung an Zammad fehlgeschlagen: {zwarn}", "warning")
     return redirect(url_for("tickets.detail", ticket_id=t.id))
 
 

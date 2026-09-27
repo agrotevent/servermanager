@@ -16,7 +16,9 @@
     {{ field('Zabbix-Server für die Agenten', 'agent_server', z.agent_server, placeholder='10.20.0.5', help='Adresse, unter der die Agenten den Server bzw. Proxy erreichen (Server/ServerActive)') }}
     {{ field('Host-Gruppe', 'host_group', z.host_group or 'Servermanager') }}
     <div class="field"><label>Tickets ab Schweregrad</label><select name="min_severity">{% for k, v in severities.items() %}<option value="{{ k }}" {% if z.min_severity == k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></div>
-    {{ field('Weiterleitung an Ticketsystem (E-Mail)', 'ticket_mail', z.ticket_mail, placeholder='support@example.com', help='z. B. Zammad, OTRS/Znuny, osTicket – Betreff mit [SM#Nummer]') }}
+    <div class="field"><label>Tickets in Zammad anlegen</label><select name="zammad_id"><option value="">– nein –</option>{% for x in zammads %}<option value="{{ x.id }}" {% if z.zammad_id == x.id %}selected{% endif %}>{{ x.name }}</option>{% endfor %}</select>
+      <span class="help">{% if zammads %}Direkte Anbindung über die Zammad-API{% else %}Zuerst unter Infrastruktur → Zammad eine Verbindung anlegen{% endif %}</span></div>
+    {{ field('Weiterleitung an Ticketsystem (E-Mail)', 'ticket_mail', z.ticket_mail, placeholder='support@example.com', help='für andere Ticketsysteme (OTRS/Znuny, osTicket …) – Betreff mit [SM#Nummer]') }}
     {{ checkbox('Probleme als Tickets übernehmen', 'tickets', z.tickets) }}
   </div></div></div>
 </div>

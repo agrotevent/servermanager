@@ -11,8 +11,9 @@ from sqlalchemy.orm import Session
 
 from . import notify, settings
 from .models import (TICKET_CLOSED, TICKET_OPEN, TICKET_PROGRESS, TICKET_RESOLVED, System, Ticket, TicketComment,
-                     User, ZabbixHost, ZabbixServer, utcnow)
+                     User, ZabbixHost, ZabbixServer, ZammadServer, utcnow)
 from .zabbix import SEVERITIES
+from .zammad import PRIORITY, ZammadError
 
 log = logging.getLogger(__name__)
 OWN_PREFIX = "[Servermanager]"
@@ -68,6 +69,7 @@ def open_ticket(db: Session, zbx: ZabbixServer, event_id: str, title: str, sever
     add_comment(db, t, f"Problem in Zabbix gemeldet{via}.", "event")
     db.flush()
     send_mail(db, zbx, t, "new")
+    zammad_create(db, t, zbx)
     return t, True
 
 
@@ -79,6 +81,10 @@ def resolve_ticket(db: Session, zbx: ZabbixServer, t: Ticket, text: str = "In Za
         t.status = TICKET_RESOLVED
     add_comment(db, t, text, "event")
     send_mail(db, zbx, t, "resolved")
+    zs = zammad_of(db, t)
+    if zs is not None and t.zammad_ticket_id:
+        fields = {"state": "closed"} if zs.close_on_resolve and t.status != TICKET_CLOSED else {}
+        zammad_note(db, t, f"{text} ({t.resolved_at:%d.%m.%Y %H:%M} UTC)", internal=False, **fields)
     return True
 
 
@@ -163,3 +169,174 @@ def send_mail(db: Session, zbx: Optional[ZabbixServer], t: Ticket, event: str) -
     if base:
         lines += ["", f"{base}/tickets/{t.id}"]
     notify.notify(db, to, f"[SM#{t.id}] {label}: {t.title}"[:250], "\n".join(lines))
+
+
+# --------------------------------------------------------------------------
+# Zammad
+# --------------------------------------------------------------------------
+ZAMMAD_CLOSED = ("closed", "merged", "removed")
+
+
+def zammad_of(db: Session, t: Ticket, zbx: Optional[ZabbixServer] = None) -> Optional[ZammadServer]:
+    """Zammad a ticket lives in (or will be created in)."""
+    zid = t.zammad_server_id
+    if zid is None:
+        if zbx is None and t.zabbix_id:
+            zbx = db.get(ZabbixServer, t.zabbix_id)
+        zid = zbx.zammad_id if zbx is not None else None
+    return db.get(ZammadServer, zid) if zid else None
+
+
+def zammad_client(zs: ZammadServer):
+    from . import integrations
+    return integrations.zammad_client(zs)
+
+
+def zammad_body(db: Session, t: Ticket, zbx: Optional[ZabbixServer]) -> str:
+    base = settings.base_url(db)
+    lines = [t.title, "",
+             f"Schweregrad: {SEVERITIES.get(t.severity, t.severity)}",
+             f"Host:        {t.host}{f' ({t.host_ip})' if t.host_ip else ''}",
+             f"Seit:        {t.opened_at:%d.%m.%Y %H:%M} UTC"]
+    if t.opdata:
+        lines.append(f"Messwerte:   {t.opdata}")
+    if zbx is not None:
+        lines.append(f"Zabbix:      {zbx.name}, Event {t.event_id}")
+    if t.system is not None:
+        lines.append(f"System:      {t.system.name}")
+    if base:
+        lines += ["", f"Servermanager: {base}/tickets/{t.id}"]
+    return "\n".join(lines)
+
+
+def zammad_create(db: Session, t: Ticket, zbx: Optional[ZabbixServer] = None) -> bool:
+    """Create the ticket in Zammad (errors are kept on the ticket and retried by the next sync)."""
+    zs = zammad_of(db, t, zbx)
+    if zs is None or t.zammad_ticket_id:
+        return False
+    try:
+        if not zs.customer:
+            raise ZammadError("In der Zammad-Verbindung ist kein Kunde (E-Mail) eingetragen")
+        tags = tuple(x for x in ("zabbix" if t.source == "zabbix" else "", _tag(t.host)) if x)
+        zt = zammad_client(zs).create_ticket(f"[SM#{t.id}] {t.title}", zs.group_name or "Users", zs.customer,
+                                             zammad_body(db, t, zbx), PRIORITY.get(t.severity, "2 normal"), tags)
+    except (ZammadError, ValueError) as exc:
+        t.zammad_error = str(exc)[:1000]
+        log.warning("zammad: ticket %s not created: %s", t.id, exc)
+        return False
+    t.zammad_server_id, t.zammad_ticket_id = zs.id, int(zt["id"])
+    t.zammad_number, t.zammad_error = str(zt.get("number") or ""), ""
+    add_comment(db, t, f"In Zammad als Ticket #{t.zammad_number} angelegt.", "event")
+    return True
+
+
+def _tag(host: str) -> str:
+    import re
+    return re.sub(r"[^a-z0-9._-]", "-", (host or "").lower())[:60]
+
+
+def zammad_note(db: Session, t: Ticket, text: str, internal: bool = True, **fields) -> str:
+    """Article (and optional ticket fields) in Zammad; returns an error text or ''."""
+    zs = zammad_of(db, t)
+    if zs is None or not t.zammad_ticket_id:
+        return ""
+    try:
+        client = zammad_client(zs)
+        if text:
+            client.add_note(t.zammad_ticket_id, f"{OWN_PREFIX} {text}", internal=internal)
+        if fields:
+            client.update_ticket(t.zammad_ticket_id, **fields)
+        return ""
+    except (ZammadError, ValueError) as exc:
+        return str(exc)
+
+
+def zammad_owner(db: Session, t: Ticket, user: Optional[User]) -> str:
+    """Set the Zammad owner to the agent with the user's e-mail (if there is one) and open the ticket."""
+    zs = zammad_of(db, t)
+    if zs is None or not t.zammad_ticket_id:
+        return ""
+    try:
+        client = zammad_client(zs)
+        fields: dict = {"state": "open"}
+        agent = client.find_agent(user.email) if user is not None and user.email else None
+        if agent:
+            fields["owner_id"] = agent
+        client.update_ticket(t.zammad_ticket_id, **fields)
+        return ""
+    except (ZammadError, ValueError) as exc:
+        return str(exc)
+
+
+def _plain(html: str) -> str:
+    import re
+    from html import unescape
+    text = re.sub(r"<br\s*/?>|</p>|</div>", "\n", html or "", flags=re.I)
+    return unescape(re.sub(r"<[^>]+>", "", text)).strip()
+
+
+def handle_zammad(db: Session, zs: ZammadServer, data: dict) -> dict:
+    """Webhook of the Zammad trigger: close/reopen and new articles written by people in Zammad."""
+    ticket = data.get("ticket") or {}
+    article = data.get("article") or {}
+    try:
+        zid = int(ticket.get("id") or 0)
+    except (TypeError, ValueError):
+        zid = 0
+    if not zid:
+        raise ValueError("ticket.id fehlt")
+    t = db.execute(select(Ticket).where(Ticket.zammad_server_id == zs.id, Ticket.zammad_ticket_id == zid)
+                   ).scalars().first()
+    if t is None:
+        return {"ticket": None, "action": "unknown"}
+    actions = []
+    body = str(article.get("body") or "")
+    by_us = zs.agent_id and str(article.get("created_by_id") or "") == str(zs.agent_id)
+    if article.get("id") and body and not by_us and OWN_PREFIX not in body:
+        who = article.get("from") or article.get("created_by") or "Zammad"
+        add_comment(db, t, f"Zammad ({who}): {_plain(body)[:4000]}", "zammad")
+        actions.append("comment")
+    state = str(ticket.get("state") or "")
+    if not state and ticket.get("state_id"):
+        state = (zs.setup or {}).get("states", {}).get(str(ticket["state_id"]), "")
+    if state in ZAMMAD_CLOSED and t.status != TICKET_CLOSED:
+        t.status, t.closed_at = TICKET_CLOSED, utcnow()
+        add_comment(db, t, f"In Zammad geschlossen (#{t.zammad_number}).", "event")
+        actions.append("closed")
+    elif state in ("open", "new") and t.status == TICKET_CLOSED:
+        t.status, t.closed_at = (TICKET_PROGRESS if t.assignee_id else TICKET_OPEN), None
+        add_comment(db, t, f"In Zammad wieder geöffnet (#{t.zammad_number}).", "event")
+        actions.append("reopened")
+    return {"ticket": t.id, "action": ",".join(actions) or "none"}
+
+
+def sync_zammad(db: Session, zs: ZammadServer) -> dict:
+    """Create missing tickets in Zammad and take over closings (fallback for the webhook)."""
+    created = closed = 0
+    zbx_ids = [z.id for z in db.execute(select(ZabbixServer).where(ZabbixServer.zammad_id == zs.id)).scalars()]
+    if zbx_ids:
+        for t in db.execute(select(Ticket).where(Ticket.zabbix_id.in_(zbx_ids), Ticket.zammad_ticket_id.is_(None),
+                                                 Ticket.status.in_([TICKET_OPEN, TICKET_PROGRESS]))
+                            .limit(50)).scalars():
+            created += int(zammad_create(db, t))
+    client = zammad_client(zs)
+    states: Optional[dict] = None
+    for t in db.execute(select(Ticket).where(Ticket.zammad_server_id == zs.id, Ticket.zammad_ticket_id.is_not(None),
+                                             Ticket.status.in_([TICKET_OPEN, TICKET_PROGRESS, TICKET_RESOLVED]))
+                        .limit(200)).scalars():
+        try:
+            zt = client.ticket(t.zammad_ticket_id)
+        except ZammadError as exc:
+            if exc.status == 404:
+                t.zammad_error = "Ticket in Zammad nicht mehr vorhanden"
+                continue
+            raise
+        state = zt.get("state") or ""
+        if not state and zt.get("state_id"):
+            states = states if states is not None else client.states()
+            state = states.get(int(zt["state_id"]), "")
+        if state in ZAMMAD_CLOSED and t.status != TICKET_CLOSED:
+            t.status, t.closed_at = TICKET_CLOSED, utcnow()
+            add_comment(db, t, f"In Zammad geschlossen (#{t.zammad_number}, Abgleich).", "event")
+            closed += 1
+    return {"created": created, "closed": closed}

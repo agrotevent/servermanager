@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% set help_page = "zammad" %}
+{% from "_macros.html" import csrf, empty with context %}
+{% from "integrations/_macros.html" import int_status, alerts_box with context %}
+{% block title %}{{ z.name }} · Zammad{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>{{ z.name }} {{ int_status(z) }}</h1>
+    <p><a href="{{ web }}" target="_blank" rel="noopener">{{ web }}</a> · Gruppe {{ z.group_name }} · Kunde {{ z.customer }}{% if z.data.user %} · angemeldet als {{ z.data.user }}{% endif %}</p></div>
+  <div class="actions">
+    {% if int_can('zammad', z.id, 'operate') %}<form method="post" action="{{ url_for('zammad.sync', zid=z.id) }}" class="inline">{{ csrf() }}<input type="hidden" name="next" value="{{ request.full_path }}"><button class="btn ghost"><svg class="icon"><use href="#i-refresh"/></svg>Abgleichen</button></form>{% endif %}
+    {% if user.is_admin %}<a class="btn ghost" href="{{ url_for('zammad.edit', zid=z.id) }}"><svg class="icon"><use href="#i-edit"/></svg>Bearbeiten</a>{% endif %}
+  </div>
+</div>
+{{ alerts_box(z) }}
+<nav class="tabs">{% for k, v in tabs.items() %}<a href="?tab={{ k }}" class="{{ 'active' if tab == k }}">{{ v }}</a>{% endfor %}</nav>
+
+{% if tab == 'overview' %}
+<div class="stats">
+  <div class="stat"><div class="label">Tickets in Zammad</div><div class="value">{{ z.data.linked or 0 }}</div></div>
+  <div class="stat"><div class="label">Quellen</div><div class="value">{{ zabbix|length }}</div><div class="sub">{{ zabbix|map(attribute='name')|join(', ') or 'keine Zabbix-Verbindung' }}</div></div>
+  <div class="stat"><div class="label">Rückmeldung</div><div class="value">{{ 'Webhook' if z.webhook_secret_enc else 'Abgleich' }}</div><div class="sub">{{ 'sofort' if z.webhook_secret_enc else 'im Abfrage-Intervall' }}</div></div>
+</div>
+{% if pending %}
+<div class="card"><div class="card-head"><h2>Nicht übergebene Tickets</h2></div>
+  <div class="card-body"><ul class="list-plain">{% for t in pending %}<li><a href="{{ url_for('tickets.detail', ticket_id=t.id) }}">#{{ t.id }} {{ t.title }}</a> <small class="muted">{{ t.zammad_error }}</small></li>{% endfor %}</ul></div>
+  <div class="card-body"><small class="muted">Wird beim nächsten Abgleich erneut versucht.</small></div></div>
+{% endif %}
+{% if not zabbix %}<div class="alert info">Noch keine Zabbix-Verbindung zugeordnet – unter „Bearbeiten“ auswählen, aus welchen Zabbix-Servern Tickets in Zammad angelegt werden.</div>{% endif %}
+
+{% elif tab == 'tickets' %}
+<div class="card"><div class="table-wrap"><table class="table compact"><thead><tr><th>Servermanager</th><th>Zammad</th><th>Titel</th><th>Status</th><th>Geöffnet</th></tr></thead><tbody>
+  {% for t in rows %}<tr><td><a href="{{ url_for('tickets.detail', ticket_id=t.id) }}">#{{ t.id }}</a></td><td><a class="mono" href="{{ web }}/#ticket/zoom/{{ t.zammad_ticket_id }}" target="_blank" rel="noopener">#{{ t.zammad_number }}</a></td>
+    <td>{{ t.title }}</td><td>{{ statuses[t.status] }}</td><td><small>{{ t.opened_at|dt }}</small></td></tr>
+  {% else %}<tr><td colspan="5" class="muted">Noch keine Tickets in Zammad angelegt.</td></tr>{% endfor %}</tbody></table></div></div>
+
+{% elif tab == 'setup' %}
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>Webhook aus Zammad</h2></div><div class="card-body">
+    {% if z.webhook_secret_enc %}
+      <p><span class="badge success">eingerichtet</span>{% if z.setup and z.setup.at %} <small class="muted">am {{ z.setup.at|replace('T', ' ') }}</small>{% endif %}</p>
+      <dl class="kv"><dt>URL</dt><dd class="mono break">{{ z.setup.url if z.setup else webhook_url }}</dd>
+        <dt>In Zammad</dt><dd><small>Webhook „Servermanager“ (signiert) und Trigger „Servermanager: Änderungen zurückmelden“ für Tickets mit dem Tag <code>servermanager</code></small></dd></dl>
+    {% else %}<p>Noch nicht eingerichtet – Schließungen in Zammad werden dann nur beim regelmäßigen Abgleich übernommen, Notizen gar nicht.</p>{% endif %}
+    {% if user.is_admin %}
+    <form method="post" action="{{ url_for('zammad.setup_webhook', zid=z.id) }}" class="mt-1" data-confirm="{{ 'Webhook neu einrichten? Ein neues Signatur-Geheimnis wird erzeugt.' if z.webhook_secret_enc else 'Webhook und Trigger in Zammad anlegen?' }}">{{ csrf() }}
+      <button class="btn {{ '' if z.webhook_secret_enc else 'primary' }}">{{ 'Neu einrichten' if z.webhook_secret_enc else 'In Zammad einrichten' }}</button></form>
+    {% if not webhook_url %}<p class="mt-1"><small style="color:var(--danger)">Die öffentliche URL des Servermanagers ist nicht gesetzt (Einstellungen → Allgemein).</small></p>{% endif %}
+    {% endif %}
+  </div></div>
+  <div class="card"><div class="card-head"><h2>So läuft der Abgleich</h2></div><div class="card-body"><small>
+    <ul>
+      <li><strong>Neues Problem</strong> → Ticket in Zammad (Titel mit <code>[SM#Nummer]</code>, Priorität nach Schweregrad, Tags <code>servermanager</code>, <code>zabbix</code>, Host).</li>
+      <li><strong>Übernehmen</strong> im Servermanager → Zammad-Status „offen“, Besitzer = Agent mit derselben E-Mail-Adresse.</li>
+      <li><strong>Kommentar</strong> → Notiz in Zammad (intern oder öffentlich).</li>
+      <li><strong>Schließen/Wieder öffnen</strong> → Zammad-Status „geschlossen“/„offen“.</li>
+      <li><strong>Behoben in Zabbix</strong> → Notiz, optional schließen.</li>
+      <li><strong>In Zammad</strong> geschlossen/wieder geöffnet oder neue Notiz → im Servermanager übernommen (Webhook sofort, Schließen zusätzlich per Abgleich).</li>
+    </ul></small>
+  </div></div>
+</div>
+{% endif %}
+{% endblock %}

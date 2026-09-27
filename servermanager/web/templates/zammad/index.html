@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% set help_page = "zammad" %}
+{% from "_macros.html" import empty with context %}
+{% from "integrations/_macros.html" import int_status with context %}
+{% block title %}Zammad{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>Zammad</h1><p>Tickets des Servermanagers direkt in Zammad anlegen und in beide Richtungen abgleichen.</p></div>
+  {% if user.is_admin %}<div class="actions"><a class="btn primary" href="{{ url_for('zammad.new') }}"><svg class="icon"><use href="#i-plus"/></svg>Zammad hinzufügen</a></div>{% endif %}
+</div>
+{% if items %}
+<div class="card"><div class="table-wrap"><table class="table">
+  <thead><tr><th>Zammad</th><th>Status</th><th>Gruppe</th><th>Kunde</th><th>Tickets</th><th>Rückmeldung</th></tr></thead>
+  <tbody>{% for z in items %}
+    <tr><td><a href="{{ url_for('zammad.detail', zid=z.id) }}"><strong>{{ z.name }}</strong></a><span class="sub">{{ z.api_url }}</span></td>
+      <td>{{ int_status(z) }}<span class="sub">{{ z.last_poll|ago }}</span></td><td>{{ z.group_name }}</td><td>{{ z.customer }}</td>
+      <td>{{ z.data.linked or 0 }}</td><td>{% if z.webhook_secret_enc %}<span class="badge success">Webhook</span>{% else %}<span class="badge">nur Abgleich</span>{% endif %}</td></tr>
+  {% endfor %}</tbody></table></div></div>
+{% else %}<div class="card"><div class="card-body">{{ empty('Noch kein Zammad angebunden.', 'i-ticket') }}</div></div>{% endif %}
+{% endblock %}

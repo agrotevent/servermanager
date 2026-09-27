@@ -31,6 +31,7 @@ PVE_SECRET = "11111111-2222-3333-4444-555555555555"
 ROS_USER, ROS_PASS = "servermanager", "routerpass"
 ZBX_TOKEN = "zbx-token-123"
 ISP_USER, ISP_PASS = "servermanager", "IspPass1234567890abcdef"
+ZAM_TOKEN = "zam-token-xyz"
 PG_KEY = "pgkey.secret"
 MC_KEY = "mc-api-key"
 AK_TOKEN = "ak-token"
@@ -184,6 +185,8 @@ class MockApp:
                 resp = self.ros(req, req.path[len("/rest/"):])
             elif req.path.startswith("/v1/"):
                 resp = self.pangolin(req, req.path[len("/v1/"):])
+            elif req.path.startswith("/api/v1/") and req.headers.get("Authorization", "").startswith("Token "):
+                resp = self.zammad(req, req.path[len("/api/v1/"):])
             elif req.path.startswith("/api/v1/"):
                 resp = self.mailcow(req, req.path[len("/api/v1/"):])
             elif req.path.startswith("/api/v3/"):
@@ -195,6 +198,67 @@ class MockApp:
             else:
                 resp = Response("not found", 404)
         return resp(environ, start_response)
+
+    # ------------------------------------------------------------------ zammad
+    def zammad(self, req: Request, path: str) -> Response:
+        s = self.s
+        z = s.__dict__.setdefault("zam", {
+            "seq": 100, "tickets": {}, "articles": [], "tags": [], "webhooks": [], "triggers": [],
+            "users": [{"id": 3, "login": "servermanager-api", "email": "api@example.com", "active": True},
+                      {"id": 5, "login": "tk-admin", "email": "tk-admin@example.com", "active": True}],
+            "states": [{"id": 1, "name": "new"}, {"id": 2, "name": "open"}, {"id": 4, "name": "closed"}]})
+        if req.headers.get("Authorization") != f"Token token={ZAM_TOKEN}":
+            return _json({"error": "Invalid token!"}, 401)
+        body = req.get_json(silent=True) or {}
+        path = path.strip("/")
+
+        def new_id() -> int:
+            z["seq"] += 1
+            return z["seq"]
+        if path == "users/me":
+            return _json(z["users"][0])
+        if path == "users/search":
+            q = req.args.get("query", "")
+            return _json([u for u in z["users"] if q and q in u["email"]])
+        if path == "groups":
+            return _json([{"id": 1, "name": "Users", "active": True}, {"id": 2, "name": "Technik", "active": True}])
+        if path == "ticket_states":
+            return _json(z["states"])
+        if path == "tickets" and req.method == "POST":
+            if body.get("group") not in ("Users", "Technik"):
+                return _json({"error": "No such group"}, 422)
+            tid = new_id()
+            t = {"id": tid, "number": f"3100{tid}", "title": body["title"], "group": body["group"],
+                 "customer_id": body["customer_id"], "priority": body["priority"], "state": body["state"],
+                 "owner_id": 1}
+            z["tickets"][tid] = t
+            z["articles"].append(dict(body["article"], ticket_id=tid))
+            return _json(t, 201)
+        if path.startswith("tickets/"):
+            tid = int(path.split("/")[1])
+            if tid not in z["tickets"]:
+                return _json({"error": "Not found"}, 404)
+            if req.method == "PUT":
+                z["tickets"][tid].update(body)
+            return _json(z["tickets"][tid])
+        if path == "ticket_articles":
+            z["articles"].append(body)
+            return _json(dict(body, id=new_id()), 201)
+        if path == "tags/add":
+            z["tags"].append((body["o_id"], body["item"]))
+            return _json(True, 201)
+        for coll in ("webhooks", "triggers"):
+            if path == coll:
+                if req.method == "GET":
+                    return _json(z[coll])
+                item = dict(body, id=new_id())
+                z[coll].append(item)
+                return _json(item, 201)
+            if path.startswith(coll + "/") and req.method == "PUT":
+                item = next(i for i in z[coll] if i["id"] == int(path.split("/")[1]))
+                item.update(body)
+                return _json(item)
+        return _json({"error": f"unknown {path}"}, 404)
 
     # ------------------------------------------------------------------ ispconfig
     def ispconfig(self, req: Request) -> Response:

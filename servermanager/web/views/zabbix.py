@@ -71,11 +71,16 @@ def _save(z: ZabbixServer) -> list[str]:
     if mail and not all(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", m.strip()) for m in mail.split(",")):
         errors.append("Ticket-System: ungültige E-Mail-Adresse")
     z.ticket_mail = mail
+    raw = f.get("zammad_id", "")
+    from ...models import ZammadServer
+    z.zammad_id = int(raw) if raw.isdigit() and g.db.get(ZammadServer, int(raw)) else None
     return errors
 
 
 def _form(z: ZabbixServer, is_new: bool):
-    return render_template("zabbix/form.html", z=z, is_new=is_new, severities=SEVERITIES)
+    from ...models import ZammadServer
+    zammads = g.db.execute(select(ZammadServer).order_by(ZammadServer.name)).scalars().all()
+    return render_template("zabbix/form.html", z=z, is_new=is_new, severities=SEVERITIES, zammads=zammads)
 
 
 @bp.route("/zabbix/new", methods=["GET", "POST"])

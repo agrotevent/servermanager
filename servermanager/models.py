@@ -366,9 +366,10 @@ KIND_SSO = "sso"
 KIND_PBX = "pbx"
 KIND_ZABBIX = "zabbix"
 KIND_ISPC = "ispconfig"
+KIND_ZAMMAD = "zammad"
 INTEGRATION_KINDS = {KIND_PVE: "Proxmox VE", KIND_ROUTER: "RouterOS", KIND_PANGOLIN: "Pangolin",
                      KIND_MAILCOW: "Mailcow", KIND_SSO: "SSO (authentik)", KIND_PBX: "Telefonie (Asterisk/FreePBX)",
-                     KIND_ZABBIX: "Zabbix & Tickets", KIND_ISPC: "ISPConfig"}
+                     KIND_ZABBIX: "Zabbix & Tickets", KIND_ISPC: "ISPConfig", KIND_ZAMMAD: "Zammad"}
 MAIL_PORTS_DEFAULT = "25,465,587,143,993,110,995,4190,80"
 PANGOLIN_ROLES = {"primary": "Primär", "backup": "Backup-Weg"}
 PVE_HOSTING = {"local": "Lokal (gemeinsames Netz)", "hetzner": "Hetzner (vSwitch)"}
@@ -539,6 +540,23 @@ class ZabbixServer(IntegrationMixin, Base):
     ticket_mail: Mapped[str] = mapped_column(String(255), default="")    # external ticket system (e-mail)
     webhook_hash: Mapped[str] = mapped_column(String(128), default="")   # sha256 of the webhook token
     setup: Mapped[Optional[dict]] = mapped_column(JSONText, default=dict)
+    zammad_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # tickets go to this Zammad
+
+
+class ZammadServer(IntegrationMixin, Base):
+    """Zammad helpdesk: tickets of the servermanager are created and kept in sync there."""
+
+    __tablename__ = "zammad_servers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    api_url: Mapped[str] = mapped_column(String(255), default="")        # https://support.example.com
+    token_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    group_name: Mapped[str] = mapped_column(String(128), default="Users")
+    customer: Mapped[str] = mapped_column(String(255), default="")       # e-mail of the ticket customer
+    close_on_resolve: Mapped[bool] = mapped_column(Boolean, default=False)
+    webhook_secret_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    agent_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # Zammad user of the API token
+    setup: Mapped[Optional[dict]] = mapped_column(JSONText, default=dict)
 
 
 class ZabbixHost(Base):
@@ -588,6 +606,10 @@ class Ticket(Base):
     resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    zammad_server_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    zammad_ticket_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    zammad_number: Mapped[str] = mapped_column(String(32), default="")
+    zammad_error: Mapped[str] = mapped_column(Text, default="")
 
     system: Mapped[Optional[System]] = relationship()
     assignee: Mapped[Optional[User]] = relationship()

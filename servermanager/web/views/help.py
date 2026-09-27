@@ -33,6 +33,7 @@ PAGES: list[tuple[str, str, str]] = [
     ("apps", "Nextcloud, Mailcow & SSO", "Infrastruktur"),
     ("telefonie", "Telefonie: Asterisk & FreePBX", "Infrastruktur"),
     ("zabbix", "Zabbix & Tickets", "Infrastruktur"),
+    ("zammad", "Zammad", "Infrastruktur"),
     ("ispconfig", "ISPConfig", "Infrastruktur"),
     ("backup", "Backup und Restore", "Betrieb"),
     ("servermanager-update", "Update des Servermanagers", "Betrieb"),

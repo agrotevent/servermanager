@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% set help_page = "zammad" %}
+{% from "_macros.html" import csrf, field, checkbox with context %}
+{% from "integrations/_macros.html" import conn_fields with context %}
+{% block title %}{{ 'Zammad hinzufügen' if is_new else 'Zammad bearbeiten' }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>{{ 'Zammad hinzufügen' if is_new else z.name ~ ' bearbeiten' }}</h1>
+  <p>Token in Zammad unter <em>Profil → Token-Zugriff</em> erzeugen – Berechtigung <code>ticket.agent</code>, für die Einrichtung des Webhooks zusätzlich <code>admin.webhook</code> und <code>admin.trigger</code>. Der Agent braucht Vollzugriff auf die gewählte Gruppe.</p></div></div>
+<form method="post" autocomplete="off">{{ csrf() }}
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>API</h2></div><div class="card-body"><div class="form-grid">
+    {{ conn_fields(z, 'Adresse', 'https://support.example.com', 'Adresse der Zammad-Oberfläche', 'Bei Let’s-Encrypt-Zertifikat die CA-Prüfung verwenden.') }}
+    {{ field('API-Token', 'token', '', type='password', help=('Hinterlegt – leer lassen, um es zu behalten' if z.token_enc else ''), attrs='autocomplete="new-password"', cls='full') }}
+  </div></div></div>
+  <div class="card"><div class="card-head"><h2>Tickets</h2></div><div class="card-body"><div class="form-grid">
+    {{ field('Gruppe', 'group_name', z.group_name or 'Users', help='Zammad-Gruppe, in der die Tickets landen') }}
+    {{ field('Kunde der Tickets (E-Mail)', 'customer', z.customer, placeholder='monitoring@example.com', help='wird in Zammad angelegt, falls es ihn nicht gibt') }}
+    <div class="full">{{ checkbox('Tickets in Zammad automatisch schließen, wenn Zabbix das Problem als behoben meldet', 'close_on_resolve', z.close_on_resolve) }}</div>
+    <div class="field full"><label>Probleme dieser Zabbix-Server hier anlegen</label>
+      {% for x in zabbix %}<label class="check"><input type="checkbox" name="zabbix" value="{{ x.id }}" {% if x.zammad_id == z.id and z.id %}checked{% endif %}> {{ x.name }}</label>{% else %}<span class="muted">Noch keine Zabbix-Verbindung.</span>{% endfor %}</div>
+  </div></div></div>
+</div>
+<div class="actions mt-1"><button class="btn primary">Speichern</button><a class="btn" href="{{ url_for('zammad.index') if is_new else url_for('zammad.detail', zid=z.id) }}">Abbrechen</a></div>
+</form>
+{% if not is_new %}
+<div class="card danger-zone mt-2"><div class="card-head"><h2>Verbindung entfernen</h2></div><div class="card-body">
+  <form method="post" action="{{ url_for('zammad.delete', zid=z.id) }}" data-confirm="Verbindung {{ z.name }} entfernen? Die Tickets in Zammad bleiben erhalten.">{{ csrf() }}<button class="btn danger">Entfernen</button></form>
+</div></div>
+{% endif %}
+{% endblock %}

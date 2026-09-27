@@ -13,7 +13,7 @@ from flask import abort, flash, g, redirect, request, session, url_for
 from .. import access, settings
 from ..models import LEVEL_ORDER, System, User, utcnow
 
-CSRF_EXEMPT_PREFIXES = ("/api/enroll", "/enroll/", "/healthz", "/static/", "/api/zabbix/")
+CSRF_EXEMPT_PREFIXES = ("/api/enroll", "/enroll/", "/healthz", "/static/", "/api/zabbix/", "/api/zammad/")
 _failures: dict[str, deque] = defaultdict(deque)
 
 

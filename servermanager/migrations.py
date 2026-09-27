@@ -46,11 +46,24 @@ def _v4(conn: Connection) -> None:
     add_column_if_missing(conn, "pangolin_servers", "domain_map", "TEXT")
 
 
+def _v5(conn: Connection) -> None:
+    # Zammad: link of tickets and target of a Zabbix connection (tables of 1.8-1.10 exist via create_all)
+    insp = inspect(conn)
+    if "tickets" in insp.get_table_names():
+        add_column_if_missing(conn, "tickets", "zammad_server_id", "INTEGER")
+        add_column_if_missing(conn, "tickets", "zammad_ticket_id", "INTEGER")
+        add_column_if_missing(conn, "tickets", "zammad_number", "VARCHAR(32) NOT NULL DEFAULT ''")
+        add_column_if_missing(conn, "tickets", "zammad_error", "TEXT NOT NULL DEFAULT ''")
+    if "zabbix_servers" in insp.get_table_names():
+        add_column_if_missing(conn, "zabbix_servers", "zammad_id", "INTEGER")
+
+
 MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     1: lambda conn: None,  # initial schema
     2: _v2,
     3: _v3,
     4: _v4,
+    5: _v5,
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 
