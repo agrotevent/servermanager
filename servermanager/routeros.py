@@ -128,7 +128,11 @@ def quote_cli(value: Any) -> str:
     s = str(value)
     if s and re.match(r"^[A-Za-z0-9_./:,!*+@-]+$", s):
         return s
-    return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$") + '"'
+    s = s.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$")
+    # line breaks would start a new command when the script is pasted: RouterOS escapes instead
+    s = s.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+    s = re.sub(r"[\x00-\x1f\x7f]", "", s)
+    return '"' + s + '"'
 
 
 def interface_lists_of(snap: dict, iface: str) -> set[str]:

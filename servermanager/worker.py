@@ -7,6 +7,7 @@ re-attaches to the remote log after the restart.
 """
 from __future__ import annotations
 
+import ipaddress
 import logging
 import signal
 import threading
@@ -1002,14 +1003,32 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
                 + f", {len(res['host_keys'])} Hostkey(s) übernommen")
         if res["root_login"] == "no":
             ctx.say("WARNUNG: PermitRootLogin=no – die Anmeldung als root per Schlüssel ist gesperrt.")
-        ip = g.get("ip") or mgmt.pick_ip(res["ips"], prefer=lambda a: not a.startswith("172.17."))
+        with session_scope() as db:
+            importer = db.get(User, user_id) if user_id else None
+            is_admin = importer is None or importer.is_admin   # jobs without user come from admins/schedules
+        # the address is only taken from what Proxmox or the guest itself reports; a manually entered
+        # address is accepted from administrators only
+        manual = (g.get("ip") or "").strip() if is_admin else ""
+        ip = manual or mgmt.pick_ip(res["ips"], prefer=lambda a: not a.startswith("172.17."))
         if not ip:
             raise JobFailed(f"{label}: keine IPv4-Adresse ermittelbar")
+        try:
+            ipaddress.ip_address(ip)
+        except ValueError as exc:
+            raise JobFailed(f"{label}: ungültige Adresse {ip}") from exc
+        if not res["host_keys"]:
+            raise JobFailed(f"{label}: der Gast hat keine SSH-Hostkeys geliefert – ohne gepinnten Hostkey wird "
+                            "kein Zugang angelegt")
         with session_scope() as db:
             system = db.execute(select(System).where(System.pve_server_id == server.id,
                                                      System.pve_vmid == int(g["vmid"]))).scalar_one_or_none()
-            if system is None:
-                system = db.execute(select(System).where(System.host == ip)).scalars().first()
+            other = db.execute(select(System).where(System.host == ip)).scalars().first()
+            if other is not None and (system is None or other.id != system.id):
+                if system is None and is_admin and not other.pve_vmid:
+                    system = other   # administrators may link an existing, not yet linked system by address
+                else:
+                    raise JobFailed(f"{label}: die Adresse {ip} gehört bereits zum System „{other.name}“ – "
+                                    "Übernahme abgebrochen")
             name = (g.get("name") or f"guest-{g['vmid']}")[:120]
             if system is None:
                 if db.execute(select(System.id).where(System.name == name)).first():
@@ -1022,8 +1041,8 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
                 user = db.get(User, user_id) if user_id else None
                 if user is not None and not user.is_admin:
                     access.grant(db, user.id, system.id, LEVEL_FULL)
-            elif system.host != ip and (g.get("ip") or (system.status != STATUS_ONLINE
-                                                         and system.host not in res["ips"])):
+            elif system.host != ip and (manual or (system.status != STATUS_ONLINE
+                                                   and system.host not in res["ips"])):
                 ctx.say(f"Adresse von {system.name}: {system.host} → {ip}")
                 system.host = ip
             system.pve_server_id, system.pve_vmid = server.id, int(g["vmid"])

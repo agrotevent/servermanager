@@ -225,7 +225,7 @@ def detail(isp_id: int):
 
 
 ACTIONS = {"client_add": LEVEL_FULL, "site_active": LEVEL_OPERATE, "mb_add": LEVEL_FULL,
-           "mb_password": LEVEL_OPERATE, "mb_delete": LEVEL_FULL}
+           "mb_password": LEVEL_FULL, "mb_delete": LEVEL_FULL}
 
 
 @bp.post("/<int:isp_id>/do")

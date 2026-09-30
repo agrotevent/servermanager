@@ -31,7 +31,8 @@ ispc_db() {  # query the ISPConfig database with the credentials of the ISPConfi
     pass="$(sed -n "s/^\$conf\['db_password'\][[:space:]]*=[[:space:]]*'\([^']*\)'.*/\1/p" "$CFG" | head -n 1)"
     name="$(sed -n "s/^\$conf\['db_database'\][[:space:]]*=[[:space:]]*'\([^']*\)'.*/\1/p" "$CFG" | head -n 1)"
     host="$(sed -n "s/^\$conf\['db_host'\][[:space:]]*=[[:space:]]*'\([^']*\)'.*/\1/p" "$CFG" | head -n 1)"
-    MYSQL_PWD="$pass" mysql -h "${host:-localhost}" -u "${user:-ispconfig}" -B -N "${name:-dbispconfig}" -e "$1"
+    # query on stdin: values (e.g. secrets) never appear in the process list
+    printf '%s\n' "$1" | MYSQL_PWD="$pass" mysql -h "${host:-localhost}" -u "${user:-ispconfig}" -B -N "${name:-dbispconfig}"
 }
 
 case "${SM_TASK}" in

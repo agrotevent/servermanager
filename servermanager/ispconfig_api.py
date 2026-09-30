@@ -79,7 +79,7 @@ class IspConfig:
     # ------------------------------------------------------------------ raw
     def _post(self, function: str, body: dict) -> Any:
         try:
-            r = self.session.post(f"{self.url}?{function}", json=body, timeout=self.timeout)
+            r = self.session.post(f"{self.url}?{function}", json=body, timeout=self.timeout, allow_redirects=False)
         except requests.exceptions.SSLError as exc:
             raise IspError(f"TLS-Fehler bei {self.url}: {exc}") from exc
         except requests.RequestException as exc:

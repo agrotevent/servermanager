@@ -5,7 +5,6 @@ import logging
 from typing import Any, Optional
 
 import requests
-import urllib3
 
 from . import tlspin
 
@@ -44,20 +43,24 @@ class MikroTik:
                 raise MikroTikError(str(exc)) from exc
             self.session.verify = False
             self.session.mount(url + "/", adapter)
-        elif not verify_tls:
-            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        elif not verify_tls and url.startswith("https://"):
+            # never send the router login to an unverified TLS endpoint
+            raise MikroTikError("MikroTik: Zertifikat weder gepinnt noch über die System-CAs geprüft – bitte den "
+                                "Fingerabdruck hinterlegen („Abrufen“)")
 
     @classmethod
     def from_settings(cls, db) -> "MikroTik":
         from . import settings
         return cls(settings.get(db, "wg.mikrotik_url"), settings.get(db, "wg.mikrotik_user"),
-                   settings.get(db, "wg.mikrotik_password"), bool(settings.get(db, "wg.mikrotik_verify_tls")))
+                   settings.get(db, "wg.mikrotik_password"), bool(settings.get(db, "wg.mikrotik_verify_tls")),
+                   fingerprint=settings.get(db, "wg.mikrotik_fingerprint") or "")
 
     # ------------------------------------------------------------------
     def _req(self, method: str, path: str, data: Optional[dict] = None, params: Optional[dict] = None) -> Any:
         url = f"{self.base}/{path.lstrip('/')}"
         try:
-            r = self.session.request(method, url, json=data, params=params, timeout=self.timeout)
+            r = self.session.request(method, url, json=data, params=params, timeout=self.timeout,
+                                     allow_redirects=False)
         except requests.exceptions.SSLError as exc:
             raise MikroTikError(f"TLS-Fehler bei {self.base} (Zertifikat?): {exc}") from exc
         except requests.RequestException as exc:

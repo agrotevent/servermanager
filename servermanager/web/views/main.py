@@ -153,11 +153,16 @@ def totp_enable():
     secret = session.get("totp_setup")
     if not secret:
         return redirect(url_for("main.profile"))
-    if not security.verify_totp(secret, request.form.get("code", "")):
+    step = security.totp_step(secret, request.form.get("code", ""))
+    if step is None:
         flash("Der Code ist ungültig - bitte erneut versuchen.", "danger")
         return redirect(url_for("main.profile") + "#2fa")
     g.user.totp_secret_enc = security.encrypt(secret)
     g.user.totp_enabled = True
+    g.user.totp_last_step = step
+    # sessions opened before 2FA was switched on end; this one continues
+    g.user.auth_version = (g.user.auth_version or 1) + 1
+    session["av"] = g.user.auth_version
     session.pop("totp_setup", None)
     audit(g.db, g.user, "user.2fa_enabled", g.user.username, ip=client_ip())
     g.db.commit()

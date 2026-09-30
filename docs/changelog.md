@@ -2,6 +2,21 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.11.1 – 30.09.2026
+
+### Sicherheit
+
+- Sicherheitsprüfung des gesamten Codes; 22 Lücken behoben (4 hoch, 5 mittel, 13 niedrig) – Details
+  unter [Sicherheit](sicherheit.md).
+- **Wichtig nach dem Update:**
+  - WireGuard-MikroTik: unter *WireGuard → Einstellungen* einmal **Abrufen** (Fingerabdruck) und
+    speichern – ohne gepinntes Zertifikat verbindet sich der Servermanager nicht mehr mit dem Router.
+  - Neue Passwörter für Postfächer, SSO- und Nextcloud-Benutzer sowie SIP-Kennwörter erfordern jetzt
+    Vollzugriff.
+  - Abmelden beendet alle Sitzungen des Benutzers.
+  - Das Update beschränkt die Größe von Anfragen ohne Anmeldung in der Anwendung selbst; die
+    zusätzliche Grenze in nginx und die Rechte des privaten TLS-Schlüssels setzt das Update ebenfalls.
+
 ## 1.11.0 – 27.09.2026
 
 ### Neu

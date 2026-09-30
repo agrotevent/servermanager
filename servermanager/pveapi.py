@@ -102,7 +102,7 @@ class PveClient:
         else:
             kw["params"] = clean
         try:
-            r = self.session.request(method, url, **kw)
+            r = self.session.request(method, url, allow_redirects=False, **kw)
         except requests.exceptions.SSLError as exc:
             raise PveError(f"TLS-Fehler bei {self.base} – stimmt der Zertifikats-Fingerabdruck noch? ({exc})") from exc
         except requests.RequestException as exc:

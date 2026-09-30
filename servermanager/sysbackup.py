@@ -25,7 +25,8 @@ def parse_paths(text: str) -> list[str]:
         p = p.strip().rstrip("/") or ("/" if p.strip() == "/" else "")
         if not p:
             continue
-        if not PATH_RE.match(p) or ".." in p.split("/") or p == "/":
+        # no ".." and no component starting with "-" (would be read as a tar option)
+        if not PATH_RE.match(p) or ".." in p.split("/") or p == "/" or any(c.startswith("-") for c in p.split("/")):
             raise ValueError(f"Ungültiger Pfad für das Backup: {p}")
         paths.append(p)
     return paths or ["/etc"]
@@ -43,7 +44,7 @@ def create_backup(conn: Connection, db: Session, system: System, paths: list[str
     rel = " ".join(shlex.quote(p.lstrip("/")) for p in paths)
     excludes = " ".join(f"--exclude={shlex.quote(e.lstrip('/'))}" for e in EXCLUDES)
     cmd = (f"cd / && tar czf - --ignore-failed-read --warning=no-file-changed --warning=no-file-removed "
-           f"{excludes} {rel}; rc=$?; [ $rc -le 1 ] && exit 0 || exit $rc")
+           f"{excludes} -- {rel}; rc=$?; [ $rc -le 1 ] && exit 0 || exit $rc")
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", system.name)[:40]
     fname = f"{safe_name}-{ts}.tar.gz"

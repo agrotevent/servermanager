@@ -27,7 +27,7 @@ Auf der System-Seite im Reiter *Nextcloud* → **Benutzer verwalten** (per SSH m
 - **Anlegen** (Vollzugriff): Benutzer-ID, Anzeigename, E-Mail, Gruppen (fehlende werden angelegt), Quota,
   Passwort. Ohne Passwort erzeugt der Servermanager ein zufälliges und zeigt es **einmal** an. Es wird
   nicht gespeichert und nur per Umgebungsvariable an `occ` übergeben (`--password-from-env`).
-- **Sperren/Entsperren, neues Passwort** (Bedienen), **Löschen** (Vollzugriff).
+- **Sperren/Entsperren** (Bedienen), **neues Passwort** und **Löschen** (Vollzugriff).
 
 > Bei Nextcloud im Docker-Container muss der hinterlegte occ-Befehl die Variable weitergeben, z. B.
 > `docker exec -e OC_PASS -u www-data nextcloud php occ`.
@@ -104,7 +104,10 @@ gelöscht.
 | Stufe | Mailcow | SSO | Nextcloud-Benutzer (Recht auf das System) |
 |---|---|---|---|
 | Lesen | Postfächer, Aliase, Domains ansehen | Anwendungen und Benutzer ansehen | Liste ansehen |
-| Bedienen | Postfach aktivieren/deaktivieren, neues Passwort | Benutzer aktivieren/deaktivieren, neues Passwort | sperren/entsperren, neues Passwort |
-| Vollzugriff | Postfächer und Aliase anlegen/löschen | Benutzer anlegen/löschen, Anwendungen verbinden/trennen (dazu Vollzugriff auf die Anwendung) | anlegen, löschen |
+| Bedienen | Postfach aktivieren/deaktivieren | Benutzer aktivieren/deaktivieren (keine Admin-Konten) | sperren/entsperren, Quota |
+| Vollzugriff | Postfächer und Aliase anlegen/löschen, neues Passwort | Benutzer anlegen/löschen, neues Passwort (Admin-Konten nur für Administratoren des Servermanagers), Anwendungen verbinden/trennen (dazu Vollzugriff auf die Anwendung) | anlegen, löschen, neues Passwort |
+
+Ein neues Passwort ist eine Kontoübernahme (wer es setzt, kann sich als dieser Benutzer anmelden) und
+erfordert deshalb überall Vollzugriff.
 
 Alle Aktionen stehen im Audit-Log. Passwörter werden nie gespeichert.

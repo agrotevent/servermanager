@@ -7,7 +7,7 @@ from sqlalchemy import select
 from ... import access, integrations, pve, security, sshkeys
 from ...core import audit
 from ...jobs import enqueue
-from ...models import (KIND_PANGOLIN, KIND_PVE, LEVEL_FULL, PVE_HOSTING, LEVEL_OPERATE, LEVEL_VIEW, Job,
+from ...models import (KIND_PANGOLIN, KIND_PVE, KIND_ROUTER, LEVEL_FULL, PVE_HOSTING, LEVEL_OPERATE, LEVEL_VIEW, Job,
                        PangolinServer, PveServer, RouterDevice, System)
 from ...pveapi import TOKEN_ID_RE, PveError
 from ...schedules import get_tz
@@ -199,8 +199,15 @@ def import_guests(pve_id: int):
             x = inv.get(k)
             if x is None:
                 continue
-            items.append({"node": x["node"], "type": x["type"], "vmid": x["vmid"], "name": x["name"],
-                          "ip": request.form.get(f"ip_{x['vmid']}", "").strip()})
+            ip = request.form.get(f"ip_{x['vmid']}", "").strip() if g.user.is_admin else ""
+            if ip:
+                import ipaddress
+                try:
+                    ip = str(ipaddress.ip_address(ip))
+                except ValueError:
+                    flash(f"{x['name']}: ungültige Adresse {ip}", "danger")
+                    return redirect(url_for("pve.import_guests", pve_id=pve_id))
+            items.append({"node": x["node"], "type": x["type"], "vmid": x["vmid"], "name": x["name"], "ip": ip})
         if not items:
             flash("Keine Gäste ausgewählt.", "warning")
             return redirect(url_for("pve.import_guests", pve_id=pve_id))
@@ -433,10 +440,20 @@ def create(pve_id: int):
         except pve.PveParamError as exc:
             flash(str(exc), "danger")
         else:
+            newt_pg = (payload.get("newt") or {}).get("pangolin_id")
             if payload["publish"] and not server.pangolin_id:
                 flash("Dieser Proxmox-Verbindung ist keine Pangolin-Instanz zugeordnet.", "danger")
             elif payload["static_lease"] and not server.router_id:
                 flash("Dieser Proxmox-Verbindung ist kein RouterOS zugeordnet.", "danger")
+            # the job acts on the linked Pangolin/router: the user needs rights there as well
+            elif payload["publish"] and not common.can(KIND_PANGOLIN, server.pangolin_id, LEVEL_FULL):
+                flash("Für die Veröffentlichung fehlt der Vollzugriff auf die Pangolin-Verbindung.", "danger")
+            elif payload["static_lease"] and not common.can(KIND_ROUTER, server.router_id, LEVEL_OPERATE):
+                flash("Für die feste DHCP-Adresse fehlt das Recht „Bedienen“ auf dem RouterOS.", "danger")
+            elif newt_pg and not common.can(KIND_PANGOLIN, int(newt_pg), LEVEL_FULL):
+                flash("Für den Newt-Tunnel fehlt der Vollzugriff auf die gewählte Pangolin-Verbindung.", "danger")
+            elif payload.get("register") and not g.user.can_add_systems:
+                flash("Sie dürfen keine Systeme anlegen – „Als System verwalten“ abwählen.", "danger")
             else:
                 job = enqueue(g.db, kind="pve_create", title=f"Container {payload['vmid']} ({payload['hostname']}) "
                               f"anlegen – {server.name}", user=g.user, payload=payload, pve_id=server.id)

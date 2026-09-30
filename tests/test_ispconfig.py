@@ -198,7 +198,7 @@ def test_remote_user_script(tmp_path):
     b = tmp_path / "bin"
     b.mkdir()
     log = tmp_path / "sql.log"
-    (b / "mysql").write_text("#!/bin/bash\nq=\"${@: -1}\"\necho \"$MYSQL_PWD|$q\" >> " + str(log) + "\n"
+    (b / "mysql").write_text("#!/bin/bash\nq=\"$(cat)\"\necho \"$MYSQL_PWD|$q\" >> " + str(log) + "\n"
                              "case \"$q\" in *'SHOW COLUMNS'*) echo remote_ips ;; esac\n")
     (b / "mysql").chmod(0o755)
     env = {**os.environ, "PATH": f"{b}:{os.environ['PATH']}", "SM_ISPC_DIR": str(ispc), "SM_TASK": "remote_user",

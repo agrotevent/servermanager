@@ -6,7 +6,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from flask import Flask, g, render_template, request
+from flask import Flask, abort, g, render_template, request
 from markupsafe import Markup, escape
 from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -42,8 +42,16 @@ def create_app(testing: bool = False) -> Flask:
         n = cfg.trusted_proxies
         app.wsgi_app = ProxyFix(app.wsgi_app, x_for=n, x_proto=n, x_host=n)  # type: ignore[method-assign]
 
+    # endpoints reachable without a session only get small bodies (large uploads need a login)
+    small_body_prefixes = ("/api/", "/enroll/", "/login")
+
     @app.before_request
     def _before():
+        if request.path.startswith(small_body_prefixes):
+            limit = 1024 * 1024
+            request.max_content_length = limit
+            if request.content_length is not None and request.content_length > limit:
+                abort(413)
         g.db = new_session()
         load_user()
         check_csrf()

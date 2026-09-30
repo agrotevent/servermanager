@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import os
 import sys
 
 from sqlalchemy import func, select
@@ -14,6 +15,11 @@ from .models import ROLE_ADMIN, User
 
 
 def _password(args) -> tuple[str, bool]:
+    if getattr(args, "password_env", None):
+        pw = os.environ.get(args.password_env, "")
+        if not pw:
+            raise SystemExit(f"Umgebungsvariable {args.password_env} ist leer")
+        return pw, False
     if getattr(args, "password", None):
         return args.password, False
     if getattr(args, "generate", False) or not sys.stdin.isatty():
@@ -159,7 +165,8 @@ def main(argv: list[str] | None = None) -> int:
 
     s = sub.add_parser("create-admin", help="Administrator anlegen")
     s.add_argument("username")
-    s.add_argument("--password")
+    s.add_argument("--password", help="besser --password-env verwenden (sonst in der Prozessliste sichtbar)")
+    s.add_argument("--password-env", metavar="VAR", help="Passwort aus dieser Umgebungsvariablen lesen")
     s.add_argument("--generate", action="store_true", help="Zufallspasswort erzeugen")
     s.add_argument("--email", default="")
     s.add_argument("--update", action="store_true", help="bestehenden Benutzer zurücksetzen")

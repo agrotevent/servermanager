@@ -19,7 +19,8 @@
 #                            von allen Updates verwendet (alternativ Umgebungsvariable SM_GIT_TOKEN)
 #     --token-user NAME      Benutzername zum Token (Standard: x-access-token; GitLab: oauth2)
 #     --admin-user NAME      Name des ersten Administrators (Standard: admin)
-#     --admin-password PW    Passwort (Standard: zufällig, wird angezeigt)
+#     --admin-password PW    Passwort (Standard: zufällig, wird angezeigt; besser per Umgebungsvariable
+#                            SM_ADMIN_PASSWORD übergeben – Argumente sind in der Prozessliste sichtbar)
 #     --listen ADRESSE       interne Adresse der Weboberfläche (Standard: 127.0.0.1:8000)
 #     --timezone ZONE        Zeitzone für Anzeige/Wartungsplaner (Standard: Europe/Berlin)
 #     --no-nginx             keinen nginx-Reverse-Proxy einrichten
@@ -39,7 +40,7 @@ DOMAIN=""
 EMAIL=""
 TLS_MODE=""
 ADMIN_USER="admin"
-ADMIN_PASS=""
+ADMIN_PASS="${SM_ADMIN_PASSWORD:-}"
 TIMEZONE="Europe/Berlin"
 WITH_NGINX=1
 ASSUME_YES=0
@@ -75,7 +76,7 @@ while [ $# -gt 0 ]; do
         --token) GIT_TOKEN="${2:-}"; shift ;;
         --token-user) GIT_USER="${2:-}"; shift ;;
         --admin-user) ADMIN_USER="${2:-}"; shift ;;
-        --admin-password) ADMIN_PASS="${2:-}"; shift ;;
+        --admin-password) ADMIN_PASS="${2:-}"; shift ;;   # alternativ: Umgebungsvariable SM_ADMIN_PASSWORD
         --listen) LISTEN="${2:-}"; shift ;;
         --timezone) TIMEZONE="${2:-}"; shift ;;
         --no-nginx) WITH_NGINX=0 ;;
@@ -413,7 +414,9 @@ runcli() { runuser -u "$SVC_USER" -- env SM_CONFIG="$CONF_DIR/servermanager.conf
 ADMIN_INFO=""
 if ! (cd "$APP_DIR" && runcli users) | awk '{print $2}' | grep -qx admin; then
     if [ -n "$ADMIN_PASS" ]; then
-        (cd "$APP_DIR" && runcli create-admin "$ADMIN_USER" --password "$ADMIN_PASS" --email "$EMAIL")
+        # password via environment - never as a command line argument (visible in the process list)
+        (cd "$APP_DIR" && export SM_ADMIN_PASSWORD="$ADMIN_PASS" \
+            && runcli create-admin "$ADMIN_USER" --password-env SM_ADMIN_PASSWORD --email "$EMAIL")
         ADMIN_INFO="Benutzer: $ADMIN_USER / Passwort: (wie angegeben)"
     else
         out="$(cd "$APP_DIR" && runcli create-admin "$ADMIN_USER" --generate --email "$EMAIL")"
@@ -437,9 +440,10 @@ if [ "$WITH_NGINX" = "1" ]; then
         openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 3650 \
             -subj "/CN=${DOMAIN:-servermanager}" -addext "subjectAltName=$SAN" \
             -keyout "$KEY" -out "$CERT" 2>/dev/null
-        chmod 640 "$KEY"
-        chown root:"$SVC_USER" "$KEY" "$CERT"
+        chown root:"$SVC_USER" "$CERT"
     fi
+    # the private key is only needed by nginx (root) - not readable by the service user
+    if [ -f "$KEY" ]; then chown root:root "$KEY"; chmod 600 "$KEY"; fi
     sed -e "s|@DOMAIN@|$SERVER_NAME|g" -e "s|@CERT@|$CERT|g" -e "s|@KEY@|$KEY|g" -e "s|@LISTEN@|$LISTEN|g" \
         "$APP_DIR/deploy/nginx-servermanager.conf" > /etc/nginx/sites-available/servermanager
     # containers without IPv6: nginx would fail on "listen [::]:..."

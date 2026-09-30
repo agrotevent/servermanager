@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import os
 import secrets
+from typing import Optional
 from pathlib import Path
 
 import pyotp
@@ -136,11 +137,27 @@ def totp_uri(secret: str, username: str, issuer: str = "Servermanager") -> str:
     return pyotp.TOTP(secret).provisioning_uri(name=username, issuer_name=issuer)
 
 
-def verify_totp(secret: str, code: str) -> bool:
+def totp_step(secret: str, code: str, last_step: Optional[int] = None) -> Optional[int]:
+    """Time step the code belongs to (±1 step for clock drift), or None. A step at or before ``last_step``
+    was already used and is rejected (a code works only once)."""
+    import time as _time
     code = (code or "").strip().replace(" ", "")
     if not code.isdigit() or len(code) != 6:
-        return False
-    return pyotp.TOTP(secret).verify(code, valid_window=1)
+        return None
+    totp = pyotp.TOTP(secret)
+    now = _time.time()
+    for offset in (0, -1, 1):
+        t = now + offset * totp.interval
+        step = int(t // totp.interval)
+        if hmac.compare_digest(totp.at(t), code):
+            if last_step is not None and step <= last_step:
+                return None
+            return step
+    return None
+
+
+def verify_totp(secret: str, code: str) -> bool:
+    return totp_step(secret, code) is not None
 
 
 # --------------------------------------------------------------------------

@@ -14,8 +14,9 @@
     <div class="codebox" id="cmd-curl">{{ command.curl }}</div>
     <button type="button" class="btn sm mt-1" data-copy="#cmd-curl">Kopieren</button>
     <details class="mt-2"><summary class="muted">Alternativen (wget, Optionen)</summary>
-      <div class="codebox mt-1" id="cmd-wget">{{ command.wget }}</div>
+      {% if command.wget %}<div class="codebox mt-1" id="cmd-wget">{{ command.wget }}</div>
       <button type="button" class="btn xs mt-1" data-copy="#cmd-wget">Kopieren</button>
+      {% else %}<p class="muted mt-1">Keine wget-Variante: wget kann das gepinnte bzw. selbst signierte Zertifikat nicht prüfen – bitte curl verwenden.</p>{% endif %}
       <p class="mt-2">Optionen: <code>curl … | bash -s -- --name "Webserver 1"</code>, <code>--direct</code> (ohne WireGuard), <code>--address host</code> (für direkte Verbindungen), <code>--force</code> (bestehende Konfiguration ersetzen).</p>
     </details>
   </div>

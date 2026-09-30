@@ -34,7 +34,7 @@ einrichten.
 | Übersicht | Version, Server, Anzahl Kunden/Webseiten/Postfächer/Zonen/Datenbanken, verfügbares ISPConfig-Update | – |
 | Kunden | Nummer, Firma, Ansprechpartner, Benutzer, Status | Kunde anlegen (Vollzugriff; unbegrenzte Limits, Standard-Server) |
 | Webseiten | Domain, PHP, SSL/Let's Encrypt, Speicher, Status | aktivieren/deaktivieren (Bedienen) |
-| E-Mail | Postfächer mit Quota und Zugriff, Mail-Domains mit DKIM | Postfach anlegen, löschen (Vollzugriff), neues Passwort (Bedienen) |
+| E-Mail | Postfächer mit Quota und Zugriff, Mail-Domains mit DKIM | Postfach anlegen, löschen, neues Passwort (Vollzugriff) |
 | DNS | Zonen mit Nameserver, Serial, DNSSEC | – |
 | Datenbanken | Name, Typ, Fernzugriff | – |
 | Zugang | API-Adresse, Benutzer, Zertifikat, Einrichtung | per SSH neu einrichten (neues Passwort); Oberfläche über Pangolin veröffentlichen |
@@ -55,7 +55,7 @@ bleiben auf ihren üblichen Wegen erreichbar.
 ## Rechte
 
 Wie bei den übrigen Integrationen (*Benutzer → Integrationen*): **Ansehen** zeigt alle Reiter,
-**Bedienen** erlaubt Webseiten (de)aktivieren und neue Postfach-Passwörter, **Vollzugriff** Kunden und
+**Bedienen** erlaubt Webseiten (de)aktivieren, **Vollzugriff** neue Postfach-Passwörter sowie Kunden und
 Postfächer anlegen und löschen. Einrichten und Entfernen der Verbindung: Administratoren.
 
 ## Fehlerbehebung

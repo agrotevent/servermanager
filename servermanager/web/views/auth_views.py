@@ -17,8 +17,9 @@ LOCK_MINUTES = 15
 
 
 def _safe_next(target: str | None) -> str:
-    if target and target.startswith("/") and not target.startswith("//"):
-        return target
+    from ..auth import is_local_path
+    if is_local_path(target):
+        return target  # type: ignore[return-value]
     return url_for("main.dashboard")
 
 
@@ -36,9 +37,14 @@ def login():
         user = g.db.execute(select(User).where(func.lower(User.username) == username.lower())).scalar_one_or_none()
         now = utcnow()
         if user and user.locked_until and user.locked_until > now:
+            # same answer as a wrong password: does not reveal that the account exists or is locked
             record_failure(ip)
-            flash("Das Konto ist vorübergehend gesperrt. Bitte später erneut versuchen.", "danger")
-            return render_template("login.html", username=username), 403
+            audit(g.db, None, "auth.failed", username[:64], "Konto gesperrt", ip=ip)
+            g.db.commit()
+            time.sleep(0.5)
+            flash("Benutzername oder Passwort falsch (nach mehreren Fehlversuchen ist das Konto kurz gesperrt).",
+                  "danger")
+            return render_template("login.html", username=username), 401
         ok = bool(user and user.active and security.verify_password(user.password_hash, password))
         if not ok:
             record_failure(ip)
@@ -87,12 +93,25 @@ def login_2fa():
             return render_template("login_2fa.html"), 429
         code = request.form.get("code", "")
         secret = security.decrypt(user.totp_secret_enc)
-        if not security.verify_totp(secret, code):
+        step = security.totp_step(secret, code, user.totp_last_step)
+        if step is None or (user.locked_until and user.locked_until > utcnow()):
+            # wrong (or already used) codes count towards the account lock like wrong passwords
             record_failure(ip)
+            user.failed_logins = (user.failed_logins or 0) + 1
+            if user.failed_logins >= LOCK_AFTER:
+                from datetime import timedelta
+                user.locked_until = utcnow() + timedelta(minutes=LOCK_MINUTES)
+                user.failed_logins = 0
+                session.clear()
+                audit(g.db, user, "auth.locked", user.username, ip=ip)
             audit(g.db, user, "auth.2fa_failed", user.username, ip=ip)
             g.db.commit()
-            flash("Der Code ist ungültig.", "danger")
+            time.sleep(0.5)
+            flash("Der Code ist ungültig oder wurde bereits verwendet.", "danger")
+            if not session.get("pending_uid"):
+                return redirect(url_for("auth.login"))
             return render_template("login_2fa.html"), 401
+        user.totp_last_step = step
         nxt = session.get("pending_next")
         login_user(user)
         audit(g.db, user, "auth.login", user.username, "2FA", ip=ip)
@@ -104,6 +123,8 @@ def login_2fa():
 @bp.route("/logout", methods=["POST"])
 def logout():
     if g.user:
+        # invalidates this session everywhere (also a copied cookie); other sessions of the user end too
+        g.user.auth_version = (g.user.auth_version or 1) + 1
         audit(g.db, g.user, "auth.logout", g.user.username, ip=client_ip())
         g.db.commit()
     logout_user()

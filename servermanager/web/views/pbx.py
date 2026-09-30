@@ -242,7 +242,7 @@ def detail(pbx_id: int):
                            checks=network_checks(p, data or {}, wan_ip), wan_ip=wan_ip)
 
 
-ACTIONS = {"reload": LEVEL_OPERATE, "ext_add": LEVEL_FULL, "ext_delete": LEVEL_FULL, "ext_secret": LEVEL_OPERATE}
+ACTIONS = {"reload": LEVEL_OPERATE, "ext_add": LEVEL_FULL, "ext_delete": LEVEL_FULL, "ext_secret": LEVEL_FULL}
 
 
 @bp.post("/<int:pbx_id>/do")

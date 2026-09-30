@@ -14,7 +14,7 @@ from ..auth import can, client_ip, get_system_or_403, login_required
 bp = Blueprint("ncusers", __name__, url_prefix="/systems")
 
 ACTIONS = {"add": LEVEL_FULL, "delete": LEVEL_FULL, "disable": LEVEL_OPERATE, "enable": LEVEL_OPERATE,
-           "resetpw": LEVEL_OPERATE, "quota": LEVEL_OPERATE}
+           "resetpw": LEVEL_FULL, "quota": LEVEL_OPERATE}
 
 
 @bp.get("/<int:system_id>/nextcloud/users")

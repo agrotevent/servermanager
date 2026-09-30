@@ -5,7 +5,7 @@ import ipaddress
 
 from flask import Blueprint, flash, g, redirect, render_template, request, url_for
 
-from ... import settings, wireguard
+from ... import settings, tlspin, wireguard
 from ...core import audit
 from ...helper import HelperError
 from ...mikrotik import MikroTikError
@@ -14,7 +14,8 @@ from ..auth import admin_required, client_ip
 
 bp = Blueprint("wg", __name__, url_prefix="/wireguard")
 
-FIELDS = ["wg.mikrotik_url", "wg.mikrotik_user", "wg.mikrotik_verify_tls", "wg.mikrotik_interface", "wg.network",
+FIELDS = ["wg.mikrotik_url", "wg.mikrotik_user", "wg.mikrotik_verify_tls", "wg.mikrotik_fingerprint",
+          "wg.mikrotik_interface", "wg.network",
           "wg.router_ip", "wg.sm_ip", "wg.pool_start", "wg.listen_port", "wg.endpoint", "wg.sm_endpoint",
           "wg.router_public_key", "wg.local_iface", "wg.client_iface", "wg.keepalive", "wg.mtu", "wg.address_list"]
 
@@ -56,6 +57,30 @@ def save():
                 errors.append(f"{k.split('.')[1]} liegt nicht im Management-Netz {net}.")
     except ValueError as exc:
         errors.append(f"Ungültige Netzangabe: {exc}")
+    url = (values["wg.mikrotik_url"] or "").strip()
+    if url and "://" not in url:
+        url = values["wg.mikrotik_url"] = "https://" + url
+    if f.get("fetch_fp") and url.startswith("https://"):
+        from urllib.parse import urlsplit
+        parts = urlsplit(url)
+        try:
+            values["wg.mikrotik_fingerprint"] = tlspin.fetch_fingerprint(parts.hostname, parts.port or 443)
+            flash(f"Fingerabdruck abgerufen: {values['wg.mikrotik_fingerprint']} – bitte mit dem Zertifikat des "
+                  "Routers vergleichen (/certificate print detail).", "info")
+        except tlspin.PinError as exc:
+            errors.append(str(exc))
+    fp = (values["wg.mikrotik_fingerprint"] or "").strip()
+    if fp:
+        try:
+            values["wg.mikrotik_fingerprint"] = tlspin.normalize_fingerprint(fp)
+        except tlspin.PinError as exc:
+            errors.append(str(exc))
+    if url.startswith("https://") and not values["wg.mikrotik_fingerprint"] and not values["wg.mikrotik_verify_tls"]:
+        errors.append("MikroTik-API: Zertifikats-Fingerabdruck hinterlegen („Abrufen“) oder die Prüfung über die "
+                      "System-CAs aktivieren – sonst würden die Zugangsdaten ungeprüft übertragen.")
+    if url.startswith("http://"):
+        errors.append("MikroTik-API bitte über https (Dienst www-ssl) ansprechen – über http würden Benutzer und "
+                      "Passwort unverschlüsselt übertragen.")
     for k in ("wg.local_iface", "wg.client_iface", "wg.mikrotik_interface"):
         if not wireguard.IFACE_RE.match(values[k] or ""):
             errors.append(f"Ungültiger Interface-Name: {values[k]}")

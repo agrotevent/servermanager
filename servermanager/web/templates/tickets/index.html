@@ -10,7 +10,7 @@
   {% endfor %}
   <span class="grow"></span>
   <form method="get" class="inline"><input type="hidden" name="status" value="{{ status }}">
-    <select name="severity" onchange="this.form.submit()"><option value="">alle Schweregrade</option>{% for k, v in severities.items() %}{% if k >= 2 %}<option value="{{ k }}" {% if severity == k|string %}selected{% endif %}>ab {{ v }}</option>{% endif %}{% endfor %}</select></form>
+    <select name="severity" data-autosubmit><option value="">alle Schweregrade</option>{% for k, v in severities.items() %}{% if k >= 2 %}<option value="{{ k }}" {% if severity == k|string %}selected{% endif %}>ab {{ v }}</option>{% endif %}{% endfor %}</select></form>
 </div></div>
 {% if rows %}
 <div class="card"><div class="table-wrap"><table class="table">

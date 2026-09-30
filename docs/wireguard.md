@@ -19,6 +19,12 @@ Menü **WireGuard**:
    `wg-quick@wg-sm`.
 5. **API testen** – übernimmt Version, Identität und den Public Key automatisch.
 
+Die REST-API des MikroTik wird nur über **https mit geprüftem Zertifikat** angesprochen: Beim
+selbstsignierten Zertifikat des Routers mit **Abrufen** den Fingerabdruck übernehmen (mit
+`/certificate print detail` vergleichen) – er wird festgeschrieben. Ohne Fingerabdruck bzw.
+CA-Prüfung verweigert der Servermanager die Verbindung, damit die Zugangsdaten nie an einen fremden
+Server gehen. Bestehende Installationen: nach dem Update einmal *Abrufen* und speichern.
+
 Beim Enrollment eines Geräts legt der Servermanager über die REST-API an:
 
 | Objekt | Inhalt |

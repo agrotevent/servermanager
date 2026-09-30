@@ -71,8 +71,10 @@
       <td><small>{{ (u.groups_obj or [])|map(attribute='name')|join(', ') }}</small></td>
       <td>{% if u.is_active %}<span class="badge success">aktiv</span>{% else %}<span class="badge">deaktiviert</span>{% endif %}{% if u.is_superuser %} <span class="badge warning">Admin</span>{% endif %}</td>
       <td class="nowrap text-right">
-        {% if int_can('sso', s.id, 'operate') %}
+        {% if int_can('sso', s.id, 'operate') and (user.is_admin or not u.is_superuser) %}
           {{ uact('active', 'Deaktivieren' if u.is_active else 'Aktivieren', u, 'xs', (u.username ~ ' deaktivieren?') if u.is_active else '', {'active': '0' if u.is_active else '1'}) }}
+        {% endif %}
+        {% if int_can('sso', s.id, 'full') and (user.is_admin or not u.is_superuser) %}
           {{ uact('password', 'Neues Passwort', u, 'xs', 'Neues Passwort für ' ~ u.username ~ ' setzen?') }}
         {% endif %}
         {% if int_can('sso', s.id, 'full') and not u.is_superuser %}{{ uact('delete', 'Löschen', u, 'xs danger-outline', u.username ~ ' löschen?') }}{% endif %}

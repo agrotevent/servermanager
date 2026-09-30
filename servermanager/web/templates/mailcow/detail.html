@@ -30,9 +30,8 @@
         <td class="nowrap text-right">
           {% if int_can('mailcow', m.id, 'operate') %}
             {{ act('mb_active', 'Deaktivieren' if active else 'Aktivieren', 'xs', (b.username ~ ' deaktivieren?') if active else '', {'address': b.username, 'active': '0' if active else '1'}) }}
-            {{ act('mb_password', 'Neues Passwort', 'xs', 'Neues Passwort für ' ~ b.username ~ ' setzen?', {'address': b.username}) }}
           {% endif %}
-          {% if int_can('mailcow', m.id, 'full') %}{{ act('mb_delete', 'Löschen', 'xs danger-outline', 'Postfach ' ~ b.username ~ ' mit allen Mails löschen?', {'address': b.username}) }}{% endif %}
+          {% if int_can('mailcow', m.id, 'full') %}{{ act('mb_password', 'Neues Passwort', 'xs', 'Neues Passwort für ' ~ b.username ~ ' setzen?', {'address': b.username}) }}{{ act('mb_delete', 'Löschen', 'xs danger-outline', 'Postfach ' ~ b.username ~ ' mit allen Mails löschen?', {'address': b.username}) }}{% endif %}
         </td></tr>
     {% else %}<tr><td colspan="5" class="muted">Keine Postfächer.</td></tr>{% endfor %}</tbody></table></div>
   {% if int_can('mailcow', m.id, 'full') %}

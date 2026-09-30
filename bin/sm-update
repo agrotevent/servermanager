@@ -105,6 +105,45 @@ for unit in servermanager-web.service servermanager-worker.service; do
 done
 install -m 755 bin/servermanager-cli /usr/local/bin/servermanager-cli
 [ "$changed" = "1" ] && systemctl daemon-reload
+# security fixes of 1.11.1 for existing installations: private TLS key only for root, small request
+# bodies for the endpoints without login in nginx
+if [ -f "$CONF_DIR/tls/privkey.pem" ]; then chown root:root "$CONF_DIR/tls/privkey.pem"; chmod 600 "$CONF_DIR/tls/privkey.pem"; fi
+NGX=/etc/nginx/sites-available/servermanager
+if [ -f "$NGX" ] && ! grep -q 'location ~ \^/(api|enroll)/' "$NGX" && command -v nginx >/dev/null 2>&1; then
+    cp -p "$NGX" "$NGX.pre-1.11.1"
+    upstream="$(sed -n 's/^[[:space:]]*proxy_pass http:\/\/\([^;]*\);.*/\1/p' "$NGX" | head -n 1)"
+    if [ -n "$upstream" ]; then
+        # insert in front of the "location / {" that proxies to the app (not the http->https redirect)
+        awk -v up="$upstream" '
+            function block() {
+                print "    location ~ ^/(api|enroll)/ {"
+                print "        client_max_body_size 1m;"
+                print "        proxy_pass http://" up ";"
+                print "        proxy_http_version 1.1;"
+                print "        proxy_set_header Host $host;"
+                print "        proxy_set_header X-Real-IP $remote_addr;"
+                print "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;"
+                print "        proxy_set_header X-Forwarded-Proto $scheme;"
+                print "        proxy_set_header X-Forwarded-Host $host;"
+                print "    }"
+                print ""
+            }
+            held != "" {
+                if (!done && $0 ~ /proxy_pass/) { block(); done = 1 }
+                print held; held = ""
+            }
+            /^[[:space:]]*location \/ \{/ { held = $0; next }
+            { print }
+            END { if (held != "") print held }' "$NGX.pre-1.11.1" > "$NGX"
+        if nginx -t >/dev/null 2>&1; then
+            systemctl reload nginx || true
+            say "nginx: Grenze für Anfragen ohne Anmeldung ergänzt"
+        else
+            cp -p "$NGX.pre-1.11.1" "$NGX"
+            say "nginx-Anpassung übersprungen (Konfiguration ungültig) - bitte manuell prüfen"
+        fi
+    fi
+fi
 
 step 5 "Datenbank migrieren"
 runuser -u "$SVC_USER" -- env SM_CONFIG="$CONF" "$APP_DIR/.venv/bin/python" -m servermanager.cli migrate \

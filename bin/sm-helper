@@ -181,6 +181,8 @@ case "$cmd" in
         ;;
 
     restore-apply)
+        # only started through "restore" (systemd-run), never directly through sudo
+        [ -z "${SUDO_USER:-}" ] || die "restore-apply wird nur über 'restore' gestartet"
         STAGE="$DATA_DIR/restore-staging"
         install -d -m 755 "$LOG_DIR"
         LOG="$LOG_DIR/restore.log"
@@ -209,22 +211,32 @@ case "$cmd" in
             cp -P "$DATA_DIR"/servermanager.db* "$keep/" 2>/dev/null || true
             cp -P "$CONF_DIR/secret.key" "$keep/" 2>/dev/null || true
             echo "Bisheriger Stand gesichert in $keep"
-            rm -f "$DATA_DIR/servermanager.db-wal" "$DATA_DIR/servermanager.db-shm"
-            install -m 600 -o "$SVC_USER" -g "$SVC_USER" "$STAGE/servermanager.db" "$DATA_DIR/servermanager.db"
-            install -m 640 -o root -g "$SVC_USER" "$STAGE/secret.key" "$CONF_DIR/secret.key"
-            if [ -f "$STAGE/servermanager.conf" ]; then
-                install -m 640 -o root -g "$SVC_USER" "$STAGE/servermanager.conf" "$CONF_DIR/servermanager.conf.from-backup-$ts"
+            # Files below $DATA_DIR belong to the service user: handle them AS the service user, so a
+            # symlink planted there can never make root read or write elsewhere.
+            as_svc() { runuser -u "$SVC_USER" -- "$@"; }
+            as_svc rm -f "$DATA_DIR/servermanager.db-wal" "$DATA_DIR/servermanager.db-shm"
+            as_svc install -m 600 "$STAGE/servermanager.db" "$DATA_DIR/servermanager.db" \
+                || restore_fail "Datenbank konnte nicht übernommen werden"
+            # Files for root-owned places: copy them (without following links) into a private
+            # root directory first and check them there.
+            priv="$(mktemp -d)"
+            cp -P "$STAGE/secret.key" "$priv/secret.key" 2>/dev/null || true
+            [ -f "$STAGE/servermanager.conf" ] && cp -P "$STAGE/servermanager.conf" "$priv/servermanager.conf" 2>/dev/null
+            [ -f "$priv/secret.key" ] && [ ! -L "$priv/secret.key" ] || { rm -rf "$priv"; restore_fail "secret.key ungültig"; }
+            install -m 640 -o root -g "$SVC_USER" "$priv/secret.key" "$CONF_DIR/secret.key"
+            if [ -f "$priv/servermanager.conf" ] && [ ! -L "$priv/servermanager.conf" ]; then
+                install -m 640 -o root -g "$SVC_USER" "$priv/servermanager.conf" "$CONF_DIR/servermanager.conf.from-backup-$ts"
                 echo "Konfiguration aus der Sicherung abgelegt: $CONF_DIR/servermanager.conf.from-backup-$ts (aktive Konfiguration unverändert)"
             fi
+            rm -rf "$priv"
             for d in ssh wireguard system-backups; do
                 if [ -d "$STAGE/$d" ]; then
-                    rm -rf "${DATA_DIR:?}/$d"
-                    cp -rP "$STAGE/$d" "$DATA_DIR/$d"
-                    chown -hR "$SVC_USER:$SVC_USER" "$DATA_DIR/$d"
-                    chmod 700 "$DATA_DIR/$d"
+                    as_svc rm -rf "${DATA_DIR:?}/$d"
+                    as_svc cp -rP "$STAGE/$d" "$DATA_DIR/$d"
+                    as_svc chmod 700 "$DATA_DIR/$d"
                 fi
             done
-            rm -rf "$STAGE"
+            as_svc rm -rf "$STAGE"
             (cd "$APP_DIR" && runuser -u "$SVC_USER" -- env SM_CONFIG="$CONF" "$APP_DIR/.venv/bin/python" -m servermanager.cli migrate)
             systemctl start servermanager-worker servermanager-web
             for f in "$DATA_DIR"/wireguard/*.conf; do

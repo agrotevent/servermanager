@@ -15,9 +15,9 @@ db() {  # query the FreePBX database (tab separated, no header)
     user="$(conf_val AMPDBUSER)"; pass="$(conf_val AMPDBPASS)"
     name="$(conf_val AMPDBNAME)"; host="$(conf_val AMPDBHOST)"
     if [ -n "$user" ]; then
-        MYSQL_PWD="$pass" mysql -h "${host:-localhost}" -u "$user" -B -N "${name:-asterisk}" -e "$1"
+        printf '%s\n' "$1" | MYSQL_PWD="$pass" mysql -h "${host:-localhost}" -u "$user" -B -N "${name:-asterisk}"
     else
-        mysql -B -N asterisk -e "$1"
+        printf '%s\n' "$1" | mysql -B -N asterisk
     fi
 }
 need_freepbx() { have_fw || die "Nur mit FreePBX möglich (fwconsole nicht gefunden)"; }

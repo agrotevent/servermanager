@@ -61,7 +61,8 @@ class Authentik:
     def request(self, method: str, path: str, body: Any = None, params: Optional[dict] = None) -> Any:
         url = f"{self.base}/api/v3/{path.lstrip('/')}"
         try:
-            r = self.session.request(method, url, json=body, params=params, timeout=self.timeout)
+            r = self.session.request(method, url, json=body, params=params, timeout=self.timeout,
+                                     allow_redirects=False)
         except requests.exceptions.SSLError as exc:
             raise AuthentikError(f"TLS-Fehler bei {self.base}: {exc}") from exc
         except requests.RequestException as exc:
@@ -112,6 +113,14 @@ class Authentik:
         for gpk in groups or []:
             self.request("POST", f"core/groups/{quote(str(gpk), safe='')}/add_user/", {"pk": user["pk"]})
         return user
+
+    def user(self, pk: int) -> dict:
+        return self.request("GET", f"core/users/{int(pk)}/") or {}
+
+    def is_admin_user(self, pk: int) -> bool:
+        """Superuser directly or through one of its groups."""
+        u = self.user(pk)
+        return bool(u.get("is_superuser")) or any(g.get("is_superuser") for g in (u.get("groups_obj") or []))
 
     def set_active(self, pk: int, active: bool) -> None:
         self.request("PATCH", f"core/users/{int(pk)}/", {"is_active": bool(active)})

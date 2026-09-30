@@ -197,7 +197,7 @@ def _publish_args(mc: MailcowServer) -> dict:
             if mc.public_url else ""}
 
 
-ACTIONS = {"mb_add": LEVEL_FULL, "mb_delete": LEVEL_FULL, "mb_active": LEVEL_OPERATE, "mb_password": LEVEL_OPERATE,
+ACTIONS = {"mb_add": LEVEL_FULL, "mb_delete": LEVEL_FULL, "mb_active": LEVEL_OPERATE, "mb_password": LEVEL_FULL,
            "alias_add": LEVEL_FULL, "alias_delete": LEVEL_FULL}
 
 

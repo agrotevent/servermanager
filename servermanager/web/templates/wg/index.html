@@ -25,7 +25,10 @@
         {{ field('WireGuard-Interface', 'mikrotik_interface', s['wg.mikrotik_interface']) }}
         {{ field('API-Benutzer', 'mikrotik_user', s['wg.mikrotik_user']) }}
         {{ field('API-Passwort', 'mikrotik_password', type='password', help=('gespeichert - leer lassen zum Beibehalten' if s['wg.mikrotik_password'] else ''), attrs='autocomplete="new-password"') }}
-        <div class="full">{{ checkbox('TLS-Zertifikat prüfen', 'mikrotik_verify_tls', s['wg.mikrotik_verify_tls'], 'Bei selbstsigniertem Zertifikat deaktiviert lassen (Zugriff nur über den Tunnel empfohlen).') }}</div>
+        <div class="field full"><label>Zertifikats-Fingerabdruck (SHA-256)</label>
+          <div class="flex"><input type="text" name="mikrotik_fingerprint" value="{{ s['wg.mikrotik_fingerprint'] }}" class="mono grow" placeholder="AA:BB:…"><button class="btn" name="fetch_fp" value="1">Abrufen</button></div>
+          <span class="help">Für das selbstsignierte Zertifikat des Routers. Der Fingerabdruck wird festgeschrieben – ein anderes Zertifikat wird abgelehnt.</span></div>
+        <div class="full">{{ checkbox('Zertifikat stattdessen über die System-CAs prüfen', 'mikrotik_verify_tls', s['wg.mikrotik_verify_tls']) }}</div>
       </div></fieldset>
       <fieldset class="mb-2"><legend>Netz</legend><div class="form-grid">
         {{ field('Management-Netz', 'network', s['wg.network'], help='z. B. 10.66.0.0/24') }}

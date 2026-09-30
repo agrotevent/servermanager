@@ -44,7 +44,8 @@ export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a APT_LISTCHANGES_FRONTEN
 export LC_ALL=C.UTF-8 LANG=C.UTF-8 TERM=dumb
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 __sm_self="$0"
-trap 'rm -f "$__sm_self" "${__sm_self%.sh}.pid"' EXIT
+__sm_dir="${__sm_self%/*}"
+trap 'rm -f "$__sm_self" "${__sm_self%.sh}.pid"; case "$__sm_dir" in /tmp/.sm-*) rmdir "$__sm_dir" 2>/dev/null;; esac' EXIT
 echo $$ > "${__sm_self%.sh}.pid" 2>/dev/null || true
 """
 
@@ -322,8 +323,15 @@ class Connection:
         return "\n".join(lines) + "\n"
 
     def upload_script(self, script: str, path: Optional[str] = None) -> str:
-        path = path or f"/tmp/.sm-{uuid.uuid4().hex}.sh"
-        res = self.exec(f"umask 077 && cat > {shlex.quote(path)}", stdin=script.encode(), timeout=60)
+        if path is None:
+            # private directory (0700, fails if it exists): nobody else can place files such as the pid
+            # file next to the script
+            d = f"/tmp/.sm-{uuid.uuid4().hex}"
+            path = f"{d}/run.sh"
+            res = self.exec(f"umask 077 && mkdir -m 700 {shlex.quote(d)} && cat > {shlex.quote(path)}",
+                            stdin=script.encode(), timeout=60)
+        else:
+            res = self.exec(f"umask 077 && cat > {shlex.quote(path)}", stdin=script.encode(), timeout=60)
         if not res.ok:
             raise SSHError(f"Skript konnte nicht übertragen werden: {res.stderr.strip()}")
         return path
@@ -379,8 +387,10 @@ class Connection:
 
     def _kill_script(self, path: str) -> None:
         pidfile = shlex.quote(path[:-3] + ".pid")
-        cmd = (f"p=$(cat {pidfile} 2>/dev/null); [ -n \"$p\" ] && kill -TERM -- -\"$p\" 2>/dev/null; "
-               f"sleep 5; [ -n \"$p\" ] && kill -KILL -- -\"$p\" 2>/dev/null; true")
+        # only a plain process id > 1 (never 1 or -1 = "all processes")
+        cmd = (f"p=$(cat {pidfile} 2>/dev/null); case \"$p\" in ''|*[!0-9]*) exit 0;; esac; "
+               f"[ \"$p\" -gt 1 ] || exit 0; kill -TERM -- -\"$p\" 2>/dev/null; "
+               f"sleep 5; kill -KILL -- -\"$p\" 2>/dev/null; true")
         try:
             self.exec(cmd, root=True, timeout=30)
         except SSHError as exc:
@@ -399,7 +409,8 @@ class Connection:
         starter = f"""set -e
 mkdir -p {d}; chmod 755 {d}
 S={d}/{key}.sh; L={d}/{key}.log; R={d}/{key}.rc; P={d}/{key}.pgid
-mv -f {shlex.quote(tmp)} "$S"; chown root:root "$S"; chmod 700 "$S"; rm -f "$R" "$R.tmp" "$P"
+mv -f {shlex.quote(tmp)} "$S"; rmdir {shlex.quote(tmp.rsplit("/", 1)[0])} 2>/dev/null || true
+chown root:root "$S"; chmod 700 "$S"; rm -f "$R" "$R.tmp" "$P"
 : > "$L"; chmod 600 "$L"; chown {owner} "$L" 2>/dev/null || true
 nohup setsid bash -c 'echo $$ > "$4"; bash "$1" > "$2" 2>&1 < /dev/null; echo $? > "$3.tmp"; mv -f "$3.tmp" "$3"' \
     _ "$S" "$L" "$R" "$P" >/dev/null 2>&1 &

@@ -42,7 +42,7 @@
         <td>{% if e.online %}<span class="badge success">angemeldet</span>{% else %}<span class="badge">nicht angemeldet</span>{% endif %}</td>
         <td><small class="mono">{{ e.contact.ip or '' }}{% if e.contact.rtt %} · {{ e.contact.rtt }} ms{% endif %}</small></td>
         <td class="nowrap text-right">
-          {% if int_can('pbx', p.id, 'operate') %}{{ act('ext_secret', 'Neues SIP-Passwort', 'xs', 'Neues SIP-Passwort für ' ~ e.ext ~ ' setzen? Das Telefon muss danach neu eingerichtet werden.', {'ext': e.ext}) }}{% endif %}
+          {% if int_can('pbx', p.id, 'full') %}{{ act('ext_secret', 'Neues SIP-Passwort', 'xs', 'Neues SIP-Passwort für ' ~ e.ext ~ ' setzen? Das Telefon muss danach neu eingerichtet werden.', {'ext': e.ext}) }}{% endif %}
           {% if int_can('pbx', p.id, 'full') %}{{ act('ext_delete', 'Löschen', 'xs danger-outline', 'Nebenstelle ' ~ e.ext ~ ' (' ~ e.name ~ ') löschen?', {'ext': e.ext}) }}{% endif %}
         </td></tr>
     {% else %}<tr><td colspan="6" class="muted">Keine Nebenstellen gefunden.</td></tr>{% endfor %}</tbody></table></div>

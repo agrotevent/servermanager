@@ -215,6 +215,9 @@ def webhook(zid: int):
     if z is None or not signature_ok(secret, raw, request.headers.get("X-Hub-Signature", "")):
         record_failure(ip)
         return jsonify({"error": "nicht berechtigt"}), 403
+    from ..auth import rate_ok
+    if not rate_ok(f"zammad:{zid}", 300):
+        return jsonify({"error": "zu viele Ereignisse"}), 429
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify({"error": "JSON erwartet"}), 400

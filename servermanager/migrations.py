@@ -58,12 +58,18 @@ def _v5(conn: Connection) -> None:
         add_column_if_missing(conn, "zabbix_servers", "zammad_id", "INTEGER")
 
 
+def _v6(conn: Connection) -> None:
+    # TOTP codes can be used only once
+    add_column_if_missing(conn, "users", "totp_last_step", "INTEGER")
+
+
 MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     1: lambda conn: None,  # initial schema
     2: _v2,
     3: _v3,
     4: _v4,
     5: _v5,
+    6: _v6,
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 

@@ -289,13 +289,30 @@ def handle_zammad(db: Session, zs: ZammadServer, data: dict) -> dict:
                    ).scalars().first()
     if t is None:
         return {"ticket": None, "action": "unknown"}
+    # replay protection: a (signed) request that was captured and sent again must not act twice -
+    # remember the last change time per ticket and the articles already taken over
+    seen = dict(zs.setup or {})
+    stamps = dict(seen.get("updated", {}))
+    updated = str(ticket.get("updated_at") or "")
+    key = str(zid)
+    if updated and stamps.get(key) and updated <= stamps[key]:
+        return {"ticket": t.id, "action": "replay"}
+    articles = list(seen.get("articles", []))
+    if updated:
+        stamps[key] = updated
+        if len(stamps) > 1000:
+            stamps = dict(sorted(stamps.items(), key=lambda kv: kv[1])[-1000:])
     actions = []
     body = str(article.get("body") or "")
     by_us = zs.agent_id and str(article.get("created_by_id") or "") == str(zs.agent_id)
-    if article.get("id") and body and not by_us and OWN_PREFIX not in body:
+    aid = str(article.get("id") or "")
+    if aid and body and not by_us and OWN_PREFIX not in body and aid not in articles:
         who = article.get("from") or article.get("created_by") or "Zammad"
         add_comment(db, t, f"Zammad ({who}): {_plain(body)[:4000]}", "zammad")
         actions.append("comment")
+    if aid and aid not in articles:
+        articles = (articles + [aid])[-500:]
+    zs.setup = dict(seen, updated=stamps, articles=articles)
     state = str(ticket.get("state") or "")
     if not state and ticket.get("state_id"):
         state = (zs.setup or {}).get("states", {}).get(str(ticket["state_id"]), "")

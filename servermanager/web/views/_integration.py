@@ -90,7 +90,8 @@ def fetch_fp_from_form(default_port: int) -> tuple[str, str]:
 
 def safe_next(default: str) -> str:
     """Only local redirect targets (no open redirect via the 'next' form field)."""
+    from ..auth import is_local_path
     nxt = request.form.get("next") or ""
-    if nxt.startswith("/") and not nxt.startswith("//") and "\\" not in nxt:
+    if is_local_path(nxt):
         return nxt
     return default

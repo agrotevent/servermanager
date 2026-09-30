@@ -272,6 +272,9 @@ def event(zid: int):
         from ..auth import record_failure
         record_failure(ip)
         return jsonify({"error": "nicht berechtigt"}), 403
+    from ..auth import rate_ok
+    if not rate_ok(f"zabbix:{zid}", 300):
+        return jsonify({"error": "zu viele Ereignisse"}), 429
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify({"error": "JSON erwartet"}), 400

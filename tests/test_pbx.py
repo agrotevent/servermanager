@@ -80,7 +80,7 @@ def _fake_bin(tmp_path: Path) -> dict:
     (b / "pgrep").write_text("#!/bin/bash\nexit 0\n")
     (b / "fwconsole").write_text("#!/bin/bash\necho fwconsole \"$@\" >> " + str(tmp_path / "fw.log") + "\n")
     (b / "mysql").write_text("#!/bin/bash\n"
-                             "q=\"${@: -1}\"\n"
+                             "q=\"$(cat)\"\n"
                              "case \"$q\" in\n"
                              "  *framework*) echo 17.0.19 ;;\n"
                              "  *'FROM users u'*) printf '201\\tMax Muster\\tpjsip\\tdefault\\n202\\tEva\\tpjsip\\tnovm\\n' ;;\n"
@@ -147,7 +147,7 @@ def test_extension_add_script(tmp_path):
         "if [ \"$1\" = bulkimport ]; then cp \"${@: -1}\" " + str(tmp_path / "import.csv") + "; touch "
         + str(tmp_path / "created") + "; fi\n")
     (tmp_path / "bin" / "mysql").write_text(
-        "#!/bin/bash\nq=\"${@: -1}\"\n"
+        "#!/bin/bash\nq=\"$(cat)\"\n"
         "case \"$q\" in *\"WHERE extension='203'\"*) [ -f " + str(tmp_path / "created") + " ] && echo 203 ;; esac\n")
     env.update({"SM_TASK": "ext_add", "SM_EXT": "203", "SM_NAME": 'Anna "Chefin", Vertrieb',
                 "SM_SECRET": "Geheim123456", "SM_VM_EMAIL": "anna@example.com", "SM_VM_PIN": "4711"})

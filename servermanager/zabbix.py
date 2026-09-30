@@ -110,7 +110,7 @@ class Zabbix:
             else:
                 body["auth"] = self.token
         try:
-            r = self.session.post(self.url, json=body, headers=headers, timeout=self.timeout)
+            r = self.session.post(self.url, json=body, headers=headers, timeout=self.timeout, allow_redirects=False)
         except requests.exceptions.SSLError as exc:
             raise ZabbixError(f"TLS-Fehler bei {self.url}: {exc}") from exc
         except requests.RequestException as exc:

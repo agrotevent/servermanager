@@ -209,7 +209,8 @@ def disconnect(sso_id: int, client_id: int):
     return redirect(url_for("jobs.detail", job_id=job.id))
 
 
-USER_ACTIONS = {"add": LEVEL_FULL, "delete": LEVEL_FULL, "active": LEVEL_OPERATE, "password": LEVEL_OPERATE}
+# a new password is an account takeover: full access, and administrator accounts only for admins
+USER_ACTIONS = {"add": LEVEL_FULL, "delete": LEVEL_FULL, "active": LEVEL_OPERATE, "password": LEVEL_FULL}
 
 
 @bp.post("/<int:sso_id>/users")
@@ -244,6 +245,9 @@ def user_action(sso_id: int):
         else:
             pk = int(f.get("pk", "0") or 0)
             target = f.get("username", str(pk))
+            if not g.user.is_admin and au.is_admin_user(pk):
+                raise ValueError("Administrator-Konten von authentik können nur Administratoren des Servermanagers "
+                                 "ändern")
             if action == "active":
                 au.set_active(pk, f.get("active") == "1")
                 msg = f"{target} {'aktiviert' if f.get('active') == '1' else 'deaktiviert'}."

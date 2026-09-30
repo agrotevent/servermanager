@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 from jinja2 import Environment, FileSystemLoader
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from . import access, security, settings, sshkeys, wireguard
@@ -76,8 +76,9 @@ def install_command(db: Session, token: str) -> dict:
     opts = curl_opts(db)
     url = f"{base}/enroll/{token}.sh"
     curl = f"curl -fsSL {opts + ' ' if opts else ''}{url} | bash"
-    wget_opts = "--no-check-certificate " if opts else ""
-    wget = f"wget -qO- {wget_opts}{url} | bash"
+    # wget cannot pin a key: with a pinned or self-signed certificate it would have to skip the check
+    # completely (token and script could be intercepted) - then there is no wget variant
+    wget = "" if opts else f"wget -qO- {url} | bash"
     return {"url": url, "curl": curl, "wget": wget}
 
 
@@ -106,10 +107,39 @@ def _unique_name(db: Session, name: str) -> str:
     return candidate
 
 
+def _consume(db: Session, row: EnrollmentToken) -> None:
+    """Take one use of the token atomically (parallel requests cannot exceed max_uses)."""
+    res = db.execute(update(EnrollmentToken)
+                     .where(EnrollmentToken.id == row.id, EnrollmentToken.uses < EnrollmentToken.max_uses,
+                            EnrollmentToken.revoked.is_(False), EnrollmentToken.expires_at > utcnow())
+                     .values(uses=EnrollmentToken.uses + 1))
+    if res.rowcount != 1:
+        db.rollback()
+        raise EnrollError("Token ungültig, abgelaufen oder bereits verwendet", 403)
+    db.commit()
+
+
+def _release(db: Session, row_id: int) -> None:
+    db.rollback()
+    db.execute(update(EnrollmentToken).where(EnrollmentToken.id == row_id, EnrollmentToken.uses > 0)
+               .values(uses=EnrollmentToken.uses - 1))
+    db.commit()
+
+
 def enroll(db: Session, token: str, form: dict, remote_addr: str) -> dict:
     row = find_token(db, token)
     if row is None or not row.is_valid:
         raise EnrollError("Token ungültig, abgelaufen oder bereits verwendet", 403)
+    state = {"consumed": False}
+    try:
+        return _enroll(db, row, form, remote_addr, state)
+    except Exception:
+        if state["consumed"]:
+            _release(db, row.id)
+        raise
+
+
+def _enroll(db: Session, row: EnrollmentToken, form: dict, remote_addr: str, state: dict) -> dict:
     hostname = _clean(form.get("hostname"), 253)
     if not HOST_RE.match(hostname):
         raise EnrollError("Ungültiger Hostname")
@@ -144,6 +174,10 @@ def enroll(db: Session, token: str, form: dict, remote_addr: str) -> dict:
         user_mode = "dedicated"
     ssh_user = "root" if user_mode == "root" else DEDICATED_USER
 
+    # everything is validated: take the use now, before the (slow) provisioning
+    _consume(db, row)
+    state["consumed"] = True
+    db.refresh(row)
     system: Optional[System] = db.get(System, row.bind_system_id) if row.bind_system_id else None
     new = system is None
     if new:
@@ -242,7 +276,6 @@ def enroll(db: Session, token: str, form: dict, remote_addr: str) -> dict:
         creator = db.get(User, row.created_by)
         if creator and not creator.is_admin:
             access.grant(db, creator.id, system.id, LEVEL_FULL)
-    row.uses += 1
     row.last_used_at = utcnow()
     if connection == CONN_WIREGUARD and system.routed_subnet_list:
         wireguard.refresh_local_routes(db)

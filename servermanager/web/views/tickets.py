@@ -98,6 +98,10 @@ def _zabbix(t: Ticket, action: int, message: str) -> str:
     z = g.db.get(ZabbixServer, t.zabbix_id)
     if z is None:
         return ""
+    # actions in Zabbix (acknowledge, message, close) need rights on the Zabbix connection itself -
+    # rights on the affected system alone are not enough
+    if not g.user.is_admin and not access.has_integration_level(g.db, g.user, KIND_ZABBIX, z.id, LEVEL_OPERATE):
+        return "keine Berechtigung für die Zabbix-Verbindung – nur im Servermanager gespeichert"
     try:
         integrations.zabbix_client(z).acknowledge(t.event_id, action, f"{tickets.OWN_PREFIX} {message}")
         return ""

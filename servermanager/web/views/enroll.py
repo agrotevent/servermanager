@@ -4,7 +4,7 @@ from __future__ import annotations
 from flask import Blueprint, Response, abort, flash, g, redirect, render_template, request, session, url_for
 from sqlalchemy import select
 
-from ... import enrollment, settings
+from ... import access, enrollment, settings
 from ...core import audit
 from ...models import CONN_WIREGUARD, LEVELS, EnrollmentToken, System, User
 from ..auth import client_ip, manager_required, record_failure, throttled
@@ -24,7 +24,12 @@ def index():
     users = g.db.execute(select(User).where(User.active.is_(True)).order_by(User.username)).scalars().all() \
         if g.user.is_admin else []
     systems = g.db.execute(select(System).order_by(System.name)).scalars().all() if g.user.is_admin else []
-    pending = g.db.execute(select(System).where(System.status == "pending").order_by(System.id.desc())).scalars().all()
+    pq = select(System).where(System.status == "pending").order_by(System.id.desc())
+    if not g.user.is_admin:
+        # only systems the manager may see (e.g. enrolled with his own tokens)
+        ids = access.accessible_system_ids(g.db, g.user) or set()
+        pq = pq.where(System.id.in_(ids))
+    pending = g.db.execute(pq).scalars().all()
     return render_template("enroll/index.html", tokens=tokens, created=created, command=command, users=users,
                            systems=systems, pending=pending, wg_enabled=settings.get(g.db, "wg.enabled"),
                            base_url=settings.base_url(g.db),

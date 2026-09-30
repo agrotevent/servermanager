@@ -69,7 +69,7 @@ Bei aktivierter Überwachung wird die Anlage im Intervall der Integrationen abge
 ## Rechte
 
 Wie bei den übrigen Integrationen (*Benutzer → Integrationen*): **Ansehen** zeigt Status, Trunks und
-Nebenstellen; **Bedienen** erlaubt Neu laden und neue SIP-Passwörter; **Vollzugriff** Anlegen und
+Nebenstellen; **Bedienen** erlaubt Neu laden; **Vollzugriff** neue SIP-Passwörter sowie Anlegen und
 Löschen von Nebenstellen. Aktionen auf dem System selbst (Modul-Updates, Neustart) richten sich nach
 den Rechten am System.
 

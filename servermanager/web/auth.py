@@ -32,6 +32,21 @@ def record_failure(ip: str) -> None:
     _failures[ip].append(time.monotonic())
 
 
+_rates: dict[str, deque] = defaultdict(deque)
+
+
+def rate_ok(key: str, limit: int, window: int = 60) -> bool:
+    """Simple sliding-window limit for authenticated machine requests (webhooks) - per process."""
+    q = _rates[key]
+    now = time.monotonic()
+    while q and now - q[0] > window:
+        q.popleft()
+    if len(q) >= limit:
+        return False
+    q.append(now)
+    return True
+
+
 # --------------------------------------------------------------------------
 # session
 # --------------------------------------------------------------------------
@@ -156,3 +171,15 @@ def client_ip() -> str:
 
 def session_lifetime(hours: int) -> timedelta:
     return timedelta(hours=hours)
+
+
+def is_local_path(target: str | None) -> bool:
+    """Redirect target stays on this site: a plain path, no scheme/host, no control characters or backslashes
+    (browsers drop tabs and newlines, so "/<TAB>/evil" would become "//evil")."""
+    from urllib.parse import urlsplit
+    if not target or not target.startswith("/") or target.startswith("//"):
+        return False
+    if "\\" in target or any(ord(c) < 32 or ord(c) == 127 for c in target):
+        return False
+    parts = urlsplit(target)
+    return not parts.scheme and not parts.netloc

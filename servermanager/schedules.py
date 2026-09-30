@@ -145,14 +145,18 @@ def start_run(db: Session, s: MaintenanceSchedule, now: datetime, manual_user: O
     db.add(run)
     db.flush()
     creator = manual_user or s.creator
+    # a manual run must not widen a plan: the targets have to be allowed for the plan's creator AND
+    # for the person starting it (an admin starting a user's plan does not lend his rights)
+    checkers = [u for u in (s.creator, manual_user) if u is not None]
     level = required_level(s.steps or [])
     batch = new_batch_id()
     not_after = now + timedelta(minutes=s.window_minutes) if s.window_minutes else None
     created = skipped = 0
     notes = []
     for system in target_systems(db, s):
-        if creator is None or not creator.active or not access.has_level(db, creator, system.id, level):
-            notes.append(f"{system.name}: keine Berechtigung ({creator.username if creator else 'kein Ersteller'})")
+        denied = next((u for u in checkers if not u.active or not access.has_level(db, u, system.id, level)), None)
+        if not checkers or denied is not None:
+            notes.append(f"{system.name}: keine Berechtigung ({denied.username if denied else 'kein Ersteller'})")
             skipped += 1
             continue
         enqueue(db, kind="maintenance", title=f"Wartung: {s.name}", system=system, user=creator,

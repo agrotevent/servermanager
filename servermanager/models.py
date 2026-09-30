@@ -73,6 +73,7 @@ class User(Base):
     totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     auth_version: Mapped[int] = mapped_column(Integer, default=1)
     failed_logins: Mapped[int] = mapped_column(Integer, default=0)
+    totp_last_step: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)   # last used TOTP time step
     locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

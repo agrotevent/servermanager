@@ -22,9 +22,8 @@
         <td class="nowrap text-right">
           {% if can(system.id, 'operate') %}
             {% if u.enabled %}{{ uform('disable', 'Sperren', u.uid, 'xs', u.uid ~ ' sperren?') }}{% else %}{{ uform('enable', 'Entsperren', u.uid) }}{% endif %}
-            {{ uform('resetpw', 'Neues Passwort', u.uid, 'xs', 'Neues Passwort für ' ~ u.uid ~ ' setzen?') }}
           {% endif %}
-          {% if can(system.id, 'full') %}{{ uform('delete', 'Löschen', u.uid, 'xs danger-outline', u.uid ~ ' mit allen Dateien löschen?') }}{% endif %}
+          {% if can(system.id, 'full') %}{{ uform('resetpw', 'Neues Passwort', u.uid, 'xs', 'Neues Passwort für ' ~ u.uid ~ ' setzen?') }}{{ uform('delete', 'Löschen', u.uid, 'xs danger-outline', u.uid ~ ' mit allen Dateien löschen?') }}{% endif %}
         </td></tr>
     {% endfor %}</tbody></table></div>
   {% elif not error %}<div class="card-body">{{ empty('Keine Benutzer gefunden.') }}</div>{% endif %}

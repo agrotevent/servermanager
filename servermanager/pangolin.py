@@ -121,7 +121,8 @@ class Pangolin:
     def request(self, method: str, path: str, body: Optional[dict] = None, params: Optional[dict] = None) -> Any:
         url = f"{self.base}/{path.lstrip('/')}"
         try:
-            r = self.session.request(method, url, json=body, params=params, timeout=self.timeout)
+            r = self.session.request(method, url, json=body, params=params, timeout=self.timeout,
+                                     allow_redirects=False)
         except requests.exceptions.SSLError as exc:
             raise PangolinError(f"TLS-Fehler bei {self.base}: {exc}") from exc
         except requests.RequestException as exc:

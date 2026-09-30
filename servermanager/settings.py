@@ -31,6 +31,7 @@ DEFAULTS: dict[str, Any] = {
     "wg.mikrotik_user": "servermanager",
     "wg.mikrotik_password": "",
     "wg.mikrotik_verify_tls": False,
+    "wg.mikrotik_fingerprint": "",       # pinned certificate of the router's REST API
     "wg.mikrotik_interface": "wg-mgmt",
     "wg.network": "10.66.0.0/24",
     "wg.router_ip": "10.66.0.1",

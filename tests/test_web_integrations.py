@@ -417,3 +417,27 @@ def test_sm_update_steps_match_web():
     for n, label in enumerate(selfupdate.STEPS, 1):
         assert f'step {n} "{label}"' in script
     assert f"TOTAL={len(selfupdate.STEPS)}" in script
+
+
+def test_create_lxc_needs_rights_on_linked_pangolin_and_router(app, env, db):
+    """Full access on Proxmox alone must not allow publishing on the linked Pangolin or changing router leases."""
+    u = make_user(db, "i-pvefull")
+    db.add(IntegrationAccess(user_id=u.id, kind="pve", obj_id=env["pve"], level="full"))
+    db.commit()
+    c = login(app, "i-pvefull")
+    base = {"node": "pve1", "hostname": "sec01", "vmid": "171", "template": "download:debian-13-standard_13.1-2_amd64.tar.zst",
+            "template_storage": "local", "storage": "local-lvm", "bridge": "vmbr1", "ip_mode": "dhcp",
+            "password": "secret-pass", "csrf_token": c.csrf}
+    r = c.post(f"/proxmox/{env['pve']}/create", data={**base, "publish": "1", "pub_subdomain": "x", "pub_domain": "dom1",
+                                                      "pub_site": "1", "pub_port": "80", "pub_method": "http"})
+    assert "Vollzugriff auf die Pangolin-Verbindung" in r.text
+    r = c.post(f"/proxmox/{env['pve']}/create", data={**base, "start": "1", "static_lease": "1"})
+    assert "auf dem RouterOS" in r.text
+    assert db.query(Job).filter(Job.kind == "pve_create", Job.title.like("%sec01%")).count() == 0
+
+
+def test_restore_apply_not_callable_through_sudo():
+    from pathlib import Path
+    helper = (Path(__file__).resolve().parent.parent / "bin" / "sm-helper").read_text()
+    block = helper.split("    restore-apply)", 1)[1].split(";;", 1)[0]
+    assert 'SUDO_USER' in block and "as_svc install" in block and 'cp -P "$STAGE/secret.key" "$priv/' in block

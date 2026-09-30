@@ -65,7 +65,7 @@
   <div class="table-wrap"><table class="table compact" id="mb"><thead><tr><th>Adresse</th><th>Name</th><th>Quota</th><th>Zugriff</th><th></th></tr></thead><tbody>
   {% for b in boxes %}<tr><td class="mono">{{ b.email }}</td><td>{{ b.name }}</td><td><small>{% if b.quota|int > 0 %}{{ b.quota|int|bytes }}{% else %}unbegrenzt{% endif %}</small></td>
     <td><small>{% if b.disableimap == 'y' %}kein IMAP {% endif %}{% if b.disablesmtp == 'y' %}kein SMTP{% endif %}{% if b.disableimap != 'y' and b.disablesmtp != 'y' %}IMAP/SMTP{% endif %}</small></td>
-    <td class="nowrap text-right">{% if op %}{{ act('mb_password', 'Neues Passwort', 'xs', 'Neues Passwort für ' ~ b.email ~ ' setzen?', {'id': b.mailuser_id}) }}{% endif %}
+    <td class="nowrap text-right">{% if full %}{{ act('mb_password', 'Neues Passwort', 'xs', 'Neues Passwort für ' ~ b.email ~ ' setzen?', {'id': b.mailuser_id}) }}{% endif %}
       {% if full %}{{ act('mb_delete', 'Löschen', 'xs danger-outline', 'Postfach ' ~ b.email ~ ' mit allen Mails löschen?', {'id': b.mailuser_id}) }}{% endif %}</td></tr>
   {% else %}<tr><td colspan="5" class="muted">Keine Postfächer.</td></tr>{% endfor %}</tbody></table></div>
   {% if full and domains %}<div class="card-body"><h4>Postfach anlegen</h4>
