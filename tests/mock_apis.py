@@ -115,6 +115,9 @@ class State:
         self.resources: dict[int, dict] = {}
         self.targets: dict[int, dict] = {}
         self.pg_seq = 1
+        self.pg_idps: dict[int, dict] = {}
+        self.pg_idp_policies: dict[tuple[int, str], dict] = {}
+        self.pg_idp_forbidden = False
         # ---------------- mailcow
         self.mc_domains = [{"domain_name": "example.com", "active": 1, "mboxes_in_domain": 1, "aliases_in_domain": 0}]
         self.mc_mailboxes = [{"username": "info@example.com", "name": "Info", "domain": "example.com",
@@ -752,6 +755,29 @@ class MockApp:
                 return ok(s.targets[tid], 201)
             if p[2:] == ["targets"]:
                 return ok({"targets": [t for t in s.targets.values() if t["resourceId"] == rid]})
+        if p[0] == "idp":
+            if s.pg_idp_forbidden:
+                return err("Key does not have permission", 403)
+            if p == ["idp"] and req.method == "GET":
+                return ok({"idps": list(s.pg_idps.values()), "pagination": {"total": len(s.pg_idps)}})
+            if p == ["idp", "oidc"] and req.method == "PUT":
+                iid = s.pg_seq
+                s.pg_seq += 1
+                s.pg_idps[iid] = {"idpId": iid, "type": "oidc", **body}
+                return ok({"idpId": iid, "redirectUrl": f"https://pangolin.example.com/auth/idp/{iid}/oidc/callback"},
+                          201)
+            iid = int(p[1])
+            if iid not in s.pg_idps:
+                return err("IdP not found", 404)
+            if p[2:] == ["oidc"] and req.method == "POST":
+                s.pg_idps[iid].update(body)
+                return ok(None)
+            if len(p) == 2 and req.method == "DELETE":
+                s.pg_idps.pop(iid)
+                return ok(None)
+            if len(p) == 4 and p[2] == "org" and req.method == "PUT":
+                s.pg_idp_policies[(iid, p[3])] = body
+                return ok(None, 201)
         if p[0] == "target" and len(p) == 2 and req.method == "DELETE":
             s.targets.pop(int(p[1]), None)
             return ok(None)

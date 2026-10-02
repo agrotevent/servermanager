@@ -65,5 +65,9 @@ Postfächer anlegen und löschen. Einrichten und Entfernen der Verbindung: Admin
   *Zugang* neu einrichten (ggf. mit anderer erlaubter Adresse).
 - **„dem Remote-Benutzer fehlt die Funktion …“:** Nach einem ISPConfig-Update neu einrichten, damit
   neue Funktionsgruppen übernommen werden.
+- **„Funktionsgruppen der Remote-API nicht gefunden“** (bis Version 1.11.2): ISPConfig schreibt manche
+  Funktionsgruppen mit Leerzeichen nach dem Komma; die alte Prüfung hat das abgelehnt. Ab 1.12.0
+  behoben – nach dem Update unter *Zugang* erneut einrichten. Die Meldung nennt jetzt auch, wie viele
+  Funktionslisten gelesen wurden.
 - **Keine Oberfläche gefunden:** Auf einem reinen Server-Knoten einer Multiserver-Installation gibt es
   keine Remote-API – am Master einrichten.

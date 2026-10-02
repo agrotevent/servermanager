@@ -85,6 +85,12 @@ Schutz (Anmeldung/öffentlich) und Status. Je Dienst:
 - Pangolin-Anmeldung ein-/ausschalten, Ziele hinzufügen/entfernen (mehrere Ziele = Lastverteilung),
   Veröffentlichung entfernen (Vollzugriff).
 
+### Anmeldung über authentik (SSO)
+
+Unter *Infrastruktur → SSO → (authentik) → Anwendungen → Pangolin verbinden* wird authentik per Klick
+als Identity Provider in Pangolin eingerichtet – Details unter [Anwendungen](apps.md#sso-mit-authentik).
+Dafür braucht die Pangolin-Verbindung einen Server-Admin-API-Schlüssel.
+
 ## Zwei Pangolin-Server: primärer und Backup-Weg
 
 Es können mehrere Pangolin-Server eingebunden werden. Jeder bekommt eine **Rolle**:

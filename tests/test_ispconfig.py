@@ -190,11 +190,14 @@ def test_remote_user_script(tmp_path):
         "$conf['db_password'] = 'dbpw';\n$conf['db_database'] = 'dbispconfig';\n$conf['db_host'] = 'localhost';\n")
     for mod, keys in {"admin": ["server_get,server_config_set,server_get_all", "admin_record_permissions"],
                       "sites": ["sites_web_domain_get,sites_web_domain_add,sites_web_domain_update",
-                                "sites_cron_get,sites_cron_add"],
+                                "sites_cron_get,sites_cron_add",
+                                # real ISPConfig: blanks after commas in some groups
+                                "sites_database_get,sites_database_add, sites_database_get_all_by_user"],
                       "mail": ["mail_user_get,mail_user_add,mail_user_update,mail_user_delete"]}.items():
         (ispc / f"interface/web/{mod}/lib").mkdir(parents=True)
         (ispc / f"interface/web/{mod}/lib/remote.conf.php").write_text(
-            "<?php\n" + "".join(f"$function_list['{k}'] = 'x';\n" for k in keys))
+            "<?php\n" + "".join(f"$function_list['{k}'] = 'x';\n" for k in keys)
+            + ("echo $undefined_in_cli; print 'noise';\n" if mod == "mail" else ""))
     b = tmp_path / "bin"
     b.mkdir()
     log = tmp_path / "sql.log"
@@ -203,17 +206,19 @@ def test_remote_user_script(tmp_path):
     (b / "mysql").chmod(0o755)
     env = {**os.environ, "PATH": f"{b}:{os.environ['PATH']}", "SM_ISPC_DIR": str(ispc), "SM_TASK": "remote_user",
            "SM_ISPC_USER": "servermanager", "SM_ISPC_PASS": "A" * 10 + "b" * 10 + "1234567890ab",
-           "SM_ISPC_FUNCS": "server_get,sites_web_domain_get,mail_user_add,client_get", "SM_ISPC_IPS": "10.66.0.1"}
+           "SM_ISPC_FUNCS": "server_get,sites_web_domain_get,mail_user_add,client_get,sites_database_get_all_by_user",
+           "SM_ISPC_IPS": "10.66.0.1"}
     body = (SCRIPTS / "lib.sh").read_text() + "\n" + (SCRIPTS / "ispconfig.sh").read_text()
     res = subprocess.run(["bash", "-c", body], capture_output=True, text=True, env=env)
     assert res.returncode == 0 and "SM_OK" in res.stdout, res.stdout + res.stderr
-    assert "port=8080" in res.stdout and "groups=3" in res.stdout
+    assert "port=8080" in res.stdout and "groups=4" in res.stdout
     sql = log.read_text()
     assert "dbpw|" in sql  # credentials of the ISPConfig server part
     insert = next(line for line in sql.splitlines() if "INSERT INTO remote_user" in line)
     import re
-    groups = set(re.search(r"'([a-z_,;]+)', 'y'\)", insert).group(1).split(";"))
+    groups = set(re.search(r"'([a-z_,; ]+)', 'y'\)", insert).group(1).split(";"))
     assert groups == {"server_get,server_config_set,server_get_all",
+                      "sites_database_get,sites_database_add, sites_database_get_all_by_user",
                       "sites_web_domain_get,sites_web_domain_add,sites_web_domain_update",
                       "mail_user_get,mail_user_add,mail_user_update,mail_user_delete"}
     assert "remote_ips='10.66.0.1'" in sql

@@ -26,7 +26,7 @@
 <div class="card"><div class="card-head"><h2>Verbundene Anwendungen</h2></div>
   <div class="table-wrap"><table class="table compact"><thead><tr><th>Anwendung</th><th>Anmeldung über</th><th>authentik</th><th></th></tr></thead><tbody>
   {% for c, t in clients %}
-    <tr><td><strong>{{ 'Nextcloud' if c.target_kind == 'nextcloud' else 'Mailcow' }} {{ t.name if t else '(gelöscht)' }}</strong></td>
+    <tr><td><strong>{{ kind_labels.get(c.target_kind, c.target_kind) }} {{ t.name if t else '(gelöscht)' }}</strong></td>
       <td class="mono"><a href="{{ c.app_url }}" target="_blank" rel="noopener">{{ c.app_url }}</a></td>
       <td class="mono"><small>{{ c.slug }} · {{ c.client_id[:12] }}…</small></td>
       <td class="text-right">{% if int_can('sso', s.id, 'full') %}
@@ -55,6 +55,16 @@
     </form>
     <p class="mt-1"><small>Setzt in Mailcow den Identity Provider „Generic OIDC“ (Mailcow ab 2025-03). Postfächer werden beim ersten SSO-Login angelegt, wenn die Domain in Mailcow existiert.</small></p>
     {% else %}<p class="muted">Keine (weitere) Mailcow mit Vollzugriff vorhanden.</p>{% endif %}
+  </div></div>
+  <div class="card"><div class="card-head"><h2>Pangolin verbinden</h2></div><div class="card-body">
+    {% if pangolins %}
+    <form method="post" action="{{ url_for('sso.connect', sso_id=s.id) }}" class="form-grid" data-confirm="authentik als Identity Provider in Pangolin einrichten?">{{ csrf() }}<input type="hidden" name="kind" value="pangolin">
+      <div class="field full"><label>Pangolin</label><select name="target_id">{% for x, guess in pangolins %}<option value="{{ x.id }}">{{ x.name }} (Organisation {{ x.org_id }}{% if guess %}, {{ guess }}{% endif %})</option>{% endfor %}</select></div>
+      {{ field('Adresse des Pangolin-Dashboards', 'app_url', pangolins[0][1], placeholder='https://pangolin.example.com', help='leer = aus der API-Adresse abgeleitet (ohne „api.“ und Port)', cls='full') }}
+      <div class="full"><button class="btn primary">Per Klick verbinden</button></div>
+    </form>
+    <p class="mt-1"><small>Legt in Pangolin einen OIDC-Identity-Provider „{{ s.name }}“ an und in authentik die passende Anwendung mit der Rückruf-Adresse von Pangolin. Neue Benutzer werden beim ersten Login automatisch angelegt und der Organisation als <em>Member</em> zugeordnet. Benötigt einen <strong>Server-Admin-API-Schlüssel</strong> mit Rechten für Identity Provider. Der Login erscheint auf der Pangolin-Anmeldeseite und – bei aktivierter Pangolin-Anmeldung – vor jeder geschützten Ressource.</small></p>
+    {% else %}<p class="muted">Keine (weitere) Pangolin-Verbindung mit Vollzugriff vorhanden.</p>{% endif %}
   </div></div>
 </div>
 {% endif %}

@@ -63,6 +63,12 @@ def _v6(conn: Connection) -> None:
     add_column_if_missing(conn, "users", "totp_last_step", "INTEGER")
 
 
+def _v7(conn: Connection) -> None:
+    # Pangolin SSO: id of the identity provider inside Pangolin
+    if "sso_clients" in inspect(conn).get_table_names():
+        add_column_if_missing(conn, "sso_clients", "target_ref", "VARCHAR(64) NOT NULL DEFAULT ''")
+
+
 MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     1: lambda conn: None,  # initial schema
     2: _v2,
@@ -70,6 +76,7 @@ MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     4: _v4,
     5: _v5,
     6: _v6,
+    7: _v7,
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 

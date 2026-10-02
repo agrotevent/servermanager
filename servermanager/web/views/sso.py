@@ -8,12 +8,14 @@ from flask import Blueprint, abort, flash, g, redirect, render_template, request
 from sqlalchemy import select
 
 from ... import access, integrations, security
+from ... import sso as sso_lib
 from ...authentik import AuthentikError
 from ...core import audit
 from ...jobs import enqueue
 from ...mailcow import MailcowError
-from ...models import (KIND_MAILCOW, KIND_SSO, LEVEL_FULL, LEVEL_OPERATE, LEVEL_VIEW, MailcowServer, SsoClient,
-                       SsoServer, System)
+from ...models import (KIND_MAILCOW, KIND_PANGOLIN, KIND_SSO, LEVEL_FULL, LEVEL_OPERATE, LEVEL_VIEW, MailcowServer,
+                       PangolinServer, SsoClient, SsoServer, System)
+from ...pangolin import dashboard_guess
 from ..auth import admin_required, can, client_ip, login_required
 from . import _integration as common
 
@@ -146,13 +148,16 @@ def detail(sso_id: int):
     except AuthentikError as exc:
         ctx["error"] = str(exc)
     clients = g.db.execute(select(SsoClient).where(SsoClient.sso_id == s.id)).scalars().all()
-    ctx["clients"] = [(c, g.db.get(System if c.target_kind == "nextcloud" else MailcowServer, c.target_id))
-                      for c in clients]
+    ctx["clients"] = [(c, sso_lib.target_of(g.db, c.target_kind, c.target_id)) for c in clients]
+    ctx["kind_labels"] = sso_lib.KIND_LABELS
     linked = {(c.target_kind, c.target_id) for c in clients}
     ctx["nextclouds"] = [x for x in g.db.execute(select(System).order_by(System.name)).scalars()
                          if x.has_type("nextcloud") and can(x.id, LEVEL_FULL) and ("nextcloud", x.id) not in linked]
     ctx["mailcows"] = [x for x in g.db.execute(select(MailcowServer).order_by(MailcowServer.name)).scalars()
                        if common.can(KIND_MAILCOW, x.id, LEVEL_FULL) and ("mailcow", x.id) not in linked]
+    ctx["pangolins"] = [(x, dashboard_guess(x.api_url))
+                        for x in g.db.execute(select(PangolinServer).order_by(PangolinServer.name)).scalars()
+                        if common.can(KIND_PANGOLIN, x.id, LEVEL_FULL) and ("pangolin", x.id) not in linked]
     ctx["all_mailcows"] = [x for x in g.db.execute(select(MailcowServer).order_by(MailcowServer.name)).scalars()
                            if common.can(KIND_MAILCOW, x.id, LEVEL_FULL)]
     from .mailcow import primary_pangolin
@@ -176,9 +181,12 @@ def connect(sso_id: int):
             abort(403)
     elif kind == "mailcow":
         target = common.get_or_403(KIND_MAILCOW, target_id, LEVEL_FULL)
+    elif kind == "pangolin":
+        target = common.get_or_403(KIND_PANGOLIN, target_id, LEVEL_FULL)
     else:
         abort(400)
-    app_url = (request.form.get("app_url") or (target.public_url if kind == "mailcow" else "")).strip().rstrip("/")
+    default = {"mailcow": getattr(target, "public_url", ""), "pangolin": dashboard_guess(target.api_url)}
+    app_url = (request.form.get("app_url") or default.get(kind) or "").strip().rstrip("/")
     if not re.match(r"^https://[A-Za-z0-9.-]+(:\d+)?(/[A-Za-z0-9._/-]*)?$", app_url):
         flash("Öffentliche Adresse der Anwendung als https://… angeben (über Pangolin erreichbar).", "danger")
         return redirect(url_for("sso.detail", sso_id=sso_id))
@@ -200,7 +208,7 @@ def disconnect(sso_id: int, client_id: int):
     c = g.db.get(SsoClient, client_id)
     if c is None or c.sso_id != s.id:
         abort(404)
-    target = g.db.get(System if c.target_kind == "nextcloud" else MailcowServer, c.target_id)
+    target = sso_lib.target_of(g.db, c.target_kind, c.target_id)
     job = enqueue(g.db, kind="sso_disconnect", title=f"SSO trennen: {target.name if target else c.target_id}",
                   user=g.user, system=target if c.target_kind == "nextcloud" else None,
                   payload={"client_id": c.id})

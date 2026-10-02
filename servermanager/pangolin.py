@@ -87,6 +87,23 @@ def connect_hint(base: str, exc: Exception) -> str:
     return ""
 
 
+def dashboard_guess(api_url: str) -> str:
+    """Probable dashboard address for an integration API URL (https://api.x/v1 or https://x:3003/v1 -> https://x)."""
+    try:
+        parts = urlsplit(normalize_url(api_url))
+    except PangolinError:
+        return ""
+    host = parts.hostname or ""
+    if host.startswith("api."):
+        host = host[4:]
+    try:
+        ipaddress.ip_address(host)
+        return ""
+    except ValueError:
+        pass
+    return f"https://{host}" if "." in host else ""
+
+
 def _seg(v: Any) -> str:
     return quote(str(v), safe="")
 
@@ -221,6 +238,49 @@ class Pangolin:
 
     def delete_target(self, target_id: int) -> None:
         self.request("DELETE", f"target/{int(target_id)}")
+
+    # ------------------------------------------------------------------ identity providers (server admin key)
+    def _idp_request(self, method: str, path: str, body: Optional[dict] = None) -> Any:
+        try:
+            return self.request(method, path, body)
+        except PangolinError as exc:
+            if exc.status in (401, 403):
+                raise PangolinError(f"{exc} – Identity Provider kann nur ein Server-Admin-API-Schlüssel verwalten "
+                                    "(Server-Admin → API-Schlüssel, Rechte für Identity Provider)", exc.status) from exc
+            raise
+
+    def idps(self) -> list[dict]:
+        data = self._idp_request("GET", "idp") or {}
+        return data.get("idps", []) if isinstance(data, dict) else (data or [])
+
+    @staticmethod
+    def _oidc_body(name: str, client_id: str, client_secret: str, auth_url: str, token_url: str,
+                   scopes: str, auto_provision: bool) -> dict:
+        return {"name": name[:200], "clientId": client_id, "clientSecret": client_secret, "authUrl": auth_url,
+                "tokenUrl": token_url, "identifierPath": "sub", "emailPath": "email", "namePath": "name",
+                "scopes": scopes, "autoProvision": bool(auto_provision)}
+
+    def create_oidc_idp(self, name: str, client_id: str, client_secret: str, auth_url: str, token_url: str,
+                        scopes: str = "openid profile email", auto_provision: bool = True) -> dict:
+        """Returns {"idpId", "redirectUrl"} – the redirect URL contains the new id."""
+        data = self._idp_request("PUT", "idp/oidc", self._oidc_body(name, client_id, client_secret, auth_url,
+                                                                    token_url, scopes, auto_provision)) or {}
+        if not data.get("idpId"):
+            raise PangolinError("Pangolin hat keine Identity-Provider-ID zurückgegeben")
+        return data
+
+    def update_oidc_idp(self, idp_id: int, name: str, client_id: str, client_secret: str, auth_url: str,
+                        token_url: str, scopes: str = "openid profile email", auto_provision: bool = True) -> Any:
+        return self._idp_request("POST", f"idp/{int(idp_id)}/oidc", self._oidc_body(
+            name, client_id, client_secret, auth_url, token_url, scopes, auto_provision))
+
+    def delete_idp(self, idp_id: int) -> None:
+        self._idp_request("DELETE", f"idp/{int(idp_id)}")
+
+    def set_idp_org_policy(self, idp_id: int, role_mapping: str = "'Member'") -> Any:
+        """Users provisioned through the IdP join this organization with the given role (JMESPath literal)."""
+        return self._idp_request("PUT", f"idp/{int(idp_id)}/org/{_seg(self.org)}",
+                                 {"roleMapping": role_mapping, "orgMapping": f"'{self.org}'"})
 
     def publish(self, name: str, protocol: str, site_id: int, target_ip: str, target_port: int,
                 method: str = "http", subdomain: str = "", domain_id: str = "", proxy_port: Optional[int] = None,

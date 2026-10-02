@@ -2,6 +2,20 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.12.0 – 02.10.2026
+
+### Neu
+
+- **Pangolin per Klick an authentik (SSO):** Identity Provider in Pangolin, Anwendung in authentik mit
+  der passenden Rückruf-Adresse, automatische Zuordnung neuer Benutzer zur Organisation. Trennen
+  entfernt beides. Benötigt einen Server-Admin-API-Schlüssel in Pangolin.
+
+### Behoben
+
+- ISPConfig: Einrichten der Schnittstelle scheiterte mit „Funktionsgruppen der Remote-API nicht
+  gefunden“, weil ISPConfig manche Funktionsgruppen mit Leerzeichen schreibt. PHP-Warnungen können das
+  Ergebnis nicht mehr verfälschen.
+
 ## 1.11.2 – 02.10.2026
 
 ### Verbessert

@@ -1,9 +1,13 @@
-"""Connect applications (Nextcloud, Mailcow) to the SSO (authentik) with one click.
+"""Connect applications (Nextcloud, Mailcow, Pangolin) to the SSO (authentik) with one click.
 
 1. OAuth2/OIDC provider + application are created in authentik (via its internal API URL).
 2. The application is configured with the public endpoints (reached through Pangolin):
-   Nextcloud via ``occ`` (app user_oidc), Mailcow via its API (identity provider).
+   Nextcloud via ``occ`` (app user_oidc), Mailcow via its API (identity provider),
+   Pangolin via its integration API (OIDC identity provider + organization policy).
 If step 2 fails, the authentik application is removed again.
+
+Pangolin is special: its callback URL contains the id of the identity provider, so the IdP is created
+first (with placeholder credentials), then the authentik application, then the IdP gets the real client.
 """
 from __future__ import annotations
 
@@ -13,7 +17,8 @@ from urllib.parse import urlsplit
 
 from .authentik import Authentik, AuthentikError
 from .mailcow import MailcowError
-from .models import MailcowServer, SsoClient, SsoServer, System
+from .models import MailcowServer, PangolinServer, SsoClient, SsoServer, System
+from .pangolin import PangolinError
 
 Log = Callable[[str], None]
 
@@ -34,6 +39,10 @@ def slug_for(kind: str, target_id: int) -> str:
     return f"sm-{kind}-{int(target_id)}"
 
 
+KIND_LABELS = {"nextcloud": "Nextcloud", "mailcow": "Mailcow", "pangolin": "Pangolin"}
+TARGET_MODELS = {"nextcloud": System, "mailcow": MailcowServer, "pangolin": PangolinServer}
+
+
 def redirect_uris(kind: str, app_url: str) -> list[str]:
     if kind == "nextcloud":
         return [f"{app_url}/apps/user_oidc/code", f"{app_url}/index.php/apps/user_oidc/code"]
@@ -45,12 +54,53 @@ def provider_id(sso: SsoServer) -> str:
     return re.sub(r"[^A-Za-z0-9]", "", sso.name or "authentik")[:30] or "authentik"
 
 
+def _connect_pangolin(au: Authentik, sso: SsoServer, target, app_url: str, slug: str, name: str, log: Log,
+                      pangolin) -> dict:
+    ends = au.endpoints(slug)
+    idp_name = f"{sso.name or 'authentik'}"[:100]
+    log(f"Pangolin: Identity Provider „{idp_name}“ anlegen ...")
+    idp = pangolin.create_oidc_idp(idp_name, "pending", "pending", ends["authorize"], ends["token"])
+    idp_id = int(idp["idpId"])
+    redirect = idp.get("redirectUrl") or f"{app_url}/auth/idp/{idp_id}/oidc/callback"
+    log(f"Pangolin: IdP {idp_id}, Rückruf-Adresse {redirect}")
+    app = None
+    try:
+        log(f"authentik: Anwendung „{name}“ ({slug}) anlegen ...")
+        app = au.create_oidc_app(name, slug, [redirect], app_url)
+        log(f"Client-ID {app['client_id']}")
+        log("Pangolin: Client-ID und Geheimnis eintragen ...")
+        pangolin.update_oidc_idp(idp_id, idp_name, app["client_id"], app["client_secret"], app["authorize"],
+                                 app["token"])
+        log(f"Pangolin: neue Benutzer automatisch der Organisation „{pangolin.org}“ zuordnen (Rolle Member) ...")
+        try:
+            pangolin.set_idp_org_policy(idp_id)
+        except PangolinError as exc:
+            log(f"Hinweis: Organisations-Zuordnung nicht gesetzt ({exc}) – in Pangolin unter Server-Admin → "
+                "Identity Provider → Organisationsrichtlinien nachtragen")
+    except Exception:
+        log("Fehler – entferne Identity Provider und Anwendung wieder")
+        try:
+            pangolin.delete_idp(idp_id)
+        except PangolinError as exc:
+            log(f"Aufräumen in Pangolin fehlgeschlagen: {exc}")
+        if app:
+            try:
+                au.delete_oidc_app(slug, app["provider_pk"])
+            except AuthentikError as exc:
+                log(f"Aufräumen in authentik fehlgeschlagen: {exc}")
+        raise
+    return {"slug": slug, "provider_pk": app["provider_pk"], "client_id": app["client_id"], "app_url": app_url,
+            "target_ref": str(idp_id)}
+
+
 def connect(au: Authentik, sso: SsoServer, kind: str, target, app_url: str, log: Log,
-            nextcloud_occ: Optional[Callable[[str, dict], str]] = None, mailcow=None) -> dict:
+            nextcloud_occ: Optional[Callable[[str, dict], str]] = None, mailcow=None, pangolin=None) -> dict:
     """Returns the data for the SsoClient record."""
     app_url = public_base(app_url)
     slug = slug_for(kind, target.id)
-    name = f"{'Nextcloud' if kind == 'nextcloud' else 'Mailcow'} {target.name}"
+    name = f"{KIND_LABELS.get(kind, kind)} {target.name}"
+    if kind == "pangolin":
+        return _connect_pangolin(au, sso, target, app_url, slug, name, log, pangolin)
     log(f"authentik: Anwendung „{name}“ ({slug}) anlegen ...")
     app = au.create_oidc_app(name, slug, redirect_uris(kind, app_url), app_url)
     log(f"Client-ID {app['client_id']}, Discovery {app['discovery']}")
@@ -83,7 +133,7 @@ def connect(au: Authentik, sso: SsoServer, kind: str, target, app_url: str, log:
 
 
 def disconnect(au: Authentik, sso: SsoServer, client: SsoClient, log: Log,
-               nextcloud_occ: Optional[Callable[[str, dict], str]] = None, mailcow=None) -> None:
+               nextcloud_occ: Optional[Callable[[str, dict], str]] = None, mailcow=None, pangolin=None) -> None:
     if client.target_kind == "nextcloud" and nextcloud_occ:
         log("Nextcloud: OIDC-Anbieter entfernen ...")
         nextcloud_occ("oidc_remove", {"SM_OIDC_ID": provider_id(sso)})
@@ -93,9 +143,18 @@ def disconnect(au: Authentik, sso: SsoServer, client: SsoClient, log: Log,
             mailcow.set_identity_provider({"authsource": ""})
         except MailcowError as exc:
             log(f"Mailcow: konnte nicht zurückgesetzt werden ({exc}) – bitte in der Mailcow-Oberfläche prüfen")
+    elif client.target_kind == "pangolin" and pangolin is not None and (client.target_ref or "").isdigit():
+        log(f"Pangolin: Identity Provider {client.target_ref} entfernen ...")
+        try:
+            pangolin.delete_idp(int(client.target_ref))
+        except PangolinError as exc:
+            if exc.status != 404:
+                raise
+            log("Pangolin: Identity Provider war bereits entfernt")
     log("authentik: Anwendung entfernen ...")
     au.delete_oidc_app(client.slug, client.provider_pk)
 
 
 def target_of(db, kind: str, target_id: int):
-    return db.get(System if kind == "nextcloud" else MailcowServer, target_id)
+    model = TARGET_MODELS.get(kind)
+    return db.get(model, target_id) if model else None

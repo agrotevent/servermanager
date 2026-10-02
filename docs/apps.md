@@ -1,6 +1,6 @@
 # Nextcloud, Mailcow & SSO
 
-Benutzer in Nextcloud und Mailcow anlegen und verwalten sowie beide per Klick an ein Single Sign-on
+Benutzer in Nextcloud und Mailcow anlegen und verwalten sowie beide (und Pangolin) per Klick an ein Single Sign-on
 (**authentik**) anbinden.
 
 ## Erreichbarkeit
@@ -90,7 +90,18 @@ Im Reiter *Anwendungen*:
   Mailcow den Identity Provider „Generic OIDC“ mit den öffentlichen Endpunkten von authentik
   (Mailcow ab Version 2025-03). Postfächer werden beim ersten SSO-Login angelegt, wenn die Domain
   existiert. IMAP/SMTP-Programme nutzen weiterhin Postfach- bzw. App-Passwörter.
-- Scheitert die Konfiguration der Anwendung, wird die Anwendung in authentik wieder entfernt.
+- **Pangolin verbinden:** Pangolin-Verbindung wählen, Adresse des Dashboards prüfen (vorbelegt aus der
+  API-Adresse, ohne `api.` und Port). Der Servermanager legt in Pangolin einen OIDC-Identity-Provider
+  an, in authentik die Anwendung mit der Rückruf-Adresse von Pangolin
+  (`…/auth/idp/<ID>/oidc/callback`) und trägt danach Client-ID und Geheimnis in Pangolin ein. Neue
+  Benutzer werden beim ersten Login automatisch angelegt und der Organisation als *Member* zugeordnet
+  (Rolle in Pangolin unter *Server-Admin → Identity Provider → Organisationsrichtlinien* änderbar).
+  Der authentik-Login erscheint auf der Anmeldeseite von Pangolin und damit auch vor jedem Dienst mit
+  aktivierter Pangolin-Anmeldung. **Voraussetzung:** Die Pangolin-Verbindung nutzt einen
+  **Server-Admin-API-Schlüssel** mit Rechten für Identity Provider – ein Organisations-Schlüssel darf
+  keine Identity Provider anlegen (die Meldung sagt das dann).
+- Scheitert die Konfiguration der Anwendung, wird die Anwendung in authentik wieder entfernt (bei
+  Pangolin auch der Identity Provider).
 - **Trennen** entfernt die Anbindung in der Anwendung sowie Provider und Anwendung in authentik.
 
 ### Benutzer

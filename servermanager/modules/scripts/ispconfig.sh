@@ -45,16 +45,23 @@ case "${SM_TASK}" in
         [ -d "$ISPC/interface/web" ] || die "Auf diesem Server ist keine ISPConfig-Oberfläche installiert (nur Server-Teil einer Multiserver-Installation?) - die Schnittstelle am Master einrichten"
         command -v php >/dev/null 2>&1 || die "php nicht gefunden"
         # shellcheck disable=SC2016 # PHP code
-        groups="$(SM_ISPC_FUNCS="$SM_ISPC_FUNCS" SM_ISPC_DIR="$ISPC" php -r '
+        # warnings/notices go to stderr, the result is marked: stdout noise of the PHP setup cannot spoil it
+        out="$(SM_ISPC_FUNCS="$SM_ISPC_FUNCS" SM_ISPC_DIR="$ISPC" php -d display_errors=stderr -d log_errors=0 -r '
             $function_list = array();
-            foreach (glob(getenv("SM_ISPC_DIR") . "/interface/web/*/lib/remote.conf.php") as $f) { include $f; }
+            $files = glob(getenv("SM_ISPC_DIR") . "/interface/web/*/lib/remote.conf.php");
+            foreach ($files ? $files : array() as $f) { include $f; }
             $need = explode(",", getenv("SM_ISPC_FUNCS"));
             $out = array();
             foreach (array_keys($function_list) as $k) {
-                if (array_intersect(explode(",", $k), $need)) { $out[] = $k; }
+                /* ISPConfig writes some groups with blanks after the commas; the key is stored verbatim */
+                if (array_intersect(array_map("trim", explode(",", $k)), $need)) { $out[] = $k; }
             }
-            echo implode(";", $out);')"
-        [[ "$groups" =~ ^[A-Za-z0-9_,\;]+$ ]] || die "Funktionsgruppen der Remote-API nicht gefunden"
+            echo "\nSM_FILES=" . count($files ? $files : array()) . "\nSM_GROUPS=" . implode(";", $out) . "\n";')"
+        groups="$(printf '%s\n' "$out" | sed -n 's/^SM_GROUPS=//p' | tail -n 1)"
+        files="$(printf '%s\n' "$out" | sed -n 's/^SM_FILES=//p' | tail -n 1)"
+        [ "${files:-0}" -gt 0 ] || die "Keine Funktionslisten der Remote-API gefunden ($ISPC/interface/web/*/lib/remote.conf.php) - ISPConfig-Oberfläche vollständig installiert?"
+        [ -n "$groups" ] || die "Funktionsgruppen der Remote-API nicht gefunden (${files} Funktionslisten gelesen, keine passende Gruppe)"
+        [[ "$groups" =~ ^[A-Za-z0-9_,\;\ -]+$ ]] || die "Unerwartete Zeichen in den Funktionsgruppen der Remote-API"
         hash="$(printf '%s' "$SM_ISPC_PASS" | openssl passwd -6 -stdin)"
         [[ "$hash" =~ ^\$6\$[./A-Za-z0-9]+\$[./A-Za-z0-9]+$ ]] || die "Passwort-Hash fehlgeschlagen"
         has_ips="$(ispc_db "SHOW COLUMNS FROM remote_user LIKE 'remote_ips'" | head -n 1)"
@@ -73,7 +80,7 @@ case "${SM_TASK}" in
         fi
         echo "version=$(ispc_version)"
         echo "port=$(ispc_port)"
-        echo "groups=$(printf '%s\n' "$groups" | tr ';' '\n' | wc -l)"
+        echo "groups=$(printf '%s\n' "$groups" | tr ';' '\n' | wc -l | tr -d ' ')"
         echo "SM_OK"
         ;;
     check)

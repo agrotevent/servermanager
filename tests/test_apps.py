@@ -176,6 +176,75 @@ def test_sso_connect_nextcloud_and_rollback(db, mock, apps, monkeypatch):
     assert not db.query(SsoClient).filter_by(target_kind="nextcloud", target_id=apps["nc"].id).first()
 
 
+def test_sso_connect_pangolin_and_rollback(db, mock, apps):
+    from servermanager.jobs import enqueue, log_path
+    from servermanager.models import Job, SsoClient
+    from servermanager.pangolin import dashboard_guess
+    assert dashboard_guess("https://api.pangolin.example.com/v1") == "https://pangolin.example.com"
+    assert dashboard_guess("https://pangolin.example.com:3003/v1") == "https://pangolin.example.com"
+    assert dashboard_guess("https://10.0.0.5:3003/v1") == ""
+    pg, st = apps["pg"], mock.state
+
+    def run():
+        job = enqueue(db, kind="sso_connect", title="sso", payload={"sso_id": apps["ak"].id, "kind": "pangolin",
+                                                                    "target_id": pg.id,
+                                                                    "app_url": "https://pangolin.example.com"})
+        db.commit()
+        _run(job.id)
+        db.expire_all()
+        return db.get(Job, job.id), log_path(job.id).read_text()
+    job, log = run()
+    assert job.status == "success", log
+    client = db.query(SsoClient).filter_by(target_kind="pangolin", target_id=pg.id).one()
+    idp = st.pg_idps[int(client.target_ref)]
+    prov = st.ak_providers[client.provider_pk]
+    callback = f"https://pangolin.example.com/auth/idp/{client.target_ref}/oidc/callback"
+    assert prov["redirect_uris"] == [{"matching_mode": "strict", "url": callback}]
+    assert idp["clientId"] == prov["client_id"] and idp["clientSecret"] == prov["client_secret"]
+    assert idp["authUrl"] == "https://auth.example.com/application/o/authorize/" and idp["autoProvision"] is True
+    assert st.pg_idp_policies[(int(client.target_ref), m.PG_ORG)]["roleMapping"] == "'Member'"
+    # disconnect removes both sides
+    slug, cid, iid = client.slug, client.id, int(client.target_ref)
+    job = enqueue(db, kind="sso_disconnect", title="off", payload={"client_id": cid})
+    db.commit()
+    _run(job.id)
+    db.expire_all()
+    assert db.get(Job, job.id).status == "success"
+    assert iid not in st.pg_idps and slug not in st.ak_apps and not db.query(SsoClient).filter_by(id=cid).first()
+    # an organization key cannot manage identity providers: clear message, nothing left behind
+    st.pg_idp_forbidden = True
+    apps_before = set(st.ak_apps)
+    try:
+        job, log = run()
+    finally:
+        st.pg_idp_forbidden = False
+    assert job.status == "failed" and "Server-Admin" in log and set(st.ak_apps) == apps_before
+    # failure in authentik removes the Pangolin IdP again
+    st.ak_apps[f"sm-pangolin-{pg.id}"] = {"slug": f"sm-pangolin-{pg.id}", "name": "x"}
+    idps_before = set(st.pg_idps)
+    try:
+        job, log = run()
+    finally:
+        st.ak_apps.pop(f"sm-pangolin-{pg.id}", None)
+    assert job.status == "failed" and set(st.pg_idps) == idps_before
+    assert not db.query(SsoClient).filter_by(target_kind="pangolin").first()
+
+
+def test_sso_connect_pangolin_needs_full_access(app, db, apps):
+    from servermanager.models import LEVEL_FULL, LEVEL_VIEW, IntegrationAccess
+    from tests.test_web import login, make_user
+    u = make_user(db, "pg-sso-user")
+    db.add(IntegrationAccess(user_id=u.id, kind="sso", obj_id=apps["ak"].id, level=LEVEL_FULL))
+    db.add(IntegrationAccess(user_id=u.id, kind="pangolin", obj_id=apps["pg"].id, level=LEVEL_VIEW))
+    db.commit()
+    c = login(app, "pg-sso-user")
+    r = c.post(f"/sso/{apps['ak'].id}/connect", data={"kind": "pangolin", "target_id": apps["pg"].id,
+                                                       "app_url": "https://pangolin.example.com", "csrf_token": c.csrf})
+    assert r.status_code == 403
+    page = c.get(f"/sso/{apps['ak'].id}").text
+    assert "Keine (weitere) Pangolin-Verbindung" in page
+
+
 def test_mail_ip_and_web_publication_proposals(db, mock, apps):
     from servermanager import optimize
     from servermanager.jobs import enqueue, log_path

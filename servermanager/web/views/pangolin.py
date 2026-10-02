@@ -9,7 +9,7 @@ from sqlalchemy import select
 from ... import access, integrations, security
 from ...core import audit
 from ...models import (KIND_PANGOLIN, LEVEL_FULL, LEVEL_OPERATE, LEVEL_VIEW, PANGOLIN_ROLES, PangolinServer,
-                       PveServer, System)
+                       PveServer, SsoClient, System)
 from ...pangolin import (DEFAULT_TEMPLATE, METHODS, ORG_RE, PROTOCOLS, SUBDOMAIN_RE, PangolinError,
                          render_subdomain, validate_template)
 from ..auth import admin_required, client_ip, login_required
@@ -172,6 +172,9 @@ def delete(pg_id: int):
     for srv in g.db.query(PveServer).filter(PveServer.pangolin_id == pg.id):
         srv.pangolin_id = None
     access.remove_integration(g.db, KIND_PANGOLIN, pg.id)
+    for c in g.db.execute(select(SsoClient).where(SsoClient.target_kind == "pangolin",
+                                                  SsoClient.target_id == pg.id)).scalars():
+        g.db.delete(c)
     audit(g.db, g.user, "pangolin.delete", pg.name, ip=client_ip())
     g.db.delete(pg)
     g.db.commit()

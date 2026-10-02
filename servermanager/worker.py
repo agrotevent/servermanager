@@ -1450,8 +1450,8 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
 
     # ------------------------------------------------------------------ SSO
     def _sso_env(self, ctx, kind: str, target_id: int):
-        """Callables to configure the target (occ via SSH for Nextcloud, API for Mailcow)."""
-        from .models import MailcowServer
+        """Callables to configure the target (occ via SSH for Nextcloud, API for Mailcow and Pangolin)."""
+        from .models import MailcowServer, PangolinServer
         from .modules.nextcloud import occ_task
         if kind == "nextcloud":
             system = self._system(target_id)
@@ -1461,13 +1461,20 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
                 if "conn" not in holder:
                     holder["conn"] = self._connect(ctx, system)
                 return occ_task(holder["conn"], system, task, env, timeout=600)
-            return system, occ, None, holder
+            return system, occ, None, None, holder
+        if kind == "pangolin":
+            with session_scope() as db:
+                pg = db.get(PangolinServer, target_id)
+                if pg is None:
+                    raise JobFailed("Pangolin-Verbindung existiert nicht mehr")
+                db.expunge(pg)
+            return pg, None, None, integrations.pangolin_client(pg), {}
         with session_scope() as db:
             mc = db.get(MailcowServer, target_id)
             if mc is None:
                 raise JobFailed("Mailcow-Verbindung existiert nicht mehr")
             db.expunge(mc)
-        return mc, None, integrations.mailcow_client(mc), {}
+        return mc, None, integrations.mailcow_client(mc), None, {}
 
     def job_sso_connect(self, ctx, job_id, system_id, payload) -> str:
         from . import sso
@@ -1478,10 +1485,10 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
                 raise JobFailed("SSO-Verbindung existiert nicht mehr")
             db.expunge(srv)
         kind, target_id = payload["kind"], int(payload["target_id"])
-        target, occ, mc, holder = self._sso_env(ctx, kind, target_id)
+        target, occ, mc, pg, holder = self._sso_env(ctx, kind, target_id)
         try:
             data = sso.connect(integrations.sso_client(srv), srv, kind, target, payload["app_url"], ctx.say,
-                               nextcloud_occ=occ, mailcow=mc)
+                               nextcloud_occ=occ, mailcow=mc, pangolin=pg)
         finally:
             if holder.get("conn"):
                 holder["conn"].close()
@@ -1500,9 +1507,10 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
             srv = db.get(SsoServer, client.sso_id)
             db.expunge(client)
             db.expunge(srv)
-        target, occ, mc, holder = self._sso_env(ctx, client.target_kind, client.target_id)
+        target, occ, mc, pg, holder = self._sso_env(ctx, client.target_kind, client.target_id)
         try:
-            sso.disconnect(integrations.sso_client(srv), srv, client, ctx.say, nextcloud_occ=occ, mailcow=mc)
+            sso.disconnect(integrations.sso_client(srv), srv, client, ctx.say, nextcloud_occ=occ, mailcow=mc,
+                           pangolin=pg)
         finally:
             if holder.get("conn"):
                 holder["conn"].close()
