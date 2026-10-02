@@ -25,6 +25,10 @@ Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 - NAT über Adresslisten und negierte Interface-Listen wird erkannt; reine Hairpin- oder Port-Regeln
   gelten nicht als Internet-NAT; nicht auswertbare Regeln ergeben „Prüfen“ statt „Fehlt“.
 - Upstream-DNS vom Provider (DHCP-/PPPoE-Client) gilt beim Export nicht mehr als fehlend.
+- Der Schutz von Input- und Forward-Kette sowie ein offener DNS-Resolver werden per Testpaket aus dem
+  Internet beurteilt (auch Default-Deny-Ketten, `!LAN` und eine einzelne zu weite accept-Regel).
+- Von außen gesperrte WireGuard-Ports werden gemeldet; Policy-Routing-Markierungen lassen Verbindungen zu
+  eigenen Adressen des Routers aus (Hairpin-NAT).
 - Sonderzeichen in Kommentaren aus einem Export (`\C3\BC` …) werden richtig gelesen.
 - Beim Anwenden mehrerer Punkte werden gleiche Operationen nur einmal ausgeführt.
 

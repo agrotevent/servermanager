@@ -39,7 +39,7 @@ SNAPSHOT_MENUS = [
     "ip/address", "ip/route", "ip/pool", "ip/dhcp-client",
     "ip/dhcp-server", "ip/dhcp-server/network", "ip/dhcp-server/lease",
     "ip/dns", "ip/dns/static",
-    "ip/dhcp-server/option", "ip/ipsec/policy", "interface/veth",
+    "ip/dhcp-server/option", "ip/ipsec/policy", "interface/veth", "ppp/profile", "ip/hotspot/user/profile",
     "ip/firewall/filter", "ip/firewall/nat", "ip/firewall/mangle", "ip/firewall/raw", "ip/firewall/address-list",
     "ip/firewall/service-port", "routing/table", "routing/rule",
     "ip/service", "ip/neighbor/discovery-settings", "tool/mac-server", "tool/mac-server/mac-winbox",
@@ -193,7 +193,7 @@ NONTERMINAL_ACTIONS = {"log", "passthrough", "add-src-to-address-list", "add-dst
 # properties that do not restrict which packets a rule matches
 RULE_META = {".id", ".nextid", "chain", "action", "comment", "log", "log-prefix", "disabled", "invalid", "dynamic",
              "bytes", "packets", "jump-target", "reject-with", "address-list", "address-list-timeout", "hw-offload",
-             "passthrough", "to-addresses", "to-ports", "place-before"}
+             "passthrough", "to-addresses", "to-ports", "place-before", "randomise-ports"}
 PROTO_NAMES = {"1": "icmp", "6": "tcp", "17": "udp"}
 
 
@@ -229,7 +229,7 @@ _LIST_CACHE: list[tuple[list, dict]] = []
 
 def _list_entries(snap: dict, name: str) -> list[dict]:
     """enabled entries of an address list (indexed once per snapshot - lists can hold many thousand entries)"""
-    lst = items(snap, "ip/firewall/address-list")
+    lst = (snap.get("menus") or {}).get("ip/firewall/address-list") or []
     for cached, index in _LIST_CACHE:
         if cached is lst:
             return index.get(name, [])
@@ -349,6 +349,21 @@ def _covers_all(snap: dict, key: str, val: str) -> bool:
 NAT_ACTIONS = {"masquerade", "src-nat", "dst-nat", "netmap", "same"}
 
 
+def _may_hold_internet(snap: dict, key: str, val: str) -> bool:
+    """a destination address / list that can contain internet addresses (not only private networks)"""
+    specs = [val] if key == "dst-address" else [str(e.get("address", "")) for e in _list_entries(snap, val)]
+    for spec in specs:
+        n = net_of(spec.split("-")[0]) if spec else None
+        if n is None or n.is_global or not (n.is_private or n.is_link_local or n.is_loopback or n.is_multicast):
+            return True
+    return False
+
+
+def _runtime_list(snap: dict, name: str) -> bool:
+    """an address list that firewall rules or RouterOS (DHCP, PPP, hotspot) fill at runtime"""
+    return name in _filled_lists(snap) or name in _client_lists(snap)
+
+
 def rule_matches(rule: dict, pkt: dict, snap: dict) -> Optional[bool]:
     """True/False, or None when a matcher cannot be decided statically (rate limits, marks, ...).
 
@@ -366,7 +381,8 @@ def rule_matches(rule: dict, pkt: dict, snap: dict) -> Optional[bool]:
         if (pkt.get("any_dst") and key in ("dst-address", "dst-address-list")) or \
                 (pkt.get("any_src") and key in ("src-address", "src-address-list")):
             res = _covers_all(snap, key.replace("src-", "dst-"), val)
-            if not res and not neg and action not in DROP_ACTIONS | NAT_ACTIONS:
+            if not res and not neg and action not in DROP_ACTIONS | NAT_ACTIONS \
+                    and _may_hold_internet(snap, key.replace("src-", "dst-"), val):
                 res = None
         elif key in ("tls-host", "content"):
             if neg:
@@ -376,6 +392,9 @@ def rule_matches(rule: dict, pkt: dict, snap: dict) -> Optional[bool]:
             res = False if pkt.get("proto") == "tcp" and "syn" in pkt.get("flags", ()) else None
         else:
             res = _matcher(key, val, pkt, snap)
+            if res is False and key == "src-address-list" and not neg and action not in DROP_ACTIONS \
+                    and _runtime_list(snap, val):
+                res = None   # e.g. an allow list filled by rules at runtime - not in an export
         if res is None:
             unknown = True
         elif res == neg:
@@ -389,67 +408,65 @@ Outcome = tuple[str, Optional[dict], Optional[dict], Optional[dict]]
 
 
 def _dedupe(outs: list[Outcome]) -> list[Outcome]:
+    """one outcome per verdict and deciding rule (definite and assumed path apart) - keeps the lists small"""
     seen, res = set(), []
     for o in outs:
-        k = (o[0], id(o[1]), id(o[2]))
+        k = (o[0], id(o[1]), o[3] is None)
         if k not in seen:
             seen.add(k)
             res.append(o)
     return res
 
 
-def _outcomes(ctx: dict, chain: str, start: int, depth: int) -> list[Outcome]:
-    """Every way the packet can leave `chain` from rule index `start` on: accept, drop, uncertain or cont
-    (end of a user chain / return - the calling chain goes on). Memoized per probe; jump loops end uncertain."""
-    key = (chain, start)
-    if key in ctx["memo"]:
-        return ctx["memo"][key]
-    if key in ctx["active"] or depth > 32:
+def _outcomes(ctx: dict, chain: str, depth: int) -> list[Outcome]:
+    """Every way the packet can leave `chain`: accept, drop, uncertain or cont (end of a user chain / return - the
+    calling chain goes on). Memoized per probe; jump loops and very deep nesting end uncertain."""
+    if chain in ctx["memo"]:
+        return ctx["memo"][chain]
+    if chain in ctx["active"] or depth > 32:
         return [("uncertain", None, None, None)]
-    ctx["active"].add(key)
+    ctx["active"].add(chain)
     try:
-        res = _dedupe(_chain_outcomes(ctx, chain, start, depth))
+        res = _dedupe(_chain_outcomes(ctx, chain, depth))
     finally:
-        ctx["active"].discard(key)
-    ctx["memo"][key] = res
+        ctx["active"].discard(chain)
+    ctx["memo"][chain] = res
     return res
 
 
-def _chain_outcomes(ctx: dict, chain: str, start: int, depth: int) -> list[Outcome]:
-    rules = ctx["rules"]
-    for i in range(start, len(rules)):
-        r = rules[i]
-        if r.get("chain") != chain or not enabled(r) or (r.get("action") or "accept") in NONTERMINAL_ACTIONS:
+def _chain_outcomes(ctx: dict, chain: str, depth: int) -> list[Outcome]:
+    """Walk the chain once. An undecidable rule (rate limit, mark, part of the network ...) adds its result as a
+    possible outcome and the walk goes on as if it had not matched - no recursion per rule."""
+    acc: list[Outcome] = []
+    for r in ctx["chains"].get(chain, ()):
+        if (r.get("action") or "accept") in NONTERMINAL_ACTIONS:
             continue
         m = rule_matches(r, ctx["pkt"], ctx["snap"])
         if m is False:
             continue
-        taken = _hit(ctx, chain, i, r, depth)
-        if m is True:
-            return taken
-        # undecidable rule (rate limit, mark, part of the network ...): both ways are possible
-        return [(v, rule, top, a or r) for v, rule, top, a in taken] + _outcomes(ctx, chain, i + 1, depth)
-    return [("accept" if chain in BUILTIN_CHAINS else "cont", None, None, None)]
+        taken, goes_on = _hit(ctx, chain, r, depth)
+        if m is None:
+            acc = _dedupe(acc + [(v, rule, top, a or r) for v, rule, top, a in taken])
+            continue
+        acc = _dedupe(acc + taken)
+        if not goes_on:
+            return acc
+    return acc + [("accept" if chain in BUILTIN_CHAINS else "cont", None, None, None)]
 
 
-def _hit(ctx: dict, chain: str, i: int, r: dict, depth: int) -> list[Outcome]:
-    """outcomes when rule r (index i of chain) matches"""
+def _hit(ctx: dict, chain: str, r: dict, depth: int) -> tuple[list[Outcome], bool]:
+    """outcomes when rule r matches, and whether the walk can go on behind r (a jump whose target returns)"""
     action = r.get("action") or "accept"
     if action == "accept":
-        return [("accept", r, r, None)]
+        return [("accept", r, r, None)], False
     if action in DROP_ACTIONS:
-        return [("drop", r, r, None)]
+        return [("drop", r, r, None)], False
     if action == "return":   # in a built-in chain: end of the chain = its policy (accept)
-        return [("accept", None, None, None)] if chain in BUILTIN_CHAINS else [("cont", r, r, None)]
+        return ([("accept", None, None, None)] if chain in BUILTIN_CHAINS else [("cont", r, r, None)]), False
     if action == "jump":
-        out: list[Outcome] = []
-        for v, rule, _top, a in _outcomes(ctx, r.get("jump-target", ""), 0, depth + 1):
-            if v == "cont":   # back from the jump: go on behind the jump rule
-                out += [(v2, r2, t2, a or a2) for v2, r2, t2, a2 in _outcomes(ctx, chain, i + 1, depth)]
-            else:
-                out.append((v, rule, r, a))
-        return out
-    return [("uncertain", r, r, r)]
+        sub = _outcomes(ctx, r.get("jump-target", ""), depth + 1)
+        return [(v, rule, r, a) for v, rule, _top, a in sub if v != "cont"], any(o[0] == "cont" for o in sub)
+    return [("uncertain", r, r, r)], False
 
 
 def _decide(outs: list[Outcome]) -> Verdict:
@@ -463,8 +480,12 @@ def _decide(outs: list[Outcome]) -> Verdict:
 
 
 def _chain_outs(snap: dict, menu: str, chain: str, pkt: dict) -> list[Outcome]:
-    ctx = {"rules": items(snap, menu), "pkt": pkt, "snap": snap, "memo": {}, "active": set()}
-    return _outcomes(ctx, chain, 0, 0)
+    chains: dict[str, list[dict]] = {}
+    for r in items(snap, menu):
+        if enabled(r):
+            chains.setdefault(r.get("chain", ""), []).append(r)
+    ctx = {"chains": chains, "pkt": pkt, "snap": snap, "memo": {}, "active": set()}
+    return _outcomes(ctx, chain, 0)
 
 
 def probe(snap: dict, chain: str, pkt: dict) -> Verdict:
@@ -509,14 +530,14 @@ FIND_KEYS = ("chain", "action", "protocol", "in-interface", "in-interface-list",
 def find_expr(rule: dict, rules: list[dict]) -> str:
     """Conditions for [ find where ... ] that select this rule - via its comment when that is unique."""
     c = rule.get("comment")
-    if c and sum(1 for r in rules if r.get("comment") == c) == 1:
+    if c and "\ufffd" not in c and sum(1 for r in rules if r.get("comment") == c) == 1:
         return f"comment={_q(c)}"
     return " ".join(f"{k}={_q(rule[k])}" for k in FIND_KEYS if rule.get(k))
 
 
 def _find_unique(rule: dict, rules: list[dict]) -> bool:
     c = rule.get("comment")
-    if c and sum(1 for r in rules if r.get("comment") == c) == 1:
+    if c and "\ufffd" not in c and sum(1 for r in rules if r.get("comment") == c) == 1:
         return True
     keys = [k for k in FIND_KEYS if rule.get(k)]
     return sum(1 for r in rules if all(r.get(k) == rule.get(k) for k in keys)) == 1
@@ -707,6 +728,8 @@ def parse_export(text: str) -> dict:
     for it in menus.get("ip/firewall/filter", []) + menus.get("ip/firewall/nat", []) + \
             menus.get("ip/firewall/mangle", []) + menus.get("ip/firewall/raw", []):
         it.setdefault("disabled", "no")
+    for it in menus.get("ip/route", []):
+        it.setdefault("dst-address", "0.0.0.0/0")   # the default value is not exported
     # synthesized interface list: all typed interface menus + interfaces referenced elsewhere
     ifaces: dict[str, dict] = {}
     for menu, lst in menus.items():
@@ -790,16 +813,22 @@ def detect_target(snap: dict, mgmt_default: str = "") -> dict:
                 break
     bridges = {b.get("name") for b in items(snap, "interface/bridge")}
     # a DHCP server counts more than a membership in the interface list LAN, a bridge breaks ties
-    dhcp = {s.get("interface") for s in items(snap, "ip/dhcp-server") if enabled(s)}
     lan_list = {a.get("interface") for a in addrs if in_iface_list(snap, a.get("interface", ""), "LAN") is True}
+    tiers: list[Callable[[str, Any], bool]] = [
+        lambda ifc, net: ifc in bridges and _dhcp_serves(snap, ifc, net),
+        lambda ifc, net: _dhcp_serves(snap, ifc, net),
+        lambda ifc, net: ifc in bridges and ifc in lan_list,
+        lambda ifc, net: ifc in lan_list,
+        lambda ifc, net: ifc in bridges,
+        lambda ifc, net: True]
     lan, lan_addr = "", ""
-    for prefer in (bridges & dhcp, dhcp, bridges & lan_list, lan_list, bridges, None):
+    for prefer in tiers:
         for a in addrs:
             ifc = a.get("interface", "")
             i = iface_of(a.get("address", ""))
             if not i or ifc == wan or is_public(i.ip) or yes(a.get("dynamic")) or i.network.prefixlen >= 31:
                 continue
-            if (prefer is not None and ifc not in prefer) or not _client_iface(snap, ifc):
+            if not prefer(ifc, i.network) or not _client_iface(snap, ifc):
                 continue
             lan, lan_addr = ifc, str(i)
             break
@@ -1158,7 +1187,8 @@ def analyze(snap: dict, target: dict) -> list[dict]:
     peer_dns = [f"DHCP-Client {c.get('interface', '')}" for c in items(snap, "ip/dhcp-client")
                 if enabled(c) and yes(c.get("use-peer-dns"), True)] + \
         [f"PPPoE {c.get('name', '')}" for c in items(snap, "interface/pppoe-client")
-         if enabled(c) and yes(c.get("use-peer-dns"))]
+         if c.get("disabled") in ("no", "false") and yes(c.get("use-peer-dns"))]
+    peer_dns = peer_dns if snap.get("source") == "export" else []
     if servers or dns.get("dynamic-servers"):
         add(finding("dns.servers", "dns", OK, "Upstream-DNS gesetzt", current=servers or dns.get("dynamic-servers")))
     elif peer_dns:
@@ -1185,8 +1215,9 @@ def analyze(snap: dict, target: dict) -> list[dict]:
                     "Die Regel maskiert auch Verkehr in Tunnel und interne Netze (Quell-IPs gehen verloren, "
                     "WireGuard-Management und Protokolle zeigen nur noch die Router-IP). Empfohlen: auf das "
                     "WAN-Interface beschränken.", current=_rule_text(broad[0]),
-                    script=[f"/ip firewall nat set [ find where chain=srcnat action={broad[0].get('action')} "
-                            f"!out-interface !out-interface-list !dst-address !dst-address-list ] out-interface={wan}"]))
+                    script=[f"/ip firewall nat set [ find where {find_expr(broad[0], items(snap, 'ip/firewall/nat'))} ] "
+                            f"out-interface={wan}" if _find_unique(broad[0], items(snap, "ip/firewall/nat")) else
+                            f"# /ip firewall nat: {_rule_text(broad[0])} – out-interface={wan} von Hand setzen"]))
     elif unsure:
         add(finding("nat.masq", "nat", CHECK, "NAT für das LAN nicht eindeutig", NAT_UNSURE,
                     current=_rule_text(unsure[0])))
@@ -1256,11 +1287,43 @@ def analyze(snap: dict, target: dict) -> list[dict]:
                     f"WireGuard {w.get('name')} ({len(peers)} Peer(s), Port {w.get('listen-port', '')})",
                     "Ein Peer mit AllowedIPs 0.0.0.0/0 kann Verkehr ins Internet an sich ziehen – dann "
                     "Policy-Routing aktivieren." if wide else ""))
+        _wireguard_port_finding(snap, add, w, peers, wan, tag)
     add(finding("tun.newt", "tunnel", CHECK, "Newt/Pangolin braucht nur ausgehende Verbindungen",
                 "Der Newt-Client im LXC baut den Tunnel zum Pangolin-Server selbst auf (HTTPS/WebSocket und "
                 "UDP 51820 ausgehend). Voraussetzung: NAT (siehe oben) und keine Forward-Regel, die "
                 "ausgehenden Verkehr aus dem LAN blockiert. Die Newt-IP sollte eine statische Lease haben."))
     return out
+
+
+def _wireguard_port_finding(snap, add, w: dict, peers: list[dict], wan: str, tag: str) -> None:
+    """The listen port must be reachable from the internet unless the router dials every peer itself."""
+    port = str(w.get("listen-port") or "")
+    if not port.isdigit():
+        return
+    name = w.get("name", "")
+    outs = probe_outcomes(snap, "input", _wan_probe(snap, wan, "udp", int(port)))
+    # judged on the path without assumptions: rules for single senders (admin addresses) do not open it for peers
+    definite = [o for o in outs if o[3] is None]
+    if not definite or any(o[0] != "drop" for o in definite):
+        return
+    _v, rule, top, _a = definite[0]
+    flt = items(snap, "ip/firewall/filter")
+    before = top or rule
+    tagc = f"{tag}WireGuard {name}"
+    script = [f"/ip firewall filter add chain=input action=accept protocol=udp dst-port={port} comment={quote_cli(tagc)} "
+              f"place-before=[ find where {find_expr(before, flt)} ]"] \
+        if before is not None and any(before is x for x in flt) and _find_unique(before, flt) else \
+        [f"# udp/{port} vor dieser Regel erlauben: {_rule_text(before or {})}"]
+    dialing = bool(peers) and all(p.get("endpoint-address") for p in peers)
+    if dialing or not peers:
+        add(finding(f"tun.wgport.{name}", "tunnel", CHECK, f"WireGuard-Port {port} ({name}) von außen gesperrt",
+                    "Funktioniert nur, solange der Router die Verbindung zu jeder Gegenstelle selbst aufbaut "
+                    "(Endpoint + Keepalive)." + ("" if peers else " Peers wurden nicht eingelesen."),
+                    severity="info", current=_rule_text(rule or {}), script=script))
+    else:
+        add(finding(f"tun.wgport.{name}", "tunnel", CHANGE, f"WireGuard-Port {port} ({name}) von außen gesperrt",
+                    "Peers ohne Endpoint (z. B. Road Warrior) erreichen den Router nicht – die Input-Kette verwirft "
+                    "ihre Pakete.", current=_rule_text(rule or {}), script=script))
 
 
 def _rule_text(r: dict) -> str:
@@ -1341,9 +1404,10 @@ def nat_coverage(snap: dict, net, wan: str, iface: str = "") -> tuple[list[dict]
         if out is False:
             continue
         # everything else (dst-address of a hairpin rule, protocol/port of a mail-IP rule, ...) for internet traffic
-        rest = {k: v for k, v in r.items() if k not in ("src-address", "src-address-list") and k not in out_keys}
+        rest = {k: v for k, v in r.items() if k not in ("src-address", "src-address-list", "ipsec-policy")
+                and k not in out_keys}
         other = [rule_matches(rest, p, snap) for p in probes]
-        oth = True if True in other else (None if None in other else False)
+        oth = True if all(x is True for x in other) else (False if all(x is False for x in other) else None)
         if oth is False:
             continue
         if src is None or out is None or oth is None:
@@ -1372,25 +1436,33 @@ def _dhcp_network_finding(fid: str, snap: dict, lan_if, label: str, comment: str
     lan_net = str(lan_if.network) if lan_if else ""
     dnet = _dhcp_net_of(snap, lan_if.network if lan_if else None)
     dns_for_clients = router_ip
+    if not dnet and extra:
+        op = op_add("ip/dhcp-server/network", {"address": lan_net, "gateway": router_ip, "dns-server": router_ip,
+                                               "comment": comment})
+        return finding(fid, "lan", CHECK, f"DHCP-Netz {lan_net}{label} fehlt",
+                       "Der DHCP-Server verteilt hier Adressen ohne Gateway und DNS. Sollen die Geräte über den Router "
+                       "ins Internet, das DHCP-Netz anlegen (und NAT prüfen).", severity="info",
+                       script=[op_to_cli(op)]), dns_for_clients
     if not dnet:
         return finding(fid, "lan", MISSING, f"DHCP-Netz {lan_net}{label} fehlt",
                        ops=[op_add("ip/dhcp-server/network", {"address": lan_net, "gateway": router_ip,
                                                                "dns-server": router_ip, "comment": comment})]), \
             dns_for_clients
     problems = {}
-    foreign_gw = dnet.get("gateway") != router_ip
+    foreign_gw = dnet.get("gateway") != router_ip and not (extra and dnet.get("gateway") in _router_ips(snap))
     if foreign_gw and not extra:
         problems["gateway"] = router_ip
     if not dnet.get("dns-server"):
         problems["dns-server"] = dns_for_clients
     else:
         dns_for_clients = dnet.get("dns-server")
-    if foreign_gw and extra and not problems:
+    if foreign_gw and extra:
         return finding(fid, "lan", CHECK, f"DHCP-Netz {dnet.get('address')}{label}: Gateway "
                        f"{dnet.get('gateway') or '–'} statt des Routers",
                        "Die Geräte nutzen ein anderes Gateway (z. B. Backend-Netz mit eigenem Uplink). Sollen sie über "
                        f"den Router ins Internet, das Gateway auf {router_ip} setzen und NAT ergänzen.",
-                       severity="info", current=f"Gateway {dnet.get('gateway') or '–'}, DNS {dnet.get('dns-server')}"), \
+                       severity="info",
+                       current=f"Gateway {dnet.get('gateway') or '–'}, DNS {dnet.get('dns-server') or '–'}"), \
             dns_for_clients
     if problems:
         return finding(fid, "lan", CHANGE, f"DHCP-Netz unvollständig{label}",
@@ -1402,11 +1474,16 @@ def _dhcp_network_finding(fid: str, snap: dict, lan_if, label: str, comment: str
                    current=f"Gateway {dnet.get('gateway')}, DNS {dnet.get('dns-server')}"), dns_for_clients
 
 
+def _router_ips(snap: dict) -> set[str]:
+    """every address of the router (incl. secondary and VRRP addresses)"""
+    return {str(i.ip) for a in items(snap, "ip/address") if enabled(a) and (i := iface_of(a.get("address", "")))}
+
+
 def _router_is_gateway(snap: dict, n: dict) -> bool:
     """The router hands itself out as default gateway for the network: its DHCP network or the veth of a container
     in it names the router's address."""
     dnet = _dhcp_net_of(snap, n["net"]) if n["dhcp"] else None
-    if dnet and dnet.get("gateway") == n["ip"]:
+    if dnet and dnet.get("gateway") in _router_ips(snap):
         return True
     return any(enabled(v) and v.get("gateway") == n["ip"] and any(
         (i := iface_of(a)) is not None and i.version == 4 and i.ip in n["net"]
@@ -1436,6 +1513,9 @@ def _extra_nat_findings(snap, add, extra, wan, tag) -> None:
         elif unsure:
             add(finding(fid, "nat", CHECK, f"NAT für {name} nicht eindeutig", NAT_UNSURE,
                         current=_rule_text(unsure[0])))
+        elif _router_is_gateway(snap, n) and probe(snap, "forward", _internet_probe(n, wan))[0] == "drop":
+            add(finding(fid, "nat", CHECK, f"Kein NAT für {name} – das Netz ist per Firewall vom Internet getrennt",
+                        "Ist das so gewollt (z. B. Kameras, IoT), braucht es kein NAT.", severity="info"))
         elif _router_is_gateway(snap, n):
             add(finding(fid, "nat", MISSING, f"Kein NAT für {name} – Geräte dort kommen nicht ins Internet",
                         severity="crit", ops=[op]))
@@ -1569,6 +1649,13 @@ UNSURE_RULE = ("Eine Regel gilt nur für einen Teil des Netzes oder hängt von R
                "o. Ä. ab – bitte von Hand prüfen.")
 
 
+def _internet_probe(n: dict, wan: str) -> dict:
+    """first packet of a new connection from the whole network n to some internet address"""
+    return {"src": _probe_host(n), "src_net": n["net"], "dst": "1.1.1.1", "any_dst": True, "proto": "tcp",
+            "sport": 40000, "dport": 443, "in": n["iface"], "out": wan, "state": "new", "nat": (),
+            "dst_type": ("unicast",), "src_type": ("unicast",), "flags": ("syn",)}
+
+
 def _probe_host(n: dict) -> str:
     for h in n["net"].hosts():
         if str(h) != n["ip"]:
@@ -1587,9 +1674,7 @@ def _network_firewall_findings(snap, add, nets, primary, wan) -> None:
             continue
         sfx = "" if n is primary else f".{n['key']}"
         name = f"{n['net']} ({n['iface']})"
-        pkt = {"src": host, "src_net": n["net"], "dst": "1.1.1.1", "any_dst": True, "proto": "tcp", "sport": 40000,
-               "dport": 443, "in": n["iface"], "out": wan, "state": "new", "nat": (), "dst_type": ("unicast",),
-               "src_type": ("unicast",), "flags": ("syn",)}
+        pkt = _internet_probe(n, wan)
         verdict, rule, _top = probe(snap, "forward", pkt)
         if verdict == "drop":
             add(finding("fw.lanout" + sfx, "firewall", CHANGE, f"Firewall blockiert Verkehr aus {name} ins Internet",
@@ -1615,15 +1700,19 @@ def _network_firewall_findings(snap, add, nets, primary, wan) -> None:
             add(finding(fid, "firewall", OK, f"DNS aus {name} erreicht den Router"))
         elif verdict == "drop":
             in_raw = any(rule is r for r in raw)
-            act = (top or rule or {}).get("action") or "drop"
             tagc = f"{TAG}: DNS/DHCP {n['iface']}"
-            script = [f"# Raw-Regel verwirft DNS aus {n['net']}: {_rule_text(rule)}"] if in_raw else [
-                f"/ip firewall filter add chain=input action=accept in-interface={_q(n['iface'])} protocol=udp "
-                f"dst-port=53,67 comment={quote_cli(tagc)} "
-                f"place-before=[:pick [find where chain=input action={act} dynamic=no] 0]",
-                f"/ip firewall filter add chain=input action=accept in-interface={_q(n['iface'])} protocol=tcp "
-                f"dst-port=53 comment={quote_cli(tagc)} "
-                f"place-before=[:pick [find where chain=input action={act} dynamic=no] 0]"]
+            flt = items(snap, "ip/firewall/filter")
+            before = top or rule
+            if in_raw:
+                script = [f"# Raw-Regel verwirft DNS aus {n['net']}: {_rule_text(rule)}"]
+            elif before is not None and _find_unique(before, flt):
+                where = f"place-before=[ find where {find_expr(before, flt)} ]"
+                script = [f"/ip firewall filter add chain=input action=accept in-interface={_q(n['iface'])} "
+                          f"protocol=udp dst-port=53,67 comment={quote_cli(tagc)} {where}",
+                          f"/ip firewall filter add chain=input action=accept in-interface={_q(n['iface'])} "
+                          f"protocol=tcp dst-port=53 comment={quote_cli(tagc)} {where}"]
+            else:
+                script = [f"# DNS/DHCP aus {n['iface']} vor dieser Regel erlauben: {_rule_text(before or {})}"]
             add(finding(fid, "firewall", CHANGE, f"DNS aus {name} wird vom Router verworfen",
                         "Die Input-Kette verwirft DNS-Anfragen (und DHCP-Verlängerungen) aus diesem Netz. Ein Gerät, "
                         "das den Router als DNS-Server nutzt, löst keine Namen auf und wirkt offline."
@@ -1715,8 +1804,7 @@ def _icmp_findings(snap, add, wan, nets) -> None:
                 "Path-MTU-Discovery (ICMP Typ 3 „Fragmentation needed“): Verbindungen über Strecken mit kleinerer MTU "
                 "(vSwitch, Tunnel, PPPoE) hängen. Ping-Flut besser pro Quelle begrenzen (dst-limit mit src-address) "
                 "und ICMP-Fehlermeldungen (Typ 3 und 11) nie verwerfen.",
-                current="; ".join(_rule_text(r) + (f" limit={r['limit']}" if r.get("limit") else "")
-                                  for _m, r, _rs in hits[:3]), script=script))
+                current="; ".join(_rule_text(r) for _m, r, _rs in hits[:3]), script=script))
 
 
 def dead_rules(snap: dict) -> tuple[list[tuple[str, dict, dict]], list[tuple[str, str]]]:
@@ -1751,6 +1839,19 @@ def _never_fires(snap: dict) -> set[int]:
     return out
 
 
+def _reachable_chains(snap: dict, menu: str, root: str) -> set[str]:
+    """root plus every user chain an active jump leads to from it"""
+    jumps = [(r.get("chain"), r.get("jump-target")) for r in items(snap, menu) if enabled(r) and r.get("action") == "jump"]
+    reach, changed = {root}, True
+    while changed:
+        changed = False
+        for src, dst in jumps:
+            if dst and src in reach and dst not in reach:
+                reach.add(dst)
+                changed = True
+    return reach
+
+
 def _wan_probe(snap: dict, wan: str, proto: str, port: int) -> dict:
     """first packet of a new connection from some internet host to the router's WAN address"""
     dst = next((str(i.ip) for a in items(snap, "ip/address") if enabled(a) and a.get("interface") == wan
@@ -1780,7 +1881,7 @@ def _wireguard_needs(snap: dict, r: dict, wan: str) -> tuple[list[str], Optional
                           "dst_type": ("local",), "src_type": ("unicast",), "flags": ("syn",) if p == "tcp" else ()}
                          for p, port in (("tcp", 8291), ("udp", 53))]
         for pkt in pkts:
-            if rule_matches(r, pkt, snap) is not True:
+            if rule_matches(r, pkt, snap) is False:   # None: e.g. restricted to the peer's address
                 continue
             drops = [o for o in probe_outcomes(snap, "input", pkt) if o[0] != "accept"]
             if drops:   # dropped at least on one path (e.g. unless the peer is an admin address accepted before)
@@ -1795,17 +1896,19 @@ def _dead_rule_findings(snap, add, wan) -> None:
     """Rules behind a rule that ends the chain for every packet, and user chains nobody jumps to."""
     dead, unused = dead_rules(snap)
     script, needed, shown, opened = [], [], [], []
+    to_router = {"ip/firewall/filter": _reachable_chains(snap, "ip/firewall/filter", "input"),
+                 "ip/firewall/raw": _reachable_chains(snap, "ip/firewall/raw", "prerouting")}
     for menu, r, killer in dead:
         rules = items(snap, menu)
-        if (killer.get("action") or "accept") not in DROP_ACTIONS:
-            # behind an unconditional accept/return everything is accepted - the rules behind it would protect
+        kact = killer.get("action") or "accept"
+        if kact == "accept" or (kact == "return" and killer.get("chain") in BUILTIN_CHAINS):
+            # behind an unconditional accept everything is accepted - the rules behind it would protect
             if not any(killer is k for _m, k in opened):
                 opened.append((menu, killer))
             continue
         shown.append(r)
         tunnels, dest = ([], None)
-        if (r.get("action") or "accept") == "accept" and (menu, r.get("chain")) in (
-                ("ip/firewall/filter", "input"), ("ip/firewall/raw", "prerouting")):
+        if (r.get("action") or "accept") == "accept" and r.get("chain") in to_router.get(menu, ()):
             tunnels, dest = _wireguard_needs(snap, r, wan)
         if tunnels:
             needed += tunnels
@@ -1823,13 +1926,21 @@ def _dead_rule_findings(snap, add, wan) -> None:
             script.append(f"# {cli_menu(menu)}: {_rule_text(r)} – nicht eindeutig auswählbar, von Hand löschen")
     for menu, killer in opened:
         chain = killer.get("chain", "")
+        # critical when traffic from the internet actually reaches it (no drop before it)
+        reached = menu == "ip/firewall/filter" and chain in ("input", "forward") and any(
+            o[1] is killer or (o[1] is None and o[0] == "accept" and killer.get("action") == "return")
+            for o in probe_outcomes(snap, chain, dict(_wan_probe(snap, wan, "tcp", 8291),
+                                                      **({} if chain == "input" else {"dst": "10.0.0.2", "out": "",
+                                                                                     "dst_type": ("unicast",)}))))
         add(finding(f"fw.open.{chain}", "firewall", CHANGE,
                     f"Regel ohne Bedingungen akzeptiert alles (chain={chain})",
-                    "Sie lässt jedes Paket dieser Kette durch – alle Regeln dahinter, auch die Drop-Regeln zum Schutz, "
-                    "greifen nie. Die Regel auf das Nötige beschränken oder entfernen (vorher sicherstellen, dass der "
-                    "eigene Zugang über eine eigene Regel erlaubt ist).",
-                    severity="crit" if menu == "ip/firewall/filter" and chain in ("input", "forward") else "warn",
-                    current=_rule_text(killer),
+                    "Sie lässt jedes Paket durch, das sie erreicht – alle Regeln dahinter, auch Drop-Regeln zum Schutz, "
+                    "greifen nie." + (" Auch Verbindungen aus dem Internet kommen so durch." if reached else
+                                      " Verkehr aus dem Internet wird vorher verworfen; die Regeln dahinter sind "
+                                      "trotzdem wirkungslos.")
+                    + " Die Regel auf das Nötige beschränken oder entfernen (vorher sicherstellen, dass der eigene "
+                    "Zugang über eine eigene Regel erlaubt ist).",
+                    severity="crit" if reached else "warn", current=_rule_text(killer),
                     script=[f"# {cli_menu(menu)}: {_rule_text(killer)} – einschränken oder entfernen"]))
     for menu, ch in unused:
         script.append(f"{cli_menu(menu)} remove [ find where chain={_q(ch)} ]")
@@ -1966,7 +2077,8 @@ def _policy_findings(snap, t, add, mangle, fasttrack, table, wan, lan_net, tag) 
          lambda r: r.get("action") == "mark-connection" and r.get("new-connection-mark") == conn_mark
          and r.get("src-address") == lan_net,
          {"chain": "prerouting", "action": "mark-connection", "src-address": lan_net,
-          "dst-address-list": "!sm-local-nets", "connection-state": "new", "new-connection-mark": conn_mark,
+          "dst-address-list": "!sm-local-nets", "dst-address-type": "!local", "connection-state": "new",
+          "new-connection-mark": conn_mark,
           "passthrough": "yes", "comment": tag + "LAN -> Internet (Verbindung)"}),
         ("pol.m2", "Antworten auf eingehende WAN-Verbindungen markieren",
          lambda r: r.get("action") == "mark-connection" and r.get("new-connection-mark") == conn_mark
@@ -1976,7 +2088,8 @@ def _policy_findings(snap, t, add, mangle, fasttrack, table, wan, lan_net, tag) 
         ("pol.m3", f"Routing-Markierung {table} für markierte Verbindungen aus dem LAN",
          lambda r: r.get("action") == "mark-routing" and r.get("new-routing-mark") == table,
          {"chain": "prerouting", "action": "mark-routing", "connection-mark": conn_mark, "src-address": lan_net,
-          "dst-address-list": "!sm-local-nets", "new-routing-mark": table, "passthrough": "no",
+          "dst-address-list": "!sm-local-nets", "dst-address-type": "!local", "new-routing-mark": table,
+          "passthrough": "no",
           "comment": tag + "LAN -> Internet (Routing)"}),
     ]
     for fid, title, pred, data in rules:
@@ -2000,6 +2113,9 @@ def _policy_findings(snap, t, add, mangle, fasttrack, table, wan, lan_net, tag) 
                             "connection-mark=no-mark"]))
 
 
+WAN_SERVICES = (("tcp", 8291), ("tcp", 22), ("tcp", 443), ("tcp", 80), ("tcp", 8728), ("udp", 53))
+
+
 def _firewall_findings(snap, t, add, wan, lan, lan_net) -> None:
     never = _never_fires(snap)   # e.g. drop rules behind an unconditional accept protect nothing
     rules = [r for r in items(snap, "ip/firewall/filter") if enabled(r) and id(r) not in never]
@@ -2008,12 +2124,12 @@ def _firewall_findings(snap, t, add, wan, lan, lan_net) -> None:
     est = any(r.get("action") == "accept" and "established" in str(r.get("connection-state", ""))
               for r in inp)
     invalid = any(r.get("action") == "drop" and "invalid" in str(r.get("connection-state", "")) for r in inp)
-    wan_drop = any(r.get("action") in ("drop", "reject") and not r.get("protocol") and not r.get("dst-port")
-                   and not r.get("src-address") and not r.get("connection-state") and
-                   (rule_matches_iface(r, "in", wan, snap) or
-                    str(r.get("in-interface-list", "")).startswith("!") or
-                    (not r.get("in-interface") and not r.get("in-interface-list")))
-                   for r in inp)
+    # what really gets through from the internet: a new connection to the router's management services / DNS
+    open_wan = [f"{proto}/{port}" for proto, port in WAN_SERVICES
+                if probe(snap, "input", _wan_probe(snap, wan, proto, port))[0] == "accept"]
+    wan_drop = not open_wan
+    accept_all = [k for m, _r, k in dead_rules(snap)[0] if m == "ip/firewall/filter" and k.get("chain") == "input"
+                  and (k.get("action") or "accept") in ("accept", "return")]
     mgmt = split_list(t.get("mgmt_addresses", ""))
     if est and invalid and wan_drop:
         add(finding("fw.input", "firewall", OK, "Input-Kette schützt den Router",
@@ -2023,6 +2139,8 @@ def _firewall_findings(snap, t, add, wan, lan, lan_net) -> None:
                                    ("Rest von WAN verwerfen", wan_drop)) if not ok]
         wg_ports = [w.get("listen-port") for w in items(snap, "interface/wireguard") if w.get("listen-port")]
         script = [
+            *(["# Zuerst die Regel ohne Bedingungen einschränken (siehe „akzeptiert alles“) – sonst greifen die "
+               "folgenden Regeln nicht"] if accept_all else []),
             "/ip firewall address-list add list=sm-mgmt address=" + (mgmt[0] if mgmt else "<ADMIN-IP>")
             + " comment=\"servermanager: Management\"",
             *[f"/ip firewall address-list add list=sm-mgmt address={m} comment=\"servermanager: Management\""
@@ -2039,14 +2157,19 @@ def _firewall_findings(snap, t, add, wan, lan, lan_net) -> None:
             f"add chain=input action=drop in-interface={wan} comment=\"servermanager: drop WAN\"",
         ]
         add(finding("fw.input", "firewall", MISSING if not inp else CHANGE,
-                    "Input-Kette unvollständig – Router von außen angreifbar",
+                    "Input-Kette unvollständig" + ("" if wan_drop else " – Router von außen angreifbar"),
                     "Fehlt: " + ", ".join(missing) + ". Nur als Skript: vor dem Einspielen prüfen, dass die eigene "
                     "Management-Adresse in sm-mgmt steht (sonst Aussperrung!) und die Regeln vor vorhandenen "
-                    "drop-Regeln stehen (place-before).", severity="crit", script=script))
+                    "drop-Regeln stehen (place-before).", severity="warn" if wan_drop else "crit",
+                    current=("Von WAN erreichbar: " + ", ".join(open_wan)) if open_wan else "", script=script))
     fwd_est = any(r.get("action") in ("accept", "fasttrack-connection") and "established" in
                   str(r.get("connection-state", "")) for r in fwd)
-    fwd_wan = any(r.get("action") == "drop" and rule_matches_iface(r, "in", wan, snap) and
-                  "dstnat" in str(r.get("connection-nat-state", "")) for r in fwd)
+    # a new connection from the internet into each internal network (no port forwarding) must not get through
+    targets = [(n["iface"], n["net"]) for n in internal_networks(snap, wan)] or \
+        ([(lan, net_of(lan_net))] if net_of(lan_net) else [])
+    fwd_wan = bool(targets) and not any(probe(snap, "forward", dict(
+        _wan_probe(snap, wan, "tcp", 445), dst=str(next(net.hosts(), net.network_address)), out=ifc,
+        dst_type=("unicast",)))[0] == "accept" for ifc, net in targets)
     if fwd_est and fwd_wan:
         add(finding("fw.forward", "firewall", OK, "Forward-Kette schützt das LAN"))
     else:
@@ -2061,7 +2184,8 @@ def _firewall_findings(snap, t, add, wan, lan, lan_net) -> None:
                             f"add chain=forward action=drop in-interface={wan} connection-nat-state=!dstnat "
                             "connection-state=new comment=\"servermanager: drop WAN not dstnat\""]))
     dns = single(snap, "ip/dns")
-    if yes(dns.get("allow-remote-requests")) and not wan_drop:
+    if yes(dns.get("allow-remote-requests")) and \
+            probe(snap, "input", _wan_probe(snap, wan, "udp", 53))[0] == "accept":
         add(finding("fw.dns", "firewall", CHANGE, "Offener DNS-Resolver",
                     "allow-remote-requests ist aktiv, aber die Input-Kette verwirft Anfragen von WAN nicht – der "
                     "Router kann für DNS-Amplification missbraucht werden.", severity="crit",

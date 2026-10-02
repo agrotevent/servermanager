@@ -97,7 +97,9 @@ Geprüft werden u. a.:
   MSS-Clamping für WireGuard
 - **MTU unter 1500** (z. B. Hetzner vSwitch mit 1400): MSS-Clamping in beide Richtungen und DHCP-Option 26,
   damit die Clients die MTU kennen
-- Firewall: Schutz der Input-Kette, Forward-Kette. Für **jedes interne Netz** wird ein Testpaket durch Raw- und
+- Firewall: Schutz der Input- und Forward-Kette – entschieden per Testpaket aus dem Internet (Management-Dienste
+  und DNS des Routers, neue Verbindung ins LAN), nicht nur nach vorhandenen Regeln. Für **jedes interne Netz** wird
+  ein Testpaket durch Raw- und
   Filter-Regeln geschickt (in Reihenfolge, mit jump/return, Adresslisten, Interface-Listen samt
   `include`/`exclude` und IPsec-Policies): kommt das Netz ins Internet (Forward) und erreicht DNS/DHCP den Router
   (Input)? Bewertet wird das ganze Netz, nicht ein einzelnes Gerät; Sperren für bestimmte Ziele (z. B. DoH-Server)
@@ -111,7 +113,8 @@ Geprüft werden u. a.:
   Einträge mit Verweis auf **gelöschte Interfaces** (`*1`, `*14A`)
 - Dienste: unverschlüsselte Dienste (telnet, ftp, www, api), REST über https, Adressbeschränkung der
   Management-Dienste, Neighbor Discovery und MAC-Server auf WAN, Standardbenutzer `admin`
-- Tunnel: WireGuard-Peers mit 0.0.0.0/0, Hinweise zu Newt/Pangolin
+- Tunnel: WireGuard-Peers mit 0.0.0.0/0, von außen gesperrter WireGuard-Port (Fehler, wenn Peers ohne Endpoint
+  einwählen müssen), Hinweise zu Newt/Pangolin
 
 **Anwenden:** Punkte mit Häkchen setzt der Servermanager per API um. Dabei gilt:
 
