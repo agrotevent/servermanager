@@ -482,7 +482,7 @@ def apply(router_id: int):
         if not request.form.get("skip_backup"):
             name = routeros.backup_before_change(mt)
             log.append(f"Sicherung auf dem Router: {name}.backup")
-        ops = [op for f in findings for op in f["ops"]]
+        ops = routeros.unique_ops(op for f in findings for op in f["ops"])
         done = routeros.apply_ops(mt, ops, log.append)
         router.snapshot = routeros.snapshot_from_api(mt)
         router.snapshot_source = "api"

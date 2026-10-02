@@ -324,6 +324,11 @@ def test_multilan_findings():
     assert "place-before=[:pick [find where chain=input action=drop dynamic=no] 0]" in lanin["script"][0]
     # internet access is not blocked
     assert "fw.lanout" not in by_id and "fw.lanout.ether4" not in by_id
+    snap = _snap
+    pkt = {"src": "10.200.30.2", "dst": "1.1.1.1", "proto": "tcp", "sport": 40000, "dport": 443, "in": "ether4",
+           "out": "ether1", "state": "new", "nat": (), "dst_type": ("unicast",), "src_type": ("unicast",),
+           "flags": ("syn",)}
+    assert routeros.probe(snap, "forward", pkt)[0] == "accept"
     # rules behind the final drop + user chains without a jump
     dead = by_id["fw.dead"]
     assert dead["status"] == "change"
@@ -352,14 +357,15 @@ def test_multilan_findings():
         "tcp-mss": "1361-65535", "new-mss": "1360", "passthrough": "yes", "comment": "servermanager: MSS ether4 (MTU 1400)"}]
     dmtu = by_id["lan.mtu.ether4"]
     assert dmtu["status"] == "missing" and dmtu["applicable"]
-    assert dmtu["script"] == ["/ip dhcp-server option add name=sm-mtu-1400 code=26 value=0x0578",
+    assert dmtu["script"] == ['/ip dhcp-server option add name=sm-mtu-1400 code=26 value=0x0578 '
+                              'comment="servermanager: MTU 1400"',
                               "/ip dhcp-server network set [ find address=10.200.30.0/24 ] dhcp-option=sm-mtu-1400"]
     assert "pol.mtu.ether3" not in by_id and "lan.mtu.ether3" not in by_id
     # log=yes on NAT and broad accepts - not on rules that never fire (dead / deleted interface)
     log = by_id["fw.log"]
     assert log["severity"] == "info"
-    assert "/ip firewall nat set [ find where log=yes chain=srcnat action=masquerade out-interface=ether4 ] log=no" \
-        in log["script"]
+    assert "/ip firewall nat set [ find where log=yes chain=srcnat action=masquerade out-interface=ether4 " \
+        "log-prefix=nat_ ] log=no" in log["script"]
     assert any("src-address=192.0.2.142" in s for s in log["script"])
     assert not any("in-interface=ether1" in s or "*1" in s for s in log["script"])
     assert log["title"].startswith("3 ")
@@ -438,6 +444,275 @@ def test_probe_evaluator():
     assert routeros.probe(snap, "input", dict(pkt, proto="udp", dport=53))[0] == "uncertain"   # rate limit
     assert routeros.unconditional({"chain": "input", "action": "drop", "log": "yes", "log-prefix": "x",
                                    "comment": "c"})
+
+
+PKT = {"src": "192.168.88.10", "dst": "1.1.1.1", "proto": "tcp", "sport": 40000, "dport": 443, "in": "bridge",
+       "out": "ether1", "state": "new", "nat": (), "dst_type": ("unicast",), "src_type": ("unicast",),
+       "flags": ("syn",)}
+
+
+def test_probe_tcp_flags_negate_each_flag():
+    snap = {"menus": {}}
+    null_scan = {"protocol": "tcp", "tcp-flags": "!fin,!syn,!rst,!ack"}   # MikroTik's bad_tcp rule
+    assert routeros.rule_matches(null_scan, PKT, snap) is False
+    assert routeros.rule_matches(null_scan, dict(PKT, flags=()), snap) is True
+    assert routeros.rule_matches({"protocol": "tcp", "tcp-flags": "syn,!ack"}, PKT, snap) is True
+    assert routeros.rule_matches({"protocol": "tcp", "tcp-flags": "syn,!ack"}, dict(PKT, flags=("syn", "ack")),
+                                 snap) is False
+
+
+def test_interface_lists_include_exclude_and_predefined():
+    snap = routeros.parse_export("""
+/interface list add name=LAN
+/interface list add name=VSW
+/interface list add name=GUEST
+/interface list add exclude=GUEST include=LAN,VSW name=INTERNAL
+/interface list add include=LOOP2 name=LOOP1
+/interface list add include=LOOP1 name=LOOP2
+/interface list member add interface=bridge list=LAN
+/interface list member add interface=vlan9 list=LAN
+/interface list member add interface=vlan9 list=GUEST
+/interface list member add interface=ether4 list=VSW
+/ip address add address=10.0.0.1/24 interface=bridge
+/ip address add address=10.0.9.1/24 interface=vlan9
+/ip address add address=10.0.4.1/24 interface=ether4
+""")
+    f = routeros.in_iface_list
+    assert f(snap, "ether4", "INTERNAL") is True and f(snap, "bridge", "INTERNAL") is True
+    assert f(snap, "vlan9", "INTERNAL") is False                   # excluded through GUEST
+    assert f(snap, "ether4", "LAN") is False and f(snap, "ether4", "all") is True and f(snap, "ether4", "none") is False
+    assert f(snap, "ether4", "static") is True and f(snap, "ether4", "dynamic") is False
+    assert f(snap, "unknown", "static") is None
+    assert f(snap, "bridge", "LOOP1") is None                      # include cycle
+    assert routeros.rule_matches({"in-interface-list": "!INTERNAL"}, dict(PKT, **{"in": "ether4"}), snap) is False
+
+
+DEFCONF = """
+/interface bridge add name=bridge
+/interface list add name=WAN
+/interface list add name=LAN
+/ip pool add name=default-dhcp ranges=192.168.88.10-192.168.88.254
+/ip dhcp-server add address-pool=default-dhcp interface=bridge name=defconf
+/interface bridge port add bridge=bridge interface=ether2
+/interface list member add interface=bridge list=LAN
+/interface list member add interface=ether1 list=WAN
+/ip address add address=192.168.88.1/24 interface=bridge network=192.168.88.0
+/ip dhcp-client add interface=ether1
+/ip dhcp-server network add address=192.168.88.0/24 dns-server=192.168.88.1 gateway=192.168.88.1
+/ip dns set allow-remote-requests=yes
+/ip firewall filter
+add action=accept chain=input connection-state=established,related,untracked
+add action=drop chain=input connection-state=invalid
+add action=accept chain=input protocol=icmp
+add action=accept chain=input dst-address=127.0.0.1
+add action=drop chain=input in-interface-list=!LAN
+add action=accept chain=forward ipsec-policy=in,ipsec
+add action=accept chain=forward ipsec-policy=out,ipsec
+add action=fasttrack-connection chain=forward connection-state=established,related hw-offload=yes
+add action=accept chain=forward connection-state=established,related,untracked
+add action=drop chain=forward connection-state=invalid
+add action=drop chain=forward connection-nat-state=!dstnat connection-state=new in-interface-list=WAN
+/ip firewall nat
+add action=masquerade chain=srcnat ipsec-policy=out,none out-interface-list=WAN
+"""
+
+
+def _analyze(text, edit=None):
+    snap = routeros.parse_export(text)
+    if edit:
+        edit(snap["menus"])
+    target, errors = routeros.validate_target(routeros.detect_target(snap))
+    assert not errors
+    findings = routeros.analyze(snap, target)
+    assert len({f["id"] for f in findings}) == len(findings)
+    return {f["id"]: f for f in findings}
+
+
+def test_defconf_is_clean_and_a_forward_block_is_found():
+    by_id = _analyze(DEFCONF)
+    assert by_id["nat.masq"]["status"] == "ok" and by_id["fw.lanin"]["status"] == "ok"
+    for fid in ("fw.lanout", "fw.dead", "fw.icmp", "fw.log", "sys.orphans"):
+        assert fid not in by_id, fid
+    blocked = DEFCONF.replace("add action=fasttrack-connection",
+                              "add action=drop chain=forward in-interface=bridge out-interface-list=WAN\n"
+                              "add action=fasttrack-connection")
+    assert _analyze(blocked)["fw.lanout"]["status"] == "change"       # despite the ipsec-policy rules before
+    tunnel = blocked + "/ip ipsec policy add dst-address=0.0.0.0/0 src-address=192.168.88.0/24 tunnel=yes\n"
+    assert "fw.lanout" not in _analyze(tunnel)                        # goes into the IPsec tunnel
+
+
+def test_probe_undecidable_rules():
+    snap = {"menus": {"ip/firewall/filter": [
+        {"chain": "forward", "action": "accept", "limit": "10,20:packet"},
+        {"chain": "forward", "action": "accept", "connection-state": "new"},
+        {"chain": "input", "action": "accept", "limit": "10,20:packet"},
+        {"chain": "input", "action": "drop"}]}}
+    assert routeros.probe(snap, "forward", PKT)[0] == "accept"     # accepted either way
+    v, rule, _ = routeros.probe(snap, "input", PKT)
+    assert v == "uncertain" and rule["limit"] == "10,20:packet"
+    # "return" in a built-in chain ends it with accept - the filter table is still evaluated
+    snap = {"menus": {"ip/firewall/raw": [{"chain": "prerouting", "action": "return", "in-interface": "bridge"}],
+                      "ip/firewall/filter": [{"chain": "forward", "action": "drop", "in-interface": "bridge"}]}}
+    assert routeros.probe(snap, "forward", PKT)[0] == "drop"
+
+
+def test_multilan_forward_uncertain_is_check():
+    def edit(m):
+        m["ip/firewall/filter"].insert(0, {"chain": "forward", "action": "drop", "in-interface": "ether4",
+                                           "connection-limit": "100,32", "disabled": "no"})
+    _snap, by_id = _multilan(edit)
+    f = by_id["fw.lanout.ether4"]
+    assert f["status"] == "check" and "connection-limit" not in f["current"] and "in-interface=ether4" in f["current"]
+
+
+def test_multilan_two_subnets_on_one_interface():
+    def edit(m):
+        m["ip/address"].append({"address": "10.201.0.1/24", "interface": "ether4", "disabled": "no"})
+        m["ip/dhcp-server/network"].append({"address": "10.201.0.0/24", "gateway": "10.201.0.1",
+                                            "dns-server": "1.1.1.1"})
+    snap, by_id = _multilan(edit)
+    assert {"lan.mtu.ether4.10.200.30.0", "lan.mtu.ether4.10.201.0.0", "fw.lanin.ether4.10.201.0.0",
+            "nat.masq.ether4.10.201.0.0"} <= set(by_id)
+    mtu = [f for k, f in by_id.items() if k.startswith("lan.mtu.")]
+    ops = routeros.unique_ops(op for f in mtu for op in f["ops"])
+    assert [op["path"] for op in ops].count("ip/dhcp-server/option") == 1
+    assert routeros.full_script(mtu).count("/ip dhcp-server option add") == 1
+
+
+def test_detect_target_prefers_client_networks():
+    def edit(m):
+        m.setdefault("interface/bridge", []).extend([{"name": "containers"}, {"name": "loopback"}])
+        m["ip/address"][:0] = [{"address": "172.17.0.1/24", "interface": "containers", "disabled": "no"},
+                               {"address": "10.255.255.1/32", "interface": "loopback", "disabled": "no"}]
+    snap = routeros.parse_export(MULTILAN)
+    edit(snap["menus"])
+    assert routeros.detect_target(snap)["lan_interface"] == "ether3"
+
+
+@pytest.mark.parametrize("nat, status", [
+    ({"action": "masquerade", "src-address-list": "local", "out-interface-list": "WAN"}, "ok"),
+    ({"action": "masquerade", "out-interface-list": "!LAN"}, "ok"),
+    ({"action": "masquerade", "src-address-list": "dns", "out-interface": "ether1"}, "check"),
+    ({"action": "masquerade", "src-address-list": "local", "out-interface": "ether3"}, "missing"),
+])
+def test_multilan_nat_coverage(nat, status):
+    def edit(m):
+        m["ip/firewall/nat"] = [dict(nat, chain="srcnat", disabled="no")]
+        m["ip/firewall/address-list"] += [{"list": "local", "address": "10.0.0.0/8"},
+                                          {"list": "dns", "address": "nets.example.net"}]
+    _snap, by_id = _multilan(edit)
+    assert by_id["nat.masq"]["status"] == status
+    assert by_id["nat.masq.ether4"]["status"] == status
+    assert by_id["nat.masq.ether4"]["applicable"] == (status == "missing")
+
+
+def test_multilan_router_not_gateway():
+    def edit(m):
+        m["ip/dhcp-server/network"][1]["gateway"] = "10.200.30.254"
+        m["ip/firewall/nat"] = [r for r in m["ip/firewall/nat"] if r.get("out-interface") != "ether1"]
+    _snap, by_id = _multilan(edit)
+    nat = by_id["nat.masq.ether4"]
+    assert nat["status"] == "check" and not nat["applicable"] and "masquerade" in nat["script"][0]
+    masq = by_id["nat.lanmasq.ether4"]
+    assert masq["status"] == "check" and masq["severity"] == "info" and not masq["script"]
+
+
+def test_multilan_dhcp_option_set_on_server():
+    def edit(m):
+        next(x for x in m["ip/dhcp-server"] if x["interface"] == "ether4")["dhcp-option-set"] = "vsw"
+    _snap, by_id = _multilan(edit)
+    f = by_id["lan.mtu.ether4"]
+    assert f["status"] == "check" and not f["ops"] and "dhcp-option-set=vsw" in f["current"]
+
+
+def _icmp_rule(**kw):
+    return dict({"chain": "input", "action": "drop", "protocol": "icmp", "disabled": "no"}, **kw)
+
+
+@pytest.mark.parametrize("rule, pos, flagged", [
+    (_icmp_rule(), 0, True),
+    (_icmp_rule(**{"icmp-options": "3:4"}), 0, True),
+    (_icmp_rule(**{"in-interface-list": "WAN"}), 0, True),
+    (_icmp_rule(**{"connection-state": "!established"}), 0, True),
+    (_icmp_rule(**{"src-address": "203.0.113.0/24"}), 0, False),
+    (_icmp_rule(**{"icmp-options": "8:0"}), 0, False),
+    (_icmp_rule(**{"dst-limit": "10,20,src-address/1m"}), 0, False),
+    (_icmp_rule(**{"in-interface": "ether3"}), 0, False),
+    (_icmp_rule(**{"in-interface-list": "LAN"}), 0, False),
+    (_icmp_rule(**{"connection-state": "new"}), 0, False),
+    (_icmp_rule(), 7, False),                                    # behind "accept established,related"
+    (_icmp_rule(chain="forward", **{"out-interface-list": "WAN"}), 0, False),
+])
+def test_multilan_icmp_variants(rule, pos, flagged):
+    def edit(m):
+        m["ip/firewall/raw"] = [r for r in m["ip/firewall/raw"] if r.get("comment") != "Block Ping Flood"]
+        m["ip/firewall/filter"].insert(pos, rule)
+    _snap, by_id = _multilan(edit)
+    assert ("fw.icmp" in by_id) == flagged
+
+
+def test_multilan_icmp_errors_accepted_before_raw_drop():
+    def edit(m):
+        m["ip/firewall/raw"][:0] = [
+            {"chain": "prerouting", "action": "accept", "protocol": "icmp", "icmp-options": "3:4", "disabled": "no"},
+            {"chain": "prerouting", "action": "accept", "protocol": "icmp", "icmp-options": "11", "disabled": "no"}]
+    assert "fw.icmp" not in _multilan(edit)[1]
+
+    def twice(m):
+        m["ip/firewall/raw"] = [r for r in m["ip/firewall/raw"] if r.get("comment") != "Block Ping Flood"]
+        m["ip/firewall/filter"][:0] = [_icmp_rule(), _icmp_rule()]
+    script = _multilan(twice)[1]["fw.icmp"]["script"]
+    assert script == ["# /ip firewall filter: chain=input action=drop protocol=icmp – von Hand deaktivieren"] * 2
+
+
+def test_multilan_dead_wireguard_rule_is_moved():
+    def edit(m):
+        m["interface/wireguard"].append({"name": "wg-partner", "listen-port": "54321"})
+    f = _multilan(edit)[1]["fw.dead"]
+    assert "darunter WireGuard wg-partner" in f["title"]
+    assert '/ip firewall filter move [ find where comment="Allow WireGuard" ] ' \
+           'destination=[ find where chain=input action=drop log-prefix=DROP_INPUT_ ]' in f["script"]
+
+
+def test_multilan_log_script_spares_unflagged_rules():
+    def edit(m):
+        m["ip/firewall/filter"].insert(0, {"chain": "input", "action": "accept", "src-address": "192.0.2.142",
+                                           "protocol": "tcp", "dst-port": "25", "log": "yes",
+                                           "log-prefix": "Lager_", "disabled": "no"})
+    script = _multilan(edit)[1]["fw.log"]["script"]
+    assert not any("src-address=192.0.2.142" in s and s.startswith("/") for s in script)
+    assert any(s.startswith("# /ip firewall filter: chain=input action=accept src-address=192.0.2.142")
+               for s in script)
+
+
+def test_multiline_comment_stays_on_one_script_line():
+    def edit(m):
+        m["ip/firewall/raw"][0]["comment"] = "Block\nPing Flood"
+    _snap, by_id = _multilan(edit)
+    assert by_id["fw.icmp"]["script"] == ['/ip firewall raw disable [ find where comment="Block\\nPing Flood" ]']
+    for line in routeros.full_script(list(by_id.values())).splitlines():
+        assert line == "" or line.startswith(("#", "/", "add ")), line
+
+
+def test_bridge_mtu_from_its_ports_in_an_export():
+    snap = routeros.parse_export("""
+/interface bridge add name=bridge-vsw
+/interface ethernet set [ find default-name=ether3 ] mtu=1400
+/interface bridge port add bridge=bridge-vsw interface=ether3
+/ip address add address=10.30.0.1/24 interface=bridge-vsw
+""")
+    br = next(i for i in snap["menus"]["interface"] if i["name"] == "bridge-vsw")
+    assert routeros.iface_mtu(br) == 1400
+
+
+def test_stale_api_snapshot_is_reported():
+    snap = routeros.parse_export(MULTILAN)
+    snap["source"] = "api"
+    snap["menus"].pop("ip/firewall/raw")
+    target, _ = routeros.validate_target(routeros.detect_target(snap))
+    by_id = {f["id"]: f for f in routeros.analyze(snap, target)}
+    assert by_id["sys.snapshot"]["status"] == "check" and "ip/firewall/raw" in by_id["sys.snapshot"]["current"]
+    assert "lan.mtu.ether4" not in by_id       # DHCP options were not read
 
 
 def test_migration_v1_to_v2(tmp_path):
