@@ -8,21 +8,24 @@ Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
 - RouterOS-Konfigurationsanalyse prüft **alle internen Netze**, nicht nur das LAN aus den Sollwerten
   (z. B. ein zweiter Hetzner vSwitch): DHCP-Netz, NAT über WAN und – per Testpaket durch Raw- und
-  Filter-Regeln (Reihenfolge, jump/return, Adress- und Interface-Listen, IPsec-Policies) – ob das Netz
-  ins Internet kommt und DNS/DHCP den Router erreicht.
+  Filter-Regeln (Reihenfolge, jump/return, Adress- und Interface-Listen, IPsec-Policies) – ob das ganze
+  Netz ins Internet kommt und DNS/DHCP den Router erreicht.
 - Neue Hinweise der Analyse: wirkungslose Firewall-Regeln hinter einer abschließenden Regel und Ketten
-  ohne Sprung (WireGuard-Ports werden verschoben statt gelöscht), globale ICMP-Sperren/-Limits (brechen
-  Path-MTU-Discovery), Masquerade in ein internes Netz, Interfaces mit MTU unter 1500 ohne MSS-Clamping
-  bzw. ohne DHCP-Option 26, `log=yes` an NAT-, breiten accept- und abschließenden drop-Regeln sowie
-  Einträge mit Verweis auf gelöschte Interfaces.
-- Das LAN wird beim Einlesen unter den Interfaces mit DHCP-Server bzw. in der Liste `LAN` erkannt
-  (Bridges darunter zuerst); Raw-Regeln, DHCP-Optionen und IPsec-Policies werden mit eingelesen. Ein
-  gespeicherter Stand, dem diese Menüs fehlen, wird als „neu einlesen“ gemeldet.
+  ohne Sprung (nötige WireGuard-Regeln werden verschoben statt gelöscht), ein `accept` ohne Bedingungen
+  in Input/Forward, globale ICMP-Sperren/-Limits (brechen Path-MTU-Discovery), Masquerade in ein internes
+  Netz, Interfaces mit MTU unter 1500 ohne MSS-Clamping bzw. ohne DHCP-Option 26, `log=yes` an NAT-,
+  breiten accept- und abschließenden drop-Regeln sowie Einträge mit Verweis auf gelöschte Interfaces.
+- Das LAN wird beim Einlesen bevorzugt unter den Interfaces mit DHCP-Server erkannt, danach unter denen
+  in der Liste `LAN` (Bridges jeweils zuerst; Tunnel und Transfernetze nie). Raw-Regeln, DHCP-Optionen,
+  IPsec-Policies und Container-veths werden mit eingelesen; einem gespeicherten Stand, dem diese Menüs
+  fehlen, wird „neu einlesen“ empfohlen.
 
 ### Verbessert
 
-- NAT über Adresslisten und negierte Interface-Listen wird erkannt; nicht auswertbare Regeln ergeben
-  „Prüfen“ statt „Fehlt“.
+- NAT über Adresslisten und negierte Interface-Listen wird erkannt; reine Hairpin- oder Port-Regeln
+  gelten nicht als Internet-NAT; nicht auswertbare Regeln ergeben „Prüfen“ statt „Fehlt“.
+- Upstream-DNS vom Provider (DHCP-/PPPoE-Client) gilt beim Export nicht mehr als fehlend.
+- Sonderzeichen in Kommentaren aus einem Export (`\C3\BC` …) werden richtig gelesen.
 - Beim Anwenden mehrerer Punkte werden gleiche Operationen nur einmal ausgeführt.
 
 ## 1.11.1 – 30.09.2026

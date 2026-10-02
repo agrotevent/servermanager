@@ -85,10 +85,11 @@ Geprüft werden u. a.:
 - Upstream-DNS, DNS für Clients (allow-remote-requests) und offener Resolver
 - **Weitere interne Netze** (jedes Interface mit privater Adresse und DHCP-Server, in der Interface-Liste
   `LAN` oder als Bridge – z. B. ein zweiter Hetzner vSwitch; Tunnel und Transfernetze zählen nicht): DHCP-Netz
-  (Gateway/DNS), NAT über WAN, Firewall. Fehlendes NAT gilt nur als Fehler, wenn der Router sich dort per DHCP
-  selbst als Gateway verteilt – sonst ist es ein Hinweis (z. B. Backend-Netz mit eigenem Uplink).
-- NAT: Masquerade für das LAN über WAN (auch über Adresslisten und negierte Interface-Listen wie `!LAN`),
-  Masquerade ohne Ausgangs-Interface, vorhandene Portweiterleitungen,
+  (Gateway/DNS), NAT über WAN, Firewall. Fehlendes NAT gilt nur als Fehler, wenn der Router sich dort selbst als
+  Gateway verteilt (DHCP-Netz bzw. Container-veth) – sonst ist es, wie ein fremdes Gateway im DHCP-Netz, ein Hinweis
+  (z. B. Backend-Netz mit eigenem Uplink).
+- NAT: Masquerade für das LAN über WAN (auch über Adresslisten und negierte Interface-Listen wie `!LAN`; reine
+  Hairpin- oder Port-Regeln zählen nicht), Masquerade ohne Ausgangs-Interface, vorhandene Portweiterleitungen,
   **Masquerade in ein internes Netz** (`out-interface=<LAN>` – Server sehen keine Client-IPs mehr; meist ein
   Notbehelf für ein falsches Gateway auf den Geräten → auf Hairpin-NAT beschränken)
 - Policy-Routing: Routing-Tabelle, Default-Route in der Tabelle, Adressliste lokaler Netze,
@@ -99,9 +100,12 @@ Geprüft werden u. a.:
 - Firewall: Schutz der Input-Kette, Forward-Kette. Für **jedes interne Netz** wird ein Testpaket durch Raw- und
   Filter-Regeln geschickt (in Reihenfolge, mit jump/return, Adresslisten, Interface-Listen samt
   `include`/`exclude` und IPsec-Policies): kommt das Netz ins Internet (Forward) und erreicht DNS/DHCP den Router
-  (Input)? Hängt das Ergebnis von Ratenbegrenzung, Markierungen o. Ä. ab, lautet es „Prüfen“.
+  (Input)? Bewertet wird das ganze Netz, nicht ein einzelnes Gerät; Sperren für bestimmte Ziele (z. B. DoH-Server)
+  zählen nicht als „kein Internet“. Hängt das Ergebnis von einem Teil des Netzes, Ratenbegrenzung, Markierungen o. Ä.
+  ab, lautet es „Prüfen“.
 - Firewall-Aufräumen: **wirkungslose Regeln** hinter einer Regel ohne Bedingungen (z. B. `drop` am Ende der
-  Input-Kette) und Ketten ohne aktiven `jump`, **globale ICMP-Sperren/-Limits** (brechen Ping-Tests und
+  Input-Kette; nötige WireGuard-Regeln werden verschoben statt gelöscht) und Ketten ohne aktiven `jump`; ein
+  **`accept` ohne Bedingungen** in Input/Forward ist kritisch (alles danach schützt nicht mehr), **globale ICMP-Sperren/-Limits** (brechen Ping-Tests und
   Path-MTU-Discovery), **`log=yes`** an NAT-, breiten accept- und abschließenden drop-Regeln (das Speicher-Log
   läuft über),
   Einträge mit Verweis auf **gelöschte Interfaces** (`*1`, `*14A`)
