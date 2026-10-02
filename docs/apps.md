@@ -90,6 +90,7 @@ Im Reiter *Anwendungen*:
   Mailcow den Identity Provider „Generic OIDC“ mit den öffentlichen Endpunkten von authentik
   (Mailcow ab Version 2025-03). Postfächer werden beim ersten SSO-Login angelegt, wenn die Domain
   existiert. IMAP/SMTP-Programme nutzen weiterhin Postfach- bzw. App-Passwörter.
+- **Anmeldung am Servermanager:** siehe [Benutzer und Rechte](benutzer.md#anmeldung-uber-authentik-sso).
 - **Pangolin verbinden:** Pangolin-Verbindung wählen, Adresse des Dashboards prüfen (vorbelegt aus der
   API-Adresse, ohne `api.` und Port). Der Servermanager legt in Pangolin einen OIDC-Identity-Provider
   an, in authentik die Anwendung mit der Rückruf-Adresse von Pangolin

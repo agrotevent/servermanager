@@ -15,6 +15,10 @@ DEFAULTS: dict[str, Any] = {
     "general.timezone": "Europe/Berlin",
     "general.session_hours": 12,
     "general.require_2fa_admin": False,
+    # login through the SSO (authentik)
+    "login.sso_auto_create": False,      # unknown SSO users are created (role user, no rights)
+    "login.sso_group": "",               # only members of this authentik group may log in
+    "login.sso_admins": False,           # administrators may log in through the SSO too
     # periodic checks
     "checks.status_interval_min": 15,
     "checks.deep_interval_hours": 6,

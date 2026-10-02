@@ -14,6 +14,27 @@ Zuweisung je System (unter *Benutzer* oder im System unter *Zugriff*):
 | Bedienen | zusätzlich Updates installieren, Dienste/Container/VMs steuern, Neustart, Wartung planen, Konfig-Backups erstellen |
 | Vollzugriff | zusätzlich beliebige Befehle, Release-Upgrade, Nextcloud-Core-Update, Zugangsdaten ändern, Backups herunterladen/wiederherstellen, System entfernen (Adresse, Hostkey und geroutete Netze bleiben Administratoren vorbehalten) |
 
+## Anmeldung über authentik (SSO)
+
+Unter *Infrastruktur → SSO → (authentik) → Anwendungen → Anmeldung am Servermanager* richten
+Administratoren die Anmeldung per Klick ein: Adresse des Servermanagers angeben (https, so wie im Browser
+aufgerufen). Der Servermanager legt in authentik die Anwendung mit der Rückruf-Adresse
+`…/login/sso/callback` an und speichert das Client-Geheimnis verschlüsselt. Auf der Anmeldeseite
+erscheint danach „Mit *authentik* anmelden“.
+
+- **Zuordnung:** über den Benutzernamen (authentik-Benutzername = Benutzername im Servermanager).
+- **Unbekannte Benutzer anlegen** (optional): Konto mit Rolle *Benutzer* ohne Rechte – ein
+  Administrator weist danach Systeme zu.
+- **Nur Mitglieder einer authentik-Gruppe** (optional).
+- **Administratoren** melden sich standardmäßig nur mit Passwort an; per SSO erst nach Freigabe
+  („Auch Administratoren dürfen sich per SSO anmelden“). Wer in authentik Benutzer anlegen oder
+  umbenennen darf, kann sich sonst als gleichnamiger Administrator anmelden.
+- Eine im Servermanager eingerichtete **Zwei-Faktor-Anmeldung** wird auch nach dem SSO-Login abgefragt.
+- Die Anmeldung mit Passwort bleibt immer möglich (Notzugang). Rechte vergibt weiterhin der
+  Servermanager; deaktivierte oder gesperrte Konten kommen auch per SSO nicht hinein.
+- Technik: OpenID Connect (Authorization Code mit PKCE, State und Nonce). Der Code wird über die interne,
+  per Fingerabdruck gepinnte Adresse von authentik eingelöst.
+
 ## Infrastruktur (Proxmox, RouterOS, Pangolin)
 
 API-Verbindungen legen nur Administratoren an. Anderen Benutzern wird der Zugriff je Verbindung unter

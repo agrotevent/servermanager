@@ -6,7 +6,10 @@ import time
 from flask import Blueprint, flash, g, redirect, render_template, request, session, url_for
 from sqlalchemy import func, select
 
-from ... import security
+import secrets
+
+from ... import integrations, security, sso_login
+from ...authentik import AuthentikError
 from ...core import audit
 from ...models import User, utcnow
 from ..auth import client_ip, login_user, logout_user, record_failure, throttled
@@ -23,6 +26,29 @@ def _safe_next(target: str | None) -> str:
     return url_for("main.dashboard")
 
 
+def _login_page(status: int = 200, **ctx):
+    try:
+        conf = sso_login.active(g.db)
+    except Exception:  # noqa: BLE001 - the password login must always work
+        conf = None
+    return render_template("login.html", sso_name=conf[0].name if conf else "", **ctx), status
+
+
+def _finish_login(user: User, nxt: str | None, how: str):
+    """Second factor if set up, otherwise the session starts."""
+    if user.totp_enabled:
+        session.clear()
+        session["pending_uid"] = user.id
+        session["pending_at"] = int(time.time())
+        session["pending_next"] = _safe_next(nxt)
+        g.db.commit()
+        return redirect(url_for("auth.login_2fa"))
+    login_user(user)
+    audit(g.db, user, "auth.login", user.username, how, ip=client_ip())
+    g.db.commit()
+    return redirect(_safe_next(nxt))
+
+
 @bp.route("/login", methods=["GET", "POST"])
 def login():
     if g.user:
@@ -31,7 +57,7 @@ def login():
         ip = client_ip()
         if throttled(ip):
             flash("Zu viele fehlgeschlagene Anmeldungen. Bitte einige Minuten warten.", "danger")
-            return render_template("login.html"), 429
+            return _login_page(429)
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
         user = g.db.execute(select(User).where(func.lower(User.username) == username.lower())).scalar_one_or_none()
@@ -44,7 +70,7 @@ def login():
             time.sleep(0.5)
             flash("Benutzername oder Passwort falsch (nach mehreren Fehlversuchen ist das Konto kurz gesperrt).",
                   "danger")
-            return render_template("login.html", username=username), 401
+            return _login_page(401, username=username)
         ok = bool(user and user.active and security.verify_password(user.password_hash, password))
         if not ok:
             record_failure(ip)
@@ -59,21 +85,72 @@ def login():
             g.db.commit()
             time.sleep(0.5)
             flash("Benutzername oder Passwort falsch.", "danger")
-            return render_template("login.html", username=username), 401
+            return _login_page(401, username=username)
         if security.password_needs_rehash(user.password_hash):
             user.password_hash = security.hash_password(password)
-        if user.totp_enabled:
-            session.clear()
-            session["pending_uid"] = user.id
-            session["pending_at"] = int(time.time())
-            session["pending_next"] = _safe_next(request.args.get("next"))
-            g.db.commit()
-            return redirect(url_for("auth.login_2fa"))
-        login_user(user)
-        audit(g.db, user, "auth.login", user.username, ip=ip)
+        return _finish_login(user, request.args.get("next"), "")
+    return _login_page()
+
+
+@bp.get("/login/sso")
+def login_sso():
+    if g.user:
+        return redirect(url_for("main.dashboard"))
+    conf = sso_login.active(g.db)
+    if conf is None:
+        flash("Die Anmeldung per SSO ist nicht eingerichtet.", "warning")
+        return redirect(url_for("auth.login"))
+    srv, client = conf
+    try:
+        au = integrations.sso_client(srv)
+    except (AuthentikError, ValueError) as exc:
+        flash(f"SSO nicht verfügbar: {exc}", "danger")
+        return redirect(url_for("auth.login"))
+    verifier, challenge = sso_login.pkce()
+    state, nonce = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
+    session.clear()
+    session["sso"] = {"state": state, "nonce": nonce, "verifier": verifier, "at": int(time.time()),
+                      "next": _safe_next(request.args.get("next")), "client": client.id}
+    return redirect(sso_login.authorize_url(au, client, state, nonce, challenge))
+
+
+@bp.get("/login/sso/callback")
+def login_sso_callback():
+    pending = session.pop("sso", None) or {}
+    ip = client_ip()
+
+    def fail(msg: str, detail: str = ""):
+        record_failure(ip)
+        audit(g.db, None, "auth.sso_failed", (detail or msg)[:200], ip=ip)
         g.db.commit()
-        return redirect(_safe_next(request.args.get("next")))
-    return render_template("login.html")
+        flash(msg, "danger")
+        return redirect(url_for("auth.login"))
+    if throttled(ip):
+        flash("Zu viele fehlgeschlagene Anmeldungen. Bitte einige Minuten warten.", "danger")
+        return redirect(url_for("auth.login"))
+    state = request.args.get("state", "")
+    if (not pending or not state or not secrets.compare_digest(state, str(pending.get("state", "")))
+            or time.time() - pending.get("at", 0) > sso_login.STATE_TTL):
+        return fail("Die SSO-Anmeldung ist abgelaufen oder ungültig – bitte erneut versuchen.")
+    if request.args.get("error"):
+        err = request.args.get("error_description") or request.args.get("error")
+        return fail(f"authentik hat die Anmeldung abgebrochen: {err[:200]}")
+    conf = sso_login.active(g.db)
+    if conf is None or conf[1].id != pending.get("client"):
+        return fail("Die Anmeldung per SSO ist nicht (mehr) eingerichtet.")
+    srv, client = conf
+    try:
+        info = sso_login.exchange(integrations.sso_client(srv), client, request.args.get("code", ""),
+                                  pending.get("verifier", ""), pending.get("nonce", ""))
+        user, created = sso_login.resolve_user(g.db, info)
+    except (AuthentikError, sso_login.LoginError, ValueError) as exc:
+        g.db.rollback()
+        return fail(str(exc))
+    if user.locked_until and user.locked_until > utcnow():
+        return fail("Das Konto ist vorübergehend gesperrt.", user.username)
+    if created:
+        audit(g.db, user, "user.create", user.username, f"automatisch per SSO ({srv.name})", ip=ip)
+    return _finish_login(user, pending.get("next"), f"SSO {srv.name}")
 
 
 @bp.route("/login/2fa", methods=["GET", "POST"])

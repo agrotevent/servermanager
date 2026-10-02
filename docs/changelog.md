@@ -2,6 +2,16 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.13.0 – 02.10.2026
+
+### Neu
+
+- **Anmeldung am Servermanager über authentik (SSO):** Einrichtung per Klick unter *SSO →
+  Anwendungen*; Button „Mit authentik anmelden“ auf der Anmeldeseite. Zuordnung über den
+  Benutzernamen, optional automatisches Anlegen (ohne Rechte) und Beschränkung auf eine
+  authentik-Gruppe; Administratoren nur nach Freigabe; lokale Zwei-Faktor-Anmeldung bleibt wirksam.
+  Details unter [Benutzer und Rechte](benutzer.md#anmeldung-uber-authentik-sso).
+
 ## 1.12.0 – 02.10.2026
 
 ### Neu

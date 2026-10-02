@@ -15,6 +15,10 @@
         <input type="password" id="p" name="password" autocomplete="current-password" required></div>
       <button class="btn primary" style="width:100%">Anmelden</button>
     </form>
+    {% if sso_name %}
+    <div class="login-or"><span>oder</span></div>
+    <a class="btn" style="width:100%" href="{{ url_for('auth.login_sso', next=request.args.get('next')) }}"><svg class="icon"><use href="#i-shield"/></svg>Mit {{ sso_name }} anmelden</a>
+    {% endif %}
   </div>
 </div>
 {% endblock %}

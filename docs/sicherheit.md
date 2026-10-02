@@ -31,6 +31,10 @@
   vor Änderungen eine Sicherung auf dem Router an und protokolliert jede Änderung im Audit-Log.
 - Nur Administratoren können Systeme mit Proxmox-Gästen verknüpfen (die Verknüpfung erlaubt
   Start/Stopp über die Systemrechte).
+- Anmeldung per SSO (authentik): OpenID Connect mit PKCE, State und Nonce; Code-Einlösung nur über die
+  gepinnte interne Adresse; Administratoren nur nach ausdrücklicher Freigabe; eine lokale
+  Zwei-Faktor-Anmeldung gilt weiter; fehlgeschlagene SSO-Anmeldungen zählen zur Login-Drosselung und
+  stehen im Audit-Log.
 - Enrollment-Tokens sind zufällig, nur gehasht gespeichert, zeitlich begrenzt und auf eine Anzahl
   Verwendungen beschränkt.
 

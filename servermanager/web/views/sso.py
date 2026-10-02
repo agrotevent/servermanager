@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 from flask import Blueprint, abort, flash, g, redirect, render_template, request, url_for
 from sqlalchemy import select
 
-from ... import access, integrations, security
+from ... import access, integrations, security, settings, sso_login
 from ... import sso as sso_lib
 from ...authentik import AuthentikError
 from ...core import audit
@@ -150,6 +150,11 @@ def detail(sso_id: int):
     clients = g.db.execute(select(SsoClient).where(SsoClient.sso_id == s.id)).scalars().all()
     ctx["clients"] = [(c, sso_lib.target_of(g.db, c.target_kind, c.target_id)) for c in clients]
     ctx["kind_labels"] = sso_lib.KIND_LABELS
+    sm = g.db.execute(select(SsoClient).where(SsoClient.target_kind == sso_login.KIND)).scalars().first()
+    ctx["sm_login"] = sm
+    ctx["sm_login_here"] = sm is not None and sm.sso_id == s.id
+    ctx["sm_base"] = settings.base_url(g.db)
+    ctx["login_opts"] = {k: settings.get(g.db, f"login.{k}") for k in ("sso_group", "sso_auto_create", "sso_admins")}
     linked = {(c.target_kind, c.target_id) for c in clients}
     ctx["nextclouds"] = [x for x in g.db.execute(select(System).order_by(System.name)).scalars()
                          if x.has_type("nextcloud") and can(x.id, LEVEL_FULL) and ("nextcloud", x.id) not in linked]
@@ -183,15 +188,22 @@ def connect(sso_id: int):
         target = common.get_or_403(KIND_MAILCOW, target_id, LEVEL_FULL)
     elif kind == "pangolin":
         target = common.get_or_403(KIND_PANGOLIN, target_id, LEVEL_FULL)
+    elif kind == sso_login.KIND:
+        if not g.user.is_admin:
+            abort(403)
+        target = sso_login.TARGET
+        _save_login_options()
     else:
         abort(400)
-    default = {"mailcow": getattr(target, "public_url", ""), "pangolin": dashboard_guess(target.api_url)}
+    default = {"mailcow": getattr(target, "public_url", ""), "pangolin": dashboard_guess(getattr(target, "api_url", "")),
+               sso_login.KIND: settings.base_url(g.db)}
     app_url = (request.form.get("app_url") or default.get(kind) or "").strip().rstrip("/")
     if not re.match(r"^https://[A-Za-z0-9.-]+(:\d+)?(/[A-Za-z0-9._/-]*)?$", app_url):
         flash("Öffentliche Adresse der Anwendung als https://… angeben (über Pangolin erreichbar).", "danger")
         return redirect(url_for("sso.detail", sso_id=sso_id))
     if g.db.execute(select(SsoClient).where(SsoClient.target_kind == kind, SsoClient.target_id == target.id)).first():
         flash("Diese Anwendung ist bereits mit einem SSO verbunden.", "warning")
+        g.db.commit()
         return redirect(url_for("sso.detail", sso_id=sso_id))
     job = enqueue(g.db, kind="sso_connect", title=f"SSO verbinden: {target.name} ↔ {s.name}", user=g.user,
                   system=target if kind == "nextcloud" else None,
@@ -201,6 +213,30 @@ def connect(sso_id: int):
     return redirect(url_for("jobs.detail", job_id=job.id))
 
 
+def _save_login_options() -> None:
+    f = request.form
+    group = f.get("sso_group", "").strip()
+    if group and not re.match(r"^[^\x00-\x1f]{1,150}$", group):
+        group = ""
+    settings.set(g.db, "login.sso_group", group)
+    settings.set(g.db, "login.sso_auto_create", f.get("sso_auto_create") == "1")
+    settings.set(g.db, "login.sso_admins", f.get("sso_admins") == "1")
+
+
+@bp.post("/<int:sso_id>/login-options")
+@admin_required
+def login_options(sso_id: int):
+    s = _get(sso_id, LEVEL_FULL)
+    _save_login_options()
+    audit(g.db, g.user, "sso.login_options", s.name,
+          f"Gruppe={settings.get(g.db, 'login.sso_group') or '-'} "
+          f"auto={settings.get(g.db, 'login.sso_auto_create')} admins={settings.get(g.db, 'login.sso_admins')}",
+          ip=client_ip())
+    g.db.commit()
+    flash("Anmelde-Optionen gespeichert.", "success")
+    return redirect(url_for("sso.detail", sso_id=sso_id))
+
+
 @bp.post("/<int:sso_id>/disconnect/<int:client_id>")
 @login_required
 def disconnect(sso_id: int, client_id: int):
@@ -208,6 +244,8 @@ def disconnect(sso_id: int, client_id: int):
     c = g.db.get(SsoClient, client_id)
     if c is None or c.sso_id != s.id:
         abort(404)
+    if c.target_kind == sso_login.KIND and not g.user.is_admin:
+        abort(403)
     target = sso_lib.target_of(g.db, c.target_kind, c.target_id)
     job = enqueue(g.db, kind="sso_disconnect", title=f"SSO trennen: {target.name if target else c.target_id}",
                   user=g.user, system=target if c.target_kind == "nextcloud" else None,

@@ -8,6 +8,7 @@ publish in Pangolin) in tests and for manual end-to-end checks:
 """
 from __future__ import annotations
 
+import base64
 import copy
 import datetime
 import hashlib
@@ -133,6 +134,8 @@ class State:
         self.ak_apps: dict[str, dict] = {}
         self.ak_passwords: dict[int, str] = {}
         self.ak_seq = 10
+        self.ak_codes: dict[str, dict] = {}     # code -> {"user", "challenge", "nonce", "client_id", "redirect"}
+        self.ak_tokens: dict[str, dict] = {}    # access token -> user info
 
     @staticmethod
     def _ros_val(v: Any) -> Any:
@@ -194,6 +197,8 @@ class MockApp:
                 resp = self.mailcow(req, req.path[len("/api/v1/"):])
             elif req.path.startswith("/api/v3/"):
                 resp = self.authentik(req, req.path[len("/api/v3/"):])
+            elif req.path.startswith("/application/o/"):
+                resp = self.authentik_oauth(req, req.path[len("/application/o/"):])
             elif req.path == "/zabbix/api_jsonrpc.php":
                 resp = self.zabbix(req)
             elif req.path == "/remote/json.php":
@@ -913,6 +918,36 @@ class MockApp:
             if req.method == "DELETE":
                 s.ak_users.remove(u)
                 return Response(status=204)
+        return _json({"detail": "Not found."}, 404)
+
+    def authentik_oauth(self, req: Request, path: str) -> Response:
+        s = self.s
+        if path == "token/" and req.method == "POST":
+            if req.headers.get("Authorization"):
+                return _json({"error": "invalid_request", "error_description": "API token sent"}, 400)
+            f = req.form
+            c = s.ak_codes.pop(f.get("code", ""), None)
+            prov = next((p for p in s.ak_providers.values() if p["client_id"] == f.get("client_id")), None)
+            if not c or not prov or prov["client_secret"] != f.get("client_secret") \
+                    or c["client_id"] != f.get("client_id") or c["redirect"] != f.get("redirect_uri"):
+                return _json({"error": "invalid_grant"}, 400)
+            digest = hashlib.sha256(f.get("code_verifier", "").encode()).digest()
+            if base64.urlsafe_b64encode(digest).rstrip(b"=").decode() != c["challenge"]:
+                return _json({"error": "invalid_grant", "error_description": "PKCE"}, 400)
+            info = {"sub": c["user"]["sub"], "preferred_username": c["user"]["username"],
+                    "name": c["user"].get("name", ""), "email": c["user"].get("email", ""),
+                    "groups": c["user"].get("groups", [])}
+            access = f"at-{len(s.ak_tokens) + 1}"
+            s.ak_tokens[access] = info
+
+            def b64(d):
+                return base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()
+            claims = {"sub": info["sub"], "aud": c.get("aud", f.get("client_id")), "nonce": c["nonce"]}
+            return _json({"access_token": access, "token_type": "Bearer",
+                          "id_token": f"{b64({'alg': 'RS256'})}.{b64(claims)}.sig"})
+        if path == "userinfo/":
+            info = s.ak_tokens.get(req.headers.get("Authorization", "").removeprefix("Bearer "))
+            return _json(info) if info else _json({"error": "invalid_token"}, 401)
         return _json({"detail": "Not found."}, 404)
 
     def _pg_create(self, body: dict) -> dict:

@@ -656,9 +656,10 @@ class SsoClient(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     sso_id: Mapped[int] = mapped_column(ForeignKey("sso_servers.id", ondelete="CASCADE"), index=True)
-    target_kind: Mapped[str] = mapped_column(String(16))                  # nextcloud | mailcow | pangolin
+    target_kind: Mapped[str] = mapped_column(String(16))   # nextcloud | mailcow | pangolin | servermanager
     target_id: Mapped[int] = mapped_column(Integer)
     target_ref: Mapped[str] = mapped_column(String(64), default="")       # id inside the target (Pangolin IdP)
+    secret_enc: Mapped[str] = mapped_column(Text, default="")             # client secret (servermanager login only)
     slug: Mapped[str] = mapped_column(String(64), default="")
     provider_pk: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     client_id: Mapped[str] = mapped_column(String(255), default="")

@@ -69,6 +69,12 @@ def _v7(conn: Connection) -> None:
         add_column_if_missing(conn, "sso_clients", "target_ref", "VARCHAR(64) NOT NULL DEFAULT ''")
 
 
+def _v8(conn: Connection) -> None:
+    # login to the servermanager through authentik: encrypted client secret
+    if "sso_clients" in inspect(conn).get_table_names():
+        add_column_if_missing(conn, "sso_clients", "secret_enc", "TEXT NOT NULL DEFAULT ''")
+
+
 MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     1: lambda conn: None,  # initial schema
     2: _v2,
@@ -77,6 +83,7 @@ MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     5: _v5,
     6: _v6,
     7: _v7,
+    8: _v8,
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 

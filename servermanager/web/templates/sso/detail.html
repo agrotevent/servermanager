@@ -68,6 +68,31 @@
   </div></div>
 </div>
 {% endif %}
+{% if user.is_admin %}
+{% macro login_opts_fields() -%}
+  {{ field('Nur Mitglieder der authentik-Gruppe', 'sso_group', login_opts.sso_group, placeholder='z. B. servermanager', help='leer = alle authentik-Benutzer mit passendem Konto') }}
+  <div class="full"><label class="check"><input type="checkbox" name="sso_auto_create" value="1" {{ 'checked' if login_opts.sso_auto_create }}> Unbekannte Benutzer beim ersten Login anlegen (Rolle Benutzer, ohne Rechte)</label></div>
+  <div class="full"><label class="check"><input type="checkbox" name="sso_admins" value="1" {{ 'checked' if login_opts.sso_admins }}> Auch Administratoren dürfen sich per SSO anmelden</label></div>
+{%- endmacro %}
+<div class="card"><div class="card-head"><h2>Anmeldung am Servermanager</h2></div><div class="card-body">
+  {% if sm_login and not sm_login_here %}
+    <p class="muted">Die Anmeldung am Servermanager läuft bereits über eine andere SSO-Verbindung.</p>
+  {% elif sm_login_here %}
+    <p>Aktiv: Auf der Anmeldeseite erscheint „Mit {{ s.name }} anmelden“ (Rückruf <code>{{ sm_login.app_url }}/login/sso/callback</code>). Trennen oben unter „Verbundene Anwendungen“.</p>
+    <form method="post" action="{{ url_for('sso.login_options', sso_id=s.id) }}" class="form-grid">{{ csrf() }}
+      {{ login_opts_fields() }}
+      <div class="full"><button class="btn">Optionen speichern</button></div>
+    </form>
+  {% else %}
+    <form method="post" action="{{ url_for('sso.connect', sso_id=s.id) }}" class="form-grid" data-confirm="Anmeldung am Servermanager über {{ s.name }} einrichten?">{{ csrf() }}<input type="hidden" name="kind" value="servermanager"><input type="hidden" name="target_id" value="0">
+      {{ field('Adresse des Servermanagers', 'app_url', sm_base, required=True, placeholder='https://servermanager.example.com', help='so, wie Benutzer ihn im Browser aufrufen (https)', cls='full') }}
+      {{ login_opts_fields() }}
+      <div class="full"><button class="btn primary">Per Klick verbinden</button></div>
+    </form>
+  {% endif %}
+  <p class="mt-1"><small>Benutzer werden über den <strong>Benutzernamen</strong> zugeordnet. Die Anmeldung mit Passwort bleibt immer möglich. Eine im Servermanager eingerichtete Zwei-Faktor-Anmeldung wird auch nach dem SSO-Login abgefragt. Rechte vergibt weiterhin der Servermanager.</small></p>
+</div></div>
+{% endif %}
 {% if apps %}
 <div class="card"><div class="card-head"><h2>Alle Anwendungen in authentik</h2></div><div class="table-wrap"><table class="table compact">
   <tbody>{% for a in apps %}<tr><td><strong>{{ a.name }}</strong><span class="sub">{{ a.slug }}</span></td><td><small>{{ a.meta_launch_url or '' }}</small></td></tr>{% endfor %}</tbody></table></div></div>

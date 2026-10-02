@@ -1462,6 +1462,9 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
                     holder["conn"] = self._connect(ctx, system)
                 return occ_task(holder["conn"], system, task, env, timeout=600)
             return system, occ, None, None, holder
+        if kind == "servermanager":
+            from .sso_login import TARGET
+            return TARGET, None, None, None, {}
         if kind == "pangolin":
             with session_scope() as db:
                 pg = db.get(PangolinServer, target_id)

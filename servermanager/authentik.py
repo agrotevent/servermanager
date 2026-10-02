@@ -88,6 +88,35 @@ class Authentik:
                 return out
             page += 1
 
+    # ------------------------------------------------------------------ OIDC (login to the servermanager)
+    def _oauth(self, method: str, path: str, **kw) -> dict:
+        """OAuth endpoints over the internal (pinned) address – never with the API token."""
+        url = f"{self.base}/application/o/{path}"
+        headers = {"Authorization": kw.pop("bearer", None), "Accept": "application/json"}
+        try:
+            r = self.session.request(method, url, headers=headers, timeout=self.timeout, allow_redirects=False,
+                                     **kw)
+        except requests.exceptions.SSLError as exc:
+            raise AuthentikError(tlspin.tls_message(self.base, exc)) from exc
+        except requests.RequestException as exc:
+            raise AuthentikError(f"authentik nicht erreichbar ({self.base}): {exc}") from exc
+        try:
+            j = r.json()
+        except ValueError:
+            j = {}
+        if r.status_code >= 400 or not isinstance(j, dict):
+            msg = (j.get("error_description") or j.get("error")) if isinstance(j, dict) else ""
+            raise AuthentikError(f"authentik: Anmeldung abgelehnt ({msg or f'HTTP {r.status_code}'})", r.status_code)
+        return j
+
+    def oidc_token(self, code: str, redirect_uri: str, client_id: str, client_secret: str, verifier: str) -> dict:
+        return self._oauth("POST", "token/", data={
+            "grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri,
+            "client_id": client_id, "client_secret": client_secret, "code_verifier": verifier})
+
+    def oidc_userinfo(self, access_token: str) -> dict:
+        return self._oauth("GET", "userinfo/", bearer=f"Bearer {access_token}")
+
     # ------------------------------------------------------------------ info
     def version(self) -> str:
         return (self.request("GET", "admin/version/") or {}).get("version_current", "")

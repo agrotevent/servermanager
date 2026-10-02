@@ -15,6 +15,7 @@ import re
 from typing import Callable, Optional
 from urllib.parse import urlsplit
 
+from . import security
 from .authentik import Authentik, AuthentikError
 from .mailcow import MailcowError
 from .models import MailcowServer, PangolinServer, SsoClient, SsoServer, System
@@ -39,13 +40,16 @@ def slug_for(kind: str, target_id: int) -> str:
     return f"sm-{kind}-{int(target_id)}"
 
 
-KIND_LABELS = {"nextcloud": "Nextcloud", "mailcow": "Mailcow", "pangolin": "Pangolin"}
+KIND_LABELS = {"nextcloud": "Nextcloud", "mailcow": "Mailcow", "pangolin": "Pangolin", "servermanager": "Anmeldung am"}
 TARGET_MODELS = {"nextcloud": System, "mailcow": MailcowServer, "pangolin": PangolinServer}
 
 
 def redirect_uris(kind: str, app_url: str) -> list[str]:
     if kind == "nextcloud":
         return [f"{app_url}/apps/user_oidc/code", f"{app_url}/index.php/apps/user_oidc/code"]
+    if kind == "servermanager":
+        from .sso_login import redirect_uri
+        return [redirect_uri(app_url)]
     return [f"{app_url}/", app_url]
 
 
@@ -98,9 +102,15 @@ def connect(au: Authentik, sso: SsoServer, kind: str, target, app_url: str, log:
     """Returns the data for the SsoClient record."""
     app_url = public_base(app_url)
     slug = slug_for(kind, target.id)
-    name = f"{KIND_LABELS.get(kind, kind)} {target.name}"
+    name = target.name if kind == "servermanager" else f"{KIND_LABELS.get(kind, kind)} {target.name}"
     if kind == "pangolin":
         return _connect_pangolin(au, sso, target, app_url, slug, name, log, pangolin)
+    if kind == "servermanager":
+        log(f"authentik: Anwendung „{name}“ ({slug}) anlegen ...")
+        app = au.create_oidc_app(name, slug, redirect_uris(kind, app_url), app_url)
+        log(f"Client-ID {app['client_id']} – das Geheimnis wird verschlüsselt gespeichert")
+        return {"slug": slug, "provider_pk": app["provider_pk"], "client_id": app["client_id"], "app_url": app_url,
+                "secret_enc": security.encrypt(app["client_secret"])}
     log(f"authentik: Anwendung „{name}“ ({slug}) anlegen ...")
     app = au.create_oidc_app(name, slug, redirect_uris(kind, app_url), app_url)
     log(f"Client-ID {app['client_id']}, Discovery {app['discovery']}")
@@ -156,5 +166,8 @@ def disconnect(au: Authentik, sso: SsoServer, client: SsoClient, log: Log,
 
 
 def target_of(db, kind: str, target_id: int):
+    if kind == "servermanager":
+        from .sso_login import TARGET
+        return TARGET
     model = TARGET_MODELS.get(kind)
     return db.get(model, target_id) if model else None

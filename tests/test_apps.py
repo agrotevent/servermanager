@@ -371,3 +371,116 @@ def test_mailcow_form_validation(app, db, apps):
                "public_url": "https://webmail.example.com", "mail_hostname": "mail.example.com",
                "mail_public_ip": "999.1.1.1", "mail_ports": "25;993", "csrf_token": c.csrf}, follow_redirects=True)
     assert "Mail-IP: ungültige IP-Adresse" in r.text and "Ports als Liste" in r.text
+
+
+# -------------------------------------------------------------------- login to the servermanager via SSO
+def _sso_round(c, st, user, nonce=None, aud=None):
+    from urllib.parse import parse_qs, urlsplit
+    r = c.get("/login/sso?next=/systems")
+    assert r.status_code == 302, r.text[:300]
+    loc = urlsplit(r.headers["Location"])
+    q = {k: v[0] for k, v in parse_qs(loc.query).items()}
+    assert f"{loc.scheme}://{loc.netloc}{loc.path}" == "https://auth.example.com/application/o/authorize/"
+    assert q["code_challenge_method"] == "S256" and q["scope"] == "openid profile email"
+    code = f"code-{len(st.ak_codes)}-{q['state'][:6]}"
+    st.ak_codes[code] = {"user": user, "challenge": q["code_challenge"], "nonce": nonce or q["nonce"],
+                         "client_id": q["client_id"], "redirect": q["redirect_uri"],
+                         **({"aud": aud} if aud else {})}
+    return c.get(f"/login/sso/callback?code={code}&state={q['state']}"), q
+
+
+def test_servermanager_login_via_sso(app, db, mock, apps):
+    from servermanager import security, settings
+    from servermanager.models import Job, SsoClient, User
+    from tests.test_integrations import _run as run_job
+    from tests.test_web import login, make_user
+    st = mock.state
+    make_user(db, "sso-admin", "admin")
+    admin = login(app, "sso-admin")
+    # only administrators set it up
+    make_user(db, "sso-plain")
+    plain = login(app, "sso-plain")
+    assert plain.post(f"/sso/{apps['ak'].id}/connect", data={"kind": "servermanager", "target_id": 0,
+                                                              "csrf_token": plain.csrf}).status_code == 403
+    r = admin.post(f"/sso/{apps['ak'].id}/connect", data={
+        "kind": "servermanager", "target_id": 0, "app_url": "https://sm.example.com", "sso_auto_create": "1",
+        "sso_group": "", "csrf_token": admin.csrf})
+    assert r.status_code == 302
+    job_id = int(r.headers["Location"].rstrip("/").split("/")[-1])
+    run_job(job_id)
+    db.expire_all()
+    assert db.get(Job, job_id).status == "success"
+    client = db.query(SsoClient).filter_by(target_kind="servermanager").one()
+    prov = st.ak_providers[client.provider_pk]
+    assert prov["redirect_uris"] == [{"matching_mode": "strict", "url": "https://sm.example.com/login/sso/callback"}]
+    assert security.decrypt(client.secret_enc) == prov["client_secret"] and prov["client_secret"] not in client.secret_enc
+    try:
+        c = app.test_client()
+        assert "Mit auth anmelden" in c.get("/login").text
+        # new user is created (no rights) and logged in
+        r, q = _sso_round(c, st, {"sub": "h-anna", "username": "sso-anna", "name": "Anna", "email": "a@x.de"})
+        assert r.status_code == 302 and r.headers["Location"].endswith("/systems"), r.headers.get("Location")
+        anna = db.query(User).filter_by(username="sso-anna").one()
+        assert anna.role == "user" and anna.display_name == "Anna" and not anna.access
+        assert c.get("/").status_code == 200
+        # the same state cannot be used twice
+        c2 = app.test_client()
+        r = c2.get(f"/login/sso/callback?code=x&state={q['state']}")
+        assert r.status_code == 302 and c2.get("/").status_code == 302
+        # wrong nonce / audience are rejected
+        for kw in ({"nonce": "other"}, {"aud": "someone-else"}):
+            c3 = app.test_client()
+            r, _ = _sso_round(c3, st, {"sub": "h-anna", "username": "sso-anna"}, **kw)
+            assert c3.get("/").status_code == 302
+        # unknown users without automatic creation
+        settings.set(db, "login.sso_auto_create", False)
+        db.commit()
+        c4 = app.test_client()
+        r, _ = _sso_round(c4, st, {"sub": "h-ben", "username": "sso-ben"})
+        assert "kein Konto" in c4.get("/login").text and not db.query(User).filter_by(username="sso-ben").first()
+        # group restriction
+        settings.set(db, "login.sso_group", "servermanager")
+        db.commit()
+        c5 = app.test_client()
+        _sso_round(c5, st, {"sub": "h-anna", "username": "sso-anna", "groups": ["other"]})
+        assert "Gruppe" in c5.get("/login").text
+        c5 = app.test_client()
+        _sso_round(c5, st, {"sub": "h-anna", "username": "sso-anna", "groups": ["servermanager"]})
+        assert c5.get("/").status_code == 200
+        # administrators only when allowed
+        c6 = app.test_client()
+        _sso_round(c6, st, {"sub": "h-adm", "username": "sso-admin", "groups": ["servermanager"]})
+        assert "Administratoren" in c6.get("/login").text
+        settings.set(db, "login.sso_admins", True)
+        db.commit()
+        c6 = app.test_client()
+        _sso_round(c6, st, {"sub": "h-adm", "username": "sso-admin", "groups": ["servermanager"]})
+        assert c6.get("/").status_code == 200
+        # a local second factor is still asked for
+        import pyotp
+        anna.totp_secret_enc, anna.totp_enabled = security.encrypt(pyotp.random_base32()), True
+        db.commit()
+        c7 = app.test_client()
+        r, _ = _sso_round(c7, st, {"sub": "h-anna", "username": "sso-anna", "groups": ["servermanager"]})
+        assert r.headers["Location"].endswith("/login/2fa") and c7.get("/").status_code == 302
+        # options are saved by administrators
+        r = admin.post(f"/sso/{apps['ak'].id}/login-options", data={"sso_group": "", "csrf_token": admin.csrf})
+        assert r.status_code == 302 and settings.get(db, "login.sso_admins") is False
+        # disconnect: only administrators, then the button is gone
+        assert plain.post(f"/sso/{apps['ak'].id}/disconnect/{client.id}",
+                          data={"csrf_token": plain.csrf}).status_code == 403
+        r = admin.post(f"/sso/{apps['ak'].id}/disconnect/{client.id}", data={"csrf_token": admin.csrf})
+        run_job(int(r.headers["Location"].rstrip("/").split("/")[-1]))
+        db.expire_all()
+        assert not db.query(SsoClient).filter_by(target_kind="servermanager").first()
+        assert "Mit auth anmelden" not in app.test_client().get("/login").text
+    finally:
+        from servermanager.web import auth as web_auth
+        web_auth._failures.clear()  # the rejected attempts above count towards the IP throttle
+        for k in ("login.sso_auto_create", "login.sso_group", "login.sso_admins"):
+            settings.set(db, k, settings.DEFAULTS[k])
+        for name in ("sso-anna", "sso-admin", "sso-plain"):
+            u = db.query(User).filter_by(username=name).first()
+            if u:
+                db.delete(u)
+        db.commit()
