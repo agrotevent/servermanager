@@ -2,6 +2,20 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.12.0 – 02.10.2026
+
+### Neu
+
+- RouterOS-Konfigurationsanalyse prüft **alle internen Netze**, nicht nur das LAN aus den Sollwerten
+  (z. B. ein zweiter Hetzner vSwitch): DHCP-Netz, NAT über WAN und – per Testpaket durch Raw- und
+  Filter-Regeln – ob das Netz ins Internet kommt und DNS/DHCP den Router erreicht.
+- Neue Hinweise der Analyse: wirkungslose Firewall-Regeln hinter einer abschließenden Regel und Ketten
+  ohne Sprung, globale ICMP-Sperren/-Limits (brechen Path-MTU-Discovery), Masquerade in ein internes
+  Netz, Interfaces mit MTU unter 1500 ohne MSS-Clamping bzw. ohne DHCP-Option 26, `log=yes` an
+  NAT- und breiten accept-Regeln sowie Einträge mit Verweis auf gelöschte Interfaces.
+- Das LAN wird beim Einlesen bevorzugt unter den Interfaces mit DHCP-Server bzw. in der Liste `LAN`
+  erkannt; die Raw-Regeln und DHCP-Optionen werden jetzt mit eingelesen.
+
 ## 1.11.1 – 30.09.2026
 
 ### Sicherheit

@@ -277,6 +277,169 @@ def test_analysis_apply_via_api(mock):
     assert not any(c[0] in ("PUT", "PATCH") and "ip/service" in c[1] for c in mock.state.calls)
 
 
+MULTILAN = (Path(__file__).parent / "data" / "chr_multilan_export.rsc").read_text()
+NEW_PROBLEMS = ("fw.dead", "fw.icmp", "fw.log", "sys.orphans", "nat.lanmasq.", "pol.mtu.", "lan.mtu.", "fw.lanout",
+                "fw.lanin")
+
+
+def _multilan(edit=None):
+    snap = routeros.parse_export(MULTILAN)
+    if edit:
+        edit(snap["menus"])
+    target, errors = routeros.validate_target(routeros.detect_target(snap))
+    assert not errors
+    return snap, {f["id"]: f for f in routeros.analyze(snap, target)}
+
+
+def test_basic_fixture_has_no_multilan_findings():
+    snap = routeros.parse_export(EXPORT)
+    target, _ = routeros.validate_target(routeros.detect_target(snap, "10.66.0.0/24"))
+    bad = [f["id"] for f in routeros.analyze(snap, target)
+           if f["id"].startswith(NEW_PROBLEMS) and f["status"] not in ("ok",)]
+    assert bad == []
+
+
+def test_multilan_export_parser_keeps_mtu():
+    snap = routeros.parse_export(MULTILAN)
+    ifaces = {i["name"]: i for i in snap["menus"]["interface"]}
+    assert ifaces["ether4"]["mtu"] == "1400"
+    assert snap["menus"]["ip/firewall/raw"][0]["disabled"] == "no"
+    # ether2 (no DHCP, not in the list LAN) comes first but is no client network
+    assert routeros.detect_target(snap)["lan_interface"] == "ether3"
+    nets = routeros.internal_networks(snap, "ether1")
+    assert [(n["iface"], str(n["net"]), n["dhcp"]) for n in nets] == \
+        [("ether3", "10.20.30.0/24", True), ("ether4", "10.200.30.0/24", True)]
+
+
+def test_multilan_findings():
+    _snap, by_id = _multilan()
+    assert by_id["lan.network.ether4"]["status"] == "ok"
+    assert by_id["nat.masq.ether4"]["status"] == "ok"
+    # DNS to the router: allowed for the LAN, dropped for ether4 by the final drop of the input chain
+    assert by_id["fw.lanin"]["status"] == "ok"
+    lanin = by_id["fw.lanin.ether4"]
+    assert lanin["status"] == "change" and lanin["severity"] == "warn" and not lanin["applicable"]
+    assert lanin["current"] == "chain=input action=drop"
+    assert "in-interface=ether4 protocol=udp dst-port=53,67" in lanin["script"][0]
+    assert "place-before=[:pick [find where chain=input action=drop dynamic=no] 0]" in lanin["script"][0]
+    # internet access is not blocked
+    assert "fw.lanout" not in by_id and "fw.lanout.ether4" not in by_id
+    # rules behind the final drop + user chains without a jump
+    dead = by_id["fw.dead"]
+    assert dead["status"] == "change"
+    assert "dst-port=54321" in dead["current"] and "Kette detect-ddos" in dead["current"]
+    assert "Kette icmp" in dead["current"]           # the only jump to it is disabled
+    assert '/ip firewall filter remove [ find where comment="Allow WireGuard" ]' in dead["script"]
+    assert "/ip firewall filter remove [ find where chain=detect-ddos ]" in dead["script"]
+    assert any(s.startswith("# /ip firewall filter: chain=input action=drop") for s in dead["script"])
+    # global ICMP rate limit in raw
+    icmp = by_id["fw.icmp"]
+    assert icmp["script"] == ['/ip firewall raw disable [ find where comment="Block Ping Flood" ]']
+    # masquerade of everything into ether4 -> hairpin only
+    masq = by_id["nat.lanmasq.ether4"]
+    assert masq["status"] == "change" and "10.200.30.1" in masq["detail"]
+    assert masq["script"][0].endswith("] src-address=10.200.30.0/24 dst-address=10.200.30.0/24")
+    # deleted interfaces
+    orphans = by_id["sys.orphans"]
+    assert orphans["severity"] == "info"
+    for menu in ("/ip address: 1", "/ip dhcp-client: 1", "/ip firewall filter: 1", "/interface wifi cap: 1"):
+        assert menu in orphans["current"]
+    # MTU 1400: the generic clamp-to-pmtu covers the way out, the way in is missing
+    mtu = by_id["pol.mtu.ether4"]
+    assert mtu["status"] == "missing" and mtu["applicable"] and "(eingehend)" in mtu["title"]
+    assert [op["data"] for op in mtu["ops"]] == [{
+        "chain": "forward", "action": "change-mss", "protocol": "tcp", "tcp-flags": "syn", "in-interface": "ether4",
+        "tcp-mss": "1361-65535", "new-mss": "1360", "passthrough": "yes", "comment": "servermanager: MSS ether4 (MTU 1400)"}]
+    dmtu = by_id["lan.mtu.ether4"]
+    assert dmtu["status"] == "missing" and dmtu["applicable"]
+    assert dmtu["script"] == ["/ip dhcp-server option add name=sm-mtu-1400 code=26 value=0x0578",
+                              "/ip dhcp-server network set [ find address=10.200.30.0/24 ] dhcp-option=sm-mtu-1400"]
+    assert "pol.mtu.ether3" not in by_id and "lan.mtu.ether3" not in by_id
+    # log=yes on NAT and broad accepts - not on rules that never fire (dead / deleted interface)
+    log = by_id["fw.log"]
+    assert log["severity"] == "info"
+    assert "/ip firewall nat set [ find where log=yes chain=srcnat action=masquerade out-interface=ether4 ] log=no" \
+        in log["script"]
+    assert any("src-address=192.0.2.142" in s for s in log["script"])
+    assert not any("in-interface=ether1" in s or "*1" in s for s in log["script"])
+    assert log["title"].startswith("3 ")
+
+
+def test_multilan_findings_after_fix():
+    def fix(m):
+        flt = m["ip/firewall/filter"]
+        killer = next(i for i, r in enumerate(flt) if r.get("log-prefix") == "DROP_INPUT_")
+        flt.insert(killer, {"chain": "input", "action": "accept", "in-interface-list": "LAN", "protocol": "udp",
+                            "dst-port": "53,67", "disabled": "no"})
+        m["ip/firewall/raw"] = [r for r in m["ip/firewall/raw"] if r.get("comment") != "Block Ping Flood"]
+        m["ip/firewall/mangle"].append({"chain": "forward", "action": "change-mss", "protocol": "tcp",
+                                        "tcp-flags": "syn", "in-interface": "ether4", "new-mss": "1360",
+                                        "disabled": "no"})
+        m["ip/dhcp-server/option"] = [{"name": "mtu", "code": "26", "value": "0x0578"}]
+        m["ip/dhcp-server/network"][1]["dhcp-option"] = "mtu"
+        m["ip/firewall/nat"] = [dict(r, **{"src-address": "10.200.30.0/24", "dst-address": "10.200.30.0/24"})
+                                if r.get("out-interface") == "ether4" else r for r in m["ip/firewall/nat"]]
+    _snap, by_id = _multilan(fix)
+    assert by_id["fw.lanin.ether4"]["status"] == "ok"
+    assert by_id["pol.mtu.ether4"]["status"] == "ok"
+    assert by_id["lan.mtu.ether4"]["status"] == "ok"
+    assert "fw.icmp" not in by_id and "nat.lanmasq.ether4" not in by_id
+
+
+def test_multilan_missing_nat_and_blocked_forward():
+    def edit(m):
+        m["ip/firewall/nat"] = [r for r in m["ip/firewall/nat"] if r.get("chain") != "srcnat"
+                                or r.get("src-address") == "10.20.30.0/24"]
+        m["ip/firewall/filter"].insert(0, {"chain": "forward", "action": "drop", "in-interface": "ether4",
+                                           "disabled": "no"})
+        m["ip/dhcp-server/network"][1]["dns-server"] = "10.200.30.1"
+    _snap, by_id = _multilan(edit)
+    nat = by_id["nat.masq.ether4"]
+    assert nat["status"] == "missing" and nat["severity"] == "crit" and nat["applicable"]
+    assert nat["ops"][0]["data"]["src-address"] == "10.200.30.0/24" and nat["ops"][0]["data"]["out-interface"] == "ether1"
+    assert by_id["fw.lanout.ether4"]["current"] == "chain=forward action=drop in-interface=ether4"
+    assert "fw.lanout" not in by_id
+    # the DHCP network hands out the router as DNS -> a dropped DNS query is critical
+    assert by_id["fw.lanin.ether4"]["severity"] == "crit"
+
+
+def test_multilan_dns_not_offered():
+    def edit(m):
+        m["ip/dns"][0]["allow-remote-requests"] = "no"
+        m["ip/dhcp-server/network"][1]["dns-server"] = "10.200.30.1"
+    _snap, by_id = _multilan(edit)
+    f = by_id["dns.remote.ether4"]
+    assert f["status"] == "change" and f["ops"][0]["data"] == {"allow-remote-requests": "yes"}
+    assert not any(k.startswith("fw.lanin") for k in by_id)
+
+
+def test_probe_evaluator():
+    snap = {"menus": {
+        "interface/list/member": [{"list": "LAN", "interface": "bridge", "disabled": "no"}],
+        "ip/firewall/address-list": [{"list": "admins", "address": "10.0.0.5-10.0.0.9", "disabled": "no"},
+                                     {"list": "dyn", "address": "host.example.net", "disabled": "no"}],
+        "ip/firewall/filter": [
+            {"chain": "input", "action": "jump", "jump-target": "checks", "protocol": "tcp"},
+            {"chain": "checks", "action": "return", "src-address-list": "admins"},
+            {"chain": "checks", "action": "drop", "tcp-flags": "!syn"},
+            {"chain": "checks", "action": "drop", "dst-port": "8000-8999"},
+            {"chain": "input", "action": "accept", "in-interface-list": "!LAN", "dst-port": "22", "protocol": "tcp"},
+            {"chain": "input", "action": "drop", "protocol": "udp", "limit": "10,20:packet"},
+            {"chain": "input", "action": "drop", "src-address-list": "dyn"},
+        ]}}
+    pkt = {"src": "10.0.0.20", "dst": "10.0.0.1", "proto": "tcp", "sport": 40000, "dport": 22, "in": "ether1",
+           "out": None, "state": "new", "nat": (), "dst_type": ("local",), "src_type": ("unicast",), "flags": ("syn",)}
+    assert routeros.probe(snap, "input", pkt)[0] == "accept"                      # not in LAN, port 22
+    assert routeros.probe(snap, "input", dict(pkt, **{"in": "bridge"}))[0] == "uncertain"   # list with a DNS name
+    v, rule, top = routeros.probe(snap, "input", dict(pkt, dport=8080))
+    assert (v, rule["dst-port"], top["action"]) == ("drop", "8000-8999", "jump")    # decided inside the jump
+    assert routeros.probe(snap, "input", dict(pkt, src="10.0.0.7", dport=8080, **{"in": "x"}))[0] == "uncertain"
+    assert routeros.probe(snap, "input", dict(pkt, flags=("ack",)))[1]["tcp-flags"] == "!syn"
+    assert routeros.probe(snap, "input", dict(pkt, proto="udp", dport=53))[0] == "uncertain"   # rate limit
+    assert routeros.unconditional({"chain": "input", "action": "drop", "log": "yes", "log-prefix": "x",
+                                   "comment": "c"})
+
+
 def test_migration_v1_to_v2(tmp_path):
     from sqlalchemy import create_engine, inspect, text
     from servermanager import migrations
