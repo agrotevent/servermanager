@@ -112,7 +112,7 @@ class Zabbix:
         try:
             r = self.session.post(self.url, json=body, headers=headers, timeout=self.timeout, allow_redirects=False)
         except requests.exceptions.SSLError as exc:
-            raise ZabbixError(f"TLS-Fehler bei {self.url}: {exc}") from exc
+            raise ZabbixError(tlspin.tls_message(self.url, exc)) from exc
         except requests.RequestException as exc:
             raise ZabbixError(f"Zabbix-API nicht erreichbar ({self.url}): {exc}") from exc
         try:

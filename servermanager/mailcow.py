@@ -54,7 +54,7 @@ class Mailcow:
         try:
             r = self.session.request(method, url, json=body, timeout=self.timeout, allow_redirects=False)
         except requests.exceptions.SSLError as exc:
-            raise MailcowError(f"TLS-Fehler bei {self.base}: {exc}") from exc
+            raise MailcowError(tlspin.tls_message(self.base, exc)) from exc
         except requests.RequestException as exc:
             raise MailcowError(f"Mailcow nicht erreichbar ({self.base}): {exc}") from exc
         if r.status_code in (401, 403):

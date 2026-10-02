@@ -62,7 +62,7 @@ class MikroTik:
             r = self.session.request(method, url, json=data, params=params, timeout=self.timeout,
                                      allow_redirects=False)
         except requests.exceptions.SSLError as exc:
-            raise MikroTikError(f"TLS-Fehler bei {self.base} (Zertifikat?): {exc}") from exc
+            raise MikroTikError(tlspin.tls_message(self.base, exc)) from exc
         except requests.RequestException as exc:
             raise MikroTikError(f"MikroTik nicht erreichbar ({self.base}): {exc}") from exc
         if r.status_code == 401:

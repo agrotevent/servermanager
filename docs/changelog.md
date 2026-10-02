@@ -2,6 +2,14 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.11.2 – 02.10.2026
+
+### Verbessert
+
+- Wird eine Adresse ohne `http://` auf einem reinen http-Port eingetragen (z. B. authentik Port 9000),
+  erklärt die Meldung jetzt die Ursache statt `[SSL: WRONG_VERSION_NUMBER]` – beim Abrufen des
+  Fingerabdrucks und bei allen API-Verbindungen. Auch ein nicht passender Fingerabdruck wird erklärt.
+
 ## 1.11.1 – 30.09.2026
 
 ### Sicherheit

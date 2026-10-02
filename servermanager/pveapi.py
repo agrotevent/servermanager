@@ -104,7 +104,7 @@ class PveClient:
         try:
             r = self.session.request(method, url, allow_redirects=False, **kw)
         except requests.exceptions.SSLError as exc:
-            raise PveError(f"TLS-Fehler bei {self.base} – stimmt der Zertifikats-Fingerabdruck noch? ({exc})") from exc
+            raise PveError(tlspin.tls_message(self.base, exc)) from exc
         except requests.RequestException as exc:
             raise PveError(f"Proxmox-API nicht erreichbar ({self.base}): {exc}") from exc
         if r.status_code >= 400:

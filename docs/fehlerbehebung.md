@@ -29,6 +29,14 @@ Bleibt der Fehler, auf dem System als root prüfen:
 - Proxmox-Hosts ohne Subscription: das Enterprise-Repository deaktivieren bzw. das
   No-Subscription-Repository eintragen.
 
+## „spricht kein TLS“ / `WRONG_VERSION_NUMBER`
+
+Die Adresse wurde ohne `http://` eingetragen (dann wird https angenommen), der Port spricht aber nur
+unverschlüsseltes http. Typisch bei **authentik**: Port **9000** ist http, Port **9443** ist https.
+Richtig ist z. B. `https://10.200.30.99:9443` und dann den Fingerabdruck mit **Abrufen** pinnen.
+Alternativ ausdrücklich `http://10.200.30.99:9000` – nur im internen Netz, weil das API-Token dann
+unverschlüsselt übertragen wird.
+
 ## Pangolin: „Anmeldung fehlgeschlagen“
 
 Die Integration-API ist erreichbar, lehnt aber den API-Schlüssel ab (HTTP 401):

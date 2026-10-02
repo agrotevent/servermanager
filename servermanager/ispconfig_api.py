@@ -81,7 +81,7 @@ class IspConfig:
         try:
             r = self.session.post(f"{self.url}?{function}", json=body, timeout=self.timeout, allow_redirects=False)
         except requests.exceptions.SSLError as exc:
-            raise IspError(f"TLS-Fehler bei {self.url}: {exc}") from exc
+            raise IspError(tlspin.tls_message(self.url, exc)) from exc
         except requests.RequestException as exc:
             raise IspError(f"ISPConfig-API nicht erreichbar ({self.url}): {exc}") from exc
         try:

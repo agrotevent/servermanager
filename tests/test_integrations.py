@@ -388,3 +388,29 @@ def test_pangolin_wrong_key_message(mock):
     with pytest.raises(PangolinError) as exc:
         Pangolin(mock.url, "abc.def", m.PG_ORG, fingerprint=mock.fingerprint).sites()
     assert "keinen Punkt" not in str(exc.value)
+
+
+def test_https_to_plain_http_port_is_explained():
+    """authentik on its http port 9000 entered without http:// -> readable hint instead of WRONG_VERSION_NUMBER."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from servermanager import tlspin
+    from servermanager.authentik import Authentik, AuthentikError
+
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    port = srv.server_address[1]
+    try:
+        with pytest.raises(tlspin.PinError, match="spricht kein TLS"):
+            tlspin.fetch_fingerprint("127.0.0.1", port)
+        with pytest.raises(AuthentikError, match="mit http:// angeben"):
+            Authentik(f"127.0.0.1:{port}", "tok", fingerprint="AA:" * 31 + "AA").version()
+    finally:
+        srv.shutdown()

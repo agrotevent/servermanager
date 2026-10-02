@@ -71,7 +71,8 @@ Mail-IP beim Provider (z. B. Hetzner Robot), MX/A des Mail-Hostnamens, SPF, DKIM
 
 *Infrastruktur → SSO* (Verbindung anlegen: Administratoren):
 
-- **Interne Adresse** der API (z. B. `https://10.20.0.20:9443`, Zertifikat per Fingerabdruck gepinnt)
+- **Interne Adresse** der API (z. B. `https://10.20.0.20:9443`, Zertifikat per Fingerabdruck gepinnt –
+  Port 9000 ist der http-Port von authentik und spricht kein https)
   und **API-Token** (authentik: *Verzeichnis → Tokens und App-Passwörter*, Zweck „API“, Benutzer mit
   Administratorrechten).
 - **Öffentliche Adresse** der Anmeldeseite über Pangolin (z. B. `https://auth.example.com`).

@@ -9,6 +9,7 @@ import hashlib
 import re
 import socket
 import ssl
+from typing import Optional
 
 from requests.adapters import HTTPAdapter
 
@@ -30,6 +31,32 @@ def normalize_fingerprint(fp: str) -> str:
     return fp
 
 
+def tls_hint(exc: Exception, port: Optional[int] = None) -> str:
+    """Readable explanation for typical TLS handshake failures (empty if none applies)."""
+    text = str(exc).lower()
+    if "wrong_version_number" in text or "wrong version number" in text or "record layer failure" in text \
+            or "packet length too long" in text or "http request" in text:
+        where = f"Port {port}" if port else "Dieser Port"
+        return (f"{where} spricht kein TLS, sondern unverschlüsseltes http. Entweder den https-Port eintragen "
+                "(z. B. authentik 9443, Proxmox 8006, ISPConfig 8080, sonst 443) oder die Adresse ausdrücklich "
+                "mit http:// angeben (nur im internen Netz).")
+    if "certificate verify failed" in text or "fingerprint" in text:
+        return ("Das Zertifikat passt nicht zum hinterlegten Fingerabdruck bzw. ist nicht vertrauenswürdig – "
+                "Fingerabdruck neu abrufen und vergleichen.")
+    return ""
+
+
+def tls_message(where: str, exc: Exception) -> str:
+    """Error text for API clients: the explanation when known, otherwise the raw error."""
+    from urllib.parse import urlsplit
+    try:
+        port = urlsplit(where).port
+    except ValueError:
+        port = None
+    hint = tls_hint(exc, port)
+    return f"TLS-Fehler bei {where}: {hint}" if hint else f"TLS-Fehler bei {where}: {exc}"
+
+
 def fetch_fingerprint(host: str, port: int, timeout: int = 10) -> str:
     """SHA-256 fingerprint of the certificate the server presents (not validated)."""
     ctx = ssl.create_default_context()
@@ -40,7 +67,8 @@ def fetch_fingerprint(host: str, port: int, timeout: int = 10) -> str:
             with ctx.wrap_socket(sock, server_hostname=host) as tls:
                 der = tls.getpeercert(binary_form=True)
     except OSError as exc:
-        raise PinError(f"{host}:{port} nicht erreichbar: {exc}") from exc
+        hint = tls_hint(exc, port)
+        raise PinError(f"{host}:{port}: {hint}" if hint else f"{host}:{port} nicht erreichbar: {exc}") from exc
     digest = hashlib.sha256(der).hexdigest().upper()
     return ":".join(digest[i:i + 2] for i in range(0, 64, 2))
 

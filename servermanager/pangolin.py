@@ -124,7 +124,7 @@ class Pangolin:
             r = self.session.request(method, url, json=body, params=params, timeout=self.timeout,
                                      allow_redirects=False)
         except requests.exceptions.SSLError as exc:
-            raise PangolinError(f"TLS-Fehler bei {self.base}: {exc}") from exc
+            raise PangolinError(tlspin.tls_message(self.base, exc)) from exc
         except requests.RequestException as exc:
             hint = connect_hint(self.base, exc)
             raise PangolinError(f"Pangolin-API nicht erreichbar ({self.base}): {exc}"
