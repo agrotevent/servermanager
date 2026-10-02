@@ -2,6 +2,15 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.14.0 – 02.10.2026
+
+### Neu
+
+- **easybell Cloud Telefonanlage** über die AMI-Schnittstelle: Endgeräte mit Status (optional mit
+  Warnung), laufende Gespräche, Anrufjournal mit Suche und Filter sowie Anrufe in Zammad (CTI
+  generisch). Die Anmeldung läuft per MD5-Challenge, das Passwort geht nie über die unverschlüsselte
+  Verbindung. Details unter [easybell](easybell.md).
+
 ## 1.13.0 – 02.10.2026
 
 ### Neu

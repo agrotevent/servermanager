@@ -191,6 +191,14 @@ class MockApp:
                 resp = self.ros(req, req.path[len("/rest/"):])
             elif req.path.startswith("/v1/"):
                 resp = self.pangolin(req, req.path[len("/v1/"):])
+            elif req.path.startswith("/api/v1/cti/"):
+                if req.headers.get("Authorization"):
+                    resp = _json({"error": "credentials must not be sent to the CTI endpoint"}, 400)
+                elif req.path.rsplit("/", 1)[-1] != "cti-token-123":
+                    resp = _json({"error": "Not authorized"}, 401)
+                else:
+                    self.s.__dict__.setdefault("cti", []).append(dict(req.form))
+                    resp = _json({})
             elif req.path.startswith("/api/v1/") and req.headers.get("Authorization", "").startswith("Token "):
                 resp = self.zammad(req, req.path[len("/api/v1/"):])
             elif req.path.startswith("/api/v1/"):

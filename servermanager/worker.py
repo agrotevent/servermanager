@@ -128,6 +128,7 @@ class Worker:
         self._last_daily: Optional[str] = None
         self._last_ispc = 0.0
         self.polling: set[tuple[str, int]] = set()
+        self.listeners: dict[int, threading.Thread] = {}   # easybell account -> event connection
 
     # ------------------------------------------------------------------ main
     def run_forever(self) -> None:
@@ -1591,6 +1592,7 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
                 elif status_min > 0 and (s.last_check is None or now - s.last_check > timedelta(minutes=status_min)):
                     self._submit_check(s.id, deep=False)
         self._poll_integrations()
+        self._easybell_listeners()
         if time.monotonic() - self._last_ispc > 6 * 3600:
             self._last_ispc = time.monotonic()
             self._fetch_ispconfig_latest()
@@ -1638,6 +1640,20 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
                     continue
                 self.polling.add(key)
             self.check_pool.submit(self._poll_one, key)
+
+    def _easybell_listeners(self) -> None:
+        """One thread per easybell account with a permanent event connection (ends itself when disabled)."""
+        from . import easybell
+        from .models import EasybellAccount
+        with session_scope() as db:
+            wanted = [a.id for a in db.execute(select(EasybellAccount)).scalars() if a.listen and a.secret_enc]
+        for aid in wanted:
+            t = self.listeners.get(aid)
+            if t is None or not t.is_alive():
+                t = threading.Thread(target=easybell.listen, args=(aid, self.stop), name=f"easybell-{aid}",
+                                     daemon=True)
+                self.listeners[aid] = t
+                t.start()
 
     def _poll_one(self, key: tuple[str, int]) -> None:
         try:
@@ -1690,6 +1706,8 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
                 self._cleanup(db)
 
     def _cleanup(self, db) -> None:
+        from . import easybell
+        easybell.prune(db)
         days = int(settings.get(db, "jobs.log_retention_days") or 90)
         cutoff = utcnow() - timedelta(days=days)
         old = db.execute(select(Job).where(Job.created_at < cutoff, Job.status.in_(JOB_FINAL))).scalars().all()

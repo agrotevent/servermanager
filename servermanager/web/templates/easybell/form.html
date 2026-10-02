@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% set help_page = "easybell" %}
+{% from "_macros.html" import csrf, field, checkbox, textarea with context %}
+{% block title %}{{ 'easybell anbinden' if is_new else 'easybell bearbeiten' }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>{{ 'easybell anbinden' if is_new else a.name ~ ' bearbeiten' }}</h1>
+  <p>In my.easybell unter <em>Cloud Telefonanlage → Erweiterte Einstellungen → Integration</em> die <strong>AMI-Schnittstelle</strong> aktivieren. Benutzername und Passwort werden dort angezeigt. In die <strong>IP-Freigabeliste</strong> die <strong>öffentliche IP-Adresse</strong> eintragen, mit der der Servermanager ins Internet geht.</p></div></div>
+<form method="post" autocomplete="off">{{ csrf() }}
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>AMI-Zugang</h2></div><div class="card-body"><div class="form-grid">
+    {{ field('Name', 'name', a.name, required=True, placeholder='easybell Zentrale') }}
+    {{ field('Server', 'host', a.host, required=True, help='Standard: jarvis.easybell.de') }}
+    {{ field('Port', 'port', a.port, type='number', help='Standard: 5039') }}
+    {{ field('Benutzername', 'username', a.username, required=True, attrs='autocomplete="off"') }}
+    {{ field('Passwort', 'secret', '', type='password', help=('Hinterlegt – leer lassen, um es zu behalten' if a.secret_enc else 'wird verschlüsselt gespeichert'), attrs='autocomplete="new-password"', cls='full') }}
+    <div class="full">
+      {{ checkbox('Anmeldung mit Klartext-Passwort erlauben, falls der Server keine MD5-Anmeldung anbietet', 'allow_plain', a.allow_plain, help='easybell bietet für AMI kein TLS an. Standardmäßig wird nur eine Prüfsumme gesendet, nie das Passwort.') }}
+      {{ checkbox('Überwachen (Status regelmäßig abfragen)', 'monitor', a.monitor) }}
+      {{ checkbox('Warnen, wenn ein Endgerät nicht erreichbar ist', 'watch_devices', a.watch_devices) }}
+    </div>
+    {{ textarea('Beschreibung', 'description', a.description, rows=2, cls='full') }}
+  </div></div></div>
+  <div class="card"><div class="card-head"><h2>Anrufe</h2></div><div class="card-body"><div class="form-grid">
+    <div class="full">{{ checkbox('Dauerhafte Ereignis-Verbindung (Anrufjournal und Zammad)', 'listen', a.listen) }}</div>
+    {{ field('Anrufjournal aufbewahren (Tage)', 'journal_days', a.journal_days, type='number') }}
+    {{ field('Ländervorwahl', 'country_code', a.country_code, help='für die Umwandlung von 030… in 4930…') }}
+    {{ field('Muster für Endgeräte-Kanäle', 'device_pattern', a.device_pattern, help='regulärer Ausdruck; erkennt ausgehende Anrufe (Standard ^PJSIP/CPBX-)', cls='full') }}
+    <div class="field full"><label for="f-zammad">Anrufe an Zammad melden</label>
+      <select id="f-zammad" name="zammad_id"><option value="">– nicht melden –</option>{% for z in zammads %}<option value="{{ z.id }}" {{ 'selected' if a.zammad_id == z.id }}>{{ z.name }}</option>{% endfor %}</select>
+      <span class="help">Anruferkennung, Anrufliste und Kundenzuordnung in Zammad über die Integration „CTI (generisch)“.</span></div>
+    {{ field('CTI-Endpunkt oder -Token aus Zammad', 'cti_token', '', type='password', help=('Hinterlegt – leer lassen, um es zu behalten' if a.cti_token_enc else 'Zammad → Admin → Integrationen → CTI (generisch) → Endpunkt'), attrs='autocomplete="off"', cls='full') }}
+    {% if a.cti_token_enc %}<div class="full">{{ checkbox('CTI-Token entfernen', 'cti_clear', False) }}</div>{% endif %}
+  </div></div></div>
+</div>
+<div class="actions mt-1"><button class="btn primary">Speichern</button><a class="btn" href="{{ url_for('easybell.index') if is_new else url_for('easybell.detail', aid=a.id) }}">Abbrechen</a></div>
+</form>
+{% if not is_new %}
+<div class="card danger-zone mt-2"><div class="card-head"><h2>Verbindung entfernen</h2></div><div class="card-body">
+  <form method="post" action="{{ url_for('easybell.delete', aid=a.id) }}" data-confirm="Verbindung {{ a.name }} entfernen? Das Anrufjournal wird gelöscht.">{{ csrf() }}<button class="btn danger">Entfernen</button></form>
+</div></div>
+{% endif %}
+{% endblock %}

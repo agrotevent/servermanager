@@ -11,29 +11,30 @@ from .mikrotik import MikroTik, MikroTikError
 from .authentik import Authentik, AuthentikError
 from .mailcow import Mailcow, MailcowError
 from .ispconfig_api import IspConfig, IspError
-from .models import (KIND_ISPC, KIND_MAILCOW, KIND_PANGOLIN, KIND_PBX, KIND_PVE, KIND_ROUTER, KIND_SSO,
-                     KIND_ZABBIX, KIND_ZAMMAD, STATUS_ERROR, STATUS_ONLINE, IspServer, MailcowServer, PangolinServer,
-                     PbxServer, PveServer, RouterDevice, SsoServer, System, ZabbixHost, ZabbixServer, ZammadServer,
-                     utcnow)
+from .models import (KIND_EASYBELL, KIND_ISPC, KIND_MAILCOW, KIND_PANGOLIN, KIND_PBX, KIND_PVE, KIND_ROUTER,
+                     KIND_SSO, KIND_ZABBIX, KIND_ZAMMAD, STATUS_ERROR, STATUS_ONLINE, EasybellAccount, IspServer,
+                     MailcowServer, PangolinServer, PbxServer, PveServer, RouterDevice, SsoServer, System, ZabbixHost,
+                     ZabbixServer, ZammadServer, utcnow)
 from .pangolin import Pangolin, PangolinError
 from .pbx import PbxError
 from .pveapi import PveError
 from .ssh import SSHError
 from .zabbix import Zabbix, ZabbixError
 from .zammad import Zammad, ZammadError
+from .ami import Ami, AmiError
 
 log = logging.getLogger(__name__)
 
 MODELS = {KIND_PVE: PveServer, KIND_ROUTER: RouterDevice, KIND_PANGOLIN: PangolinServer,
           KIND_MAILCOW: MailcowServer, KIND_SSO: SsoServer, KIND_PBX: PbxServer, KIND_ZABBIX: ZabbixServer,
-          KIND_ISPC: IspServer, KIND_ZAMMAD: ZammadServer}
+          KIND_ISPC: IspServer, KIND_ZAMMAD: ZammadServer, KIND_EASYBELL: EasybellAccount}
 LABELS = {KIND_PVE: "Proxmox", KIND_ROUTER: "RouterOS", KIND_PANGOLIN: "Pangolin", KIND_MAILCOW: "Mailcow",
           KIND_SSO: "SSO", KIND_PBX: "Telefonie", KIND_ZABBIX: "Zabbix", KIND_ISPC: "ISPConfig",
-          KIND_ZAMMAD: "Zammad"}
+          KIND_ZAMMAD: "Zammad", KIND_EASYBELL: "easybell"}
 Integration = Union[PveServer, RouterDevice, PangolinServer, MailcowServer, SsoServer, PbxServer, ZabbixServer,
-                    IspServer, ZammadServer]
+                    IspServer, ZammadServer, EasybellAccount]
 ApiError = (PveError, MikroTikError, PangolinError, MailcowError, AuthentikError, PbxError, ZabbixError, IspError,
-            ZammadError, SSHError, ValueError)
+            ZammadError, AmiError, SSHError, ValueError)
 
 
 def kind_of(obj: Integration) -> str:
@@ -148,6 +149,36 @@ def zammad_client(z: ZammadServer, timeout: int = 20) -> Zammad:
                   verify_ca=bool(z.verify_ca) or not z.fingerprint, timeout=timeout)
 
 
+def easybell_client(e: EasybellAccount, timeout: float = 15.0) -> Ami:
+    return Ami(e.host, e.port, e.username, security.decrypt(e.secret_enc) if e.secret_enc else "",
+               allow_plain=bool(e.allow_plain), timeout=timeout)
+
+
+def easybell_overview(e: EasybellAccount) -> tuple[dict, list[dict]]:
+    alerts: list[dict] = []
+    data: dict = {"errors": {}}
+    with easybell_client(e) as ami:
+        data["version"] = ami.version()
+        try:
+            data["endpoints"] = sorted(ami.endpoints(), key=lambda x: x["name"])
+        except AmiError as exc:
+            data["endpoints"], data["errors"]["endpoints"] = [], str(exc)
+        try:
+            data["channels"] = ami.channels()
+        except AmiError as exc:
+            data["channels"], data["errors"]["channels"] = [], str(exc)
+    bad = {"unavailable", "unreachable", "unknown", "invalid"}
+    data["offline"] = [x["name"] for x in data["endpoints"] if str(x["state"]).lower().split(" ")[0] in bad]
+    if e.watch_devices:
+        for name in data["offline"]:
+            alerts.append({"key": f"dev:{name}", "severity": "warn", "text": f"Endgerät {name} ist nicht erreichbar"})
+    lst = e.listener or {}
+    if e.listen and lst.get("error") and not lst.get("connected"):
+        alerts.append({"key": "listener", "severity": "warn",
+                       "text": f"Ereignis-Verbindung getrennt: {str(lst['error'])[:200]}"})
+    return data, alerts
+
+
 def zammad_overview(db: Session, z: ZammadServer) -> tuple[dict, list[dict]]:
     from . import tickets
     from .models import Ticket
@@ -242,6 +273,8 @@ def poll(db: Session, obj: Integration) -> list[dict]:
             data, alerts = zabbix_overview(db, obj, zabbix_client(obj))
         elif kind == KIND_ZAMMAD:
             data, alerts = zammad_overview(db, obj)
+        elif kind == KIND_EASYBELL:
+            data, alerts = easybell_overview(obj)
         elif kind == KIND_ISPC:
             data = ispconfig_overview(ispconfig_client(obj))
         elif kind == KIND_SSO:

@@ -32,6 +32,7 @@ PAGES: list[tuple[str, str, str]] = [
     ("pangolin", "Pangolin: Dienste veröffentlichen", "Infrastruktur"),
     ("apps", "Nextcloud, Mailcow & SSO", "Infrastruktur"),
     ("telefonie", "Telefonie: Asterisk & FreePBX", "Infrastruktur"),
+    ("easybell", "easybell Cloud Telefonanlage", "Infrastruktur"),
     ("zabbix", "Zabbix & Tickets", "Infrastruktur"),
     ("zammad", "Zammad", "Infrastruktur"),
     ("ispconfig", "ISPConfig", "Infrastruktur"),

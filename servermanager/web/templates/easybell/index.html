@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% set help_page = "easybell" %}
+{% from "_macros.html" import empty with context %}
+{% from "integrations/_macros.html" import int_status with context %}
+{% block title %}easybell{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>easybell</h1><p>Cloud Telefonanlage über die AMI-Schnittstelle: Endgeräte, laufende Gespräche, Anrufjournal und Anrufe in Zammad.</p></div>
+  {% if user.is_admin %}<div class="actions"><a class="btn primary" href="{{ url_for('easybell.new') }}"><svg class="icon"><use href="#i-plus"/></svg>easybell anbinden</a></div>{% endif %}
+</div>
+{% if items %}
+<div class="card"><div class="table-wrap"><table class="table">
+  <thead><tr><th>Anlage</th><th>Status</th><th>Endgeräte</th><th>Gespräche</th><th>Ereignisse</th><th>Zammad</th></tr></thead>
+  <tbody>{% for a in items %}{% set l = a.listener or {} %}
+    <tr><td><a href="{{ url_for('easybell.detail', aid=a.id) }}"><strong>{{ a.name }}</strong></a><span class="sub">{{ a.username }}@{{ a.host }}:{{ a.port }}</span></td>
+      <td>{{ int_status(a) }}<span class="sub">{{ a.last_poll|ago }}</span></td>
+      <td>{{ (a.data.endpoints or [])|length }}{% if a.data.offline %} <span class="badge warning">{{ a.data.offline|length }} offline</span>{% endif %}</td>
+      <td>{{ (a.data.channels or [])|length }}</td>
+      <td>{% if not a.listen %}<span class="badge">aus</span>{% elif l.connected %}<span class="badge success">verbunden</span>{% elif l.error %}<span class="badge danger" title="{{ l.error }}">getrennt</span>{% else %}<span class="badge">startet</span>{% endif %}</td>
+      <td>{% if a.zammad_id %}<span class="badge success">CTI</span>{% else %}<span class="muted">–</span>{% endif %}</td></tr>
+  {% endfor %}</tbody></table></div></div>
+{% else %}<div class="card"><div class="card-body">{{ empty('Noch keine easybell Cloud Telefonanlage angebunden.', 'i-phone') }}</div></div>{% endif %}
+{% endblock %}

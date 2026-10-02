@@ -35,6 +35,9 @@
   gepinnte interne Adresse; Administratoren nur nach ausdrücklicher Freigabe; eine lokale
   Zwei-Faktor-Anmeldung gilt weiter; fehlgeschlagene SSO-Anmeldungen zählen zur Login-Drosselung und
   stehen im Audit-Log.
+- easybell (AMI ohne TLS): Anmeldung nur per MD5-Challenge (Klartext-Passwort nur nach ausdrücklicher
+  Freigabe), Werte mit Zeilenumbrüchen werden abgelehnt (keine eingeschleusten AMI-Befehle), das
+  Anrufjournal wird nach der eingestellten Frist gelöscht.
 - Enrollment-Tokens sind zufällig, nur gehasht gespeichert, zeitlich begrenzt und auf eine Anzahl
   Verwendungen beschränkt.
 

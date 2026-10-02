@@ -368,9 +368,11 @@ KIND_PBX = "pbx"
 KIND_ZABBIX = "zabbix"
 KIND_ISPC = "ispconfig"
 KIND_ZAMMAD = "zammad"
+KIND_EASYBELL = "easybell"
 INTEGRATION_KINDS = {KIND_PVE: "Proxmox VE", KIND_ROUTER: "RouterOS", KIND_PANGOLIN: "Pangolin",
                      KIND_MAILCOW: "Mailcow", KIND_SSO: "SSO (authentik)", KIND_PBX: "Telefonie (Asterisk/FreePBX)",
-                     KIND_ZABBIX: "Zabbix & Tickets", KIND_ISPC: "ISPConfig", KIND_ZAMMAD: "Zammad"}
+                     KIND_ZABBIX: "Zabbix & Tickets", KIND_ISPC: "ISPConfig", KIND_ZAMMAD: "Zammad",
+                     KIND_EASYBELL: "easybell Cloud Telefonanlage"}
 MAIL_PORTS_DEFAULT = "25,465,587,143,993,110,995,4190,80"
 PANGOLIN_ROLES = {"primary": "Primär", "backup": "Backup-Weg"}
 PVE_HOSTING = {"local": "Lokal (gemeinsames Netz)", "hetzner": "Hetzner (vSwitch)"}
@@ -558,6 +560,49 @@ class ZammadServer(IntegrationMixin, Base):
     webhook_secret_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     agent_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # Zammad user of the API token
     setup: Mapped[Optional[dict]] = mapped_column(JSONText, default=dict)
+
+
+class EasybellAccount(IntegrationMixin, Base):
+    """easybell Cloud Telefonanlage via AMI: devices, active calls, call journal, calls to Zammad (CTI)."""
+
+    __tablename__ = "easybell_accounts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    host: Mapped[str] = mapped_column(String(255), default="jarvis.easybell.de")
+    port: Mapped[int] = mapped_column(Integer, default=5039)
+    username: Mapped[str] = mapped_column(String(128), default="")
+    secret_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    allow_plain: Mapped[bool] = mapped_column(Boolean, default=False)       # login without MD5 challenge
+    country_code: Mapped[str] = mapped_column(String(4), default="49")
+    device_pattern: Mapped[str] = mapped_column(String(128), default=r"^PJSIP/CPBX-")
+    listen: Mapped[bool] = mapped_column(Boolean, default=True)             # permanent connection for events
+    journal_days: Mapped[int] = mapped_column(Integer, default=30)
+    watch_devices: Mapped[bool] = mapped_column(Boolean, default=False)     # alert on unreachable devices
+    zammad_id: Mapped[Optional[int]] = mapped_column(ForeignKey("zammad_servers.id", ondelete="SET NULL"),
+                                                     nullable=True)
+    cti_token_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # token of Zammad's CTI (generic)
+    listener: Mapped[Optional[dict]] = mapped_column(JSONText, default=dict)  # state of the event connection
+
+
+class EasybellCall(Base):
+    """Call journal from the AMI events."""
+
+    __tablename__ = "easybell_calls"
+    __table_args__ = (UniqueConstraint("account_id", "call_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("easybell_accounts.id", ondelete="CASCADE"), index=True)
+    call_id: Mapped[str] = mapped_column(String(64))
+    direction: Mapped[str] = mapped_column(String(4))                     # in | out
+    from_number: Mapped[str] = mapped_column(String(64), default="")
+    to_number: Mapped[str] = mapped_column(String(64), default="")
+    extension: Mapped[str] = mapped_column(String(64), default="")
+    answered_by: Mapped[str] = mapped_column(String(64), default="")
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    answered_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    cause: Mapped[str] = mapped_column(String(32), default="")
+    zammad_ok: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
 
 
 class ZabbixHost(Base):

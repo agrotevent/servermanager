@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% set help_page = "easybell" %}
+{% from "_macros.html" import csrf, empty with context %}
+{% from "integrations/_macros.html" import int_status, alerts_box with context %}
+{% block title %}{{ a.name }} · easybell{% endblock %}
+{% macro num(n) %}{% if n %}<span class="mono">{{ ('+' ~ n) if n|length > 6 else n }}</span>{% else %}<span class="muted">unbekannt</span>{% endif %}{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>{{ a.name }} {{ int_status(a) }}</h1>
+    <p>AMI {{ a.username }}@{{ a.host }}:{{ a.port }}{% if a.data.version %} · Asterisk {{ a.data.version }}{% endif %} · Ereignisse:
+      {% if not a.listen %}aus{% elif listener.connected %}<span class="badge success">verbunden</span>{% if listener.since %} <small class="muted">seit {{ listener.since|dt }}</small>{% endif %}{% elif listener.error %}<span class="badge danger">getrennt</span> <small class="muted">{{ listener.error }}</small>{% else %}<span class="badge">startet</span>{% endif %}
+      {% if zammad %} · Anrufe an <a href="{{ url_for('zammad.detail', zid=zammad.id) }}">{{ zammad.name }}</a>{% endif %}</p></div>
+  <div class="actions">
+    {% if int_can('easybell', a.id, 'operate') %}<form method="post" action="{{ url_for('easybell.refresh', aid=a.id) }}" class="inline">{{ csrf() }}<button class="btn ghost"><svg class="icon"><use href="#i-refresh"/></svg>Aktualisieren</button></form>{% endif %}
+    {% if user.is_admin %}<a class="btn ghost" href="{{ url_for('easybell.edit', aid=a.id) }}"><svg class="icon"><use href="#i-edit"/></svg>Bearbeiten</a>{% endif %}
+  </div>
+</div>
+{% if a.status_message %}<div class="alert danger">{{ a.status_message }}</div>{% endif %}
+{{ alerts_box(a) }}
+<nav class="tabs">{% for k, v in tabs.items() %}<a href="?tab={{ k }}" class="{{ 'active' if tab == k }}">{{ v }}</a>{% endfor %}</nav>
+
+{% if tab == 'overview' %}
+<div class="stats">
+  <div class="stat"><div class="label">Anrufe (24 h)</div><div class="value">{{ stats.total }}</div><div class="sub">{{ stats['in'] }} eingehend · {{ stats.out }} ausgehend</div></div>
+  <a class="stat {{ 'warning' if stats.missed }}" href="?tab=calls&missed=1"><div class="label">Verpasst (24 h)</div><div class="value">{{ stats.missed }}</div><div class="sub">eingehend, nicht angenommen</div></a>
+  <div class="stat"><div class="label">Laufende Gespräche</div><div class="value">{{ (a.data.channels or [])|length }}</div><div class="sub">Kanäle beim letzten Abruf</div></div>
+  <div class="stat {{ 'warning' if a.data.offline }}"><div class="label">Endgeräte</div><div class="value">{{ (a.data.endpoints or [])|length }}</div><div class="sub">{{ (a.data.offline or [])|length }} nicht erreichbar</div></div>
+</div>
+{% if stats.zammad_failed %}<div class="alert warning">{{ stats.zammad_failed }} Anruf(e) der letzten 24 Stunden konnten nicht an Zammad gemeldet werden – CTI (generisch) in Zammad und Token prüfen.</div>{% endif %}
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>Endgeräte</h2></div>
+    {% if a.data.errors and a.data.errors.endpoints %}<div class="card-body"><small class="muted">{{ a.data.errors.endpoints }}</small></div>{% endif %}
+    <div class="table-wrap"><table class="table compact"><thead><tr><th>Gerät</th><th>Status</th></tr></thead><tbody>
+    {% for e in a.data.endpoints or [] %}
+      <tr><td class="mono">{{ e.name }}{% if e.contacts %}<span class="sub">{{ e.contacts }}</span>{% endif %}</td>
+        <td>{% set st = (e.state or '')|lower %}{% if e.name in (a.data.offline or []) %}<span class="badge danger">{{ e.state }}</span>{% elif (st.startswith('in use') or 'busy' in st or 'ring' in st) %}<span class="badge warning">{{ e.state }}</span>{% else %}<span class="badge success">{{ e.state or 'ok' }}</span>{% endif %}</td></tr>
+    {% else %}<tr><td colspan="2" class="muted">Keine Endgeräte gemeldet.</td></tr>{% endfor %}</tbody></table></div></div>
+  <div class="card"><div class="card-head"><h2>Laufende Gespräche</h2></div>
+    {% if a.data.errors and a.data.errors.channels %}<div class="card-body"><small class="muted">{{ a.data.errors.channels }}</small></div>{% endif %}
+    <div class="table-wrap"><table class="table compact"><thead><tr><th>Kanal</th><th>Von → Nach</th><th>Status</th><th>Dauer</th></tr></thead><tbody>
+    {% for c in a.data.channels or [] %}
+      <tr><td class="mono"><small>{{ c.channel }}</small></td><td class="mono">{{ c.caller or '?' }} → {{ c.connected or c.exten or '?' }}</td><td>{{ c.state }}</td><td class="mono">{{ c.duration }}</td></tr>
+    {% else %}<tr><td colspan="4" class="muted">Keine Gespräche beim letzten Abruf.</td></tr>{% endfor %}</tbody></table></div></div>
+</div>
+
+{% elif tab == 'calls' %}
+<form method="get" class="filters"><input type="hidden" name="tab" value="calls">
+  <input type="search" name="q" value="{{ q }}" placeholder="Rufnummer oder Durchwahl …" style="max-width:240px">
+  <select name="dir"><option value="">alle Richtungen</option><option value="in" {{ 'selected' if direction == 'in' }}>eingehend</option><option value="out" {{ 'selected' if direction == 'out' }}>ausgehend</option></select>
+  <label class="check"><input type="checkbox" name="missed" value="1" {{ 'checked' if request.args.get('missed') }}> nur verpasste</label>
+  <button class="btn">Filtern</button></form>
+<div class="card"><div class="table-wrap"><table class="table compact"><thead><tr><th>Zeit</th><th></th><th>Von</th><th>Nach</th><th>Angenommen</th><th>Dauer</th><th>Ergebnis</th>{% if zammad %}<th>Zammad</th>{% endif %}</tr></thead><tbody>
+  {% for c in calls %}
+    <tr><td class="nowrap"><small>{{ c.started_at|dt }}</small></td>
+      <td>{% if c.direction == 'in' %}<span class="badge">ein</span>{% else %}<span class="badge">aus</span>{% endif %}</td>
+      <td>{{ num(c.from_number) }}{% if c.direction == 'out' and c.extension %}<span class="sub">{{ c.extension }}</span>{% endif %}</td>
+      <td>{{ num(c.to_number) }}{% if c.direction == 'in' and c.extension %}<span class="sub">{{ c.extension }}</span>{% endif %}</td>
+      <td class="mono"><small>{{ c.answered_by or ('–' if c.ended_at else '') }}</small></td>
+      <td class="mono">{% if c.answered_at and c.ended_at %}{% set s = (c.ended_at - c.answered_at).total_seconds()|int %}{{ '%d:%02d'|format(s // 60, s % 60) }}{% elif not c.ended_at %}<span class="badge warning">läuft</span>{% endif %}</td>
+      <td>{% if not c.ended_at %}{% elif c.answered_at %}<span class="badge success">{{ causes.get(c.cause, c.cause) }}</span>{% else %}<span class="badge {{ 'danger' if c.direction == 'in' else '' }}">{{ causes.get(c.cause, c.cause) }}</span>{% endif %}</td>
+      {% if zammad %}<td>{% if c.zammad_ok %}<span class="badge success">gemeldet</span>{% elif c.zammad_ok == false %}<span class="badge danger">Fehler</span>{% endif %}</td>{% endif %}</tr>
+  {% else %}<tr><td colspan="8">{{ empty('Noch keine Anrufe aufgezeichnet.' if a.listen else 'Die Ereignis-Verbindung ist ausgeschaltet – unter „Bearbeiten“ aktivieren.', 'i-phone') }}</td></tr>{% endfor %}
+</tbody></table></div></div>
+<p><small class="muted">Die letzten 300 Anrufe; Aufbewahrung {{ a.journal_days }} Tage.</small></p>
+{% endif %}
+{% endblock %}

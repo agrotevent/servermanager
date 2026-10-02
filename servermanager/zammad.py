@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 from typing import Any, Optional
 from urllib.parse import urlsplit
 
@@ -11,6 +12,7 @@ import requests
 from . import tlspin
 
 TAG = "servermanager"
+CTI_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
 WEBHOOK_NAME = "Servermanager"
 TRIGGER_NAME = "Servermanager: Änderungen zurückmelden"
 # Zabbix severity -> Zammad default priorities
@@ -152,6 +154,23 @@ class Zammad:
 
     def update_ticket(self, ticket_id: int, **fields) -> dict:
         return self.request("PUT", f"tickets/{int(ticket_id)}", fields) or {}
+
+    # ------------------------------------------------------------------ CTI (generic): call events
+    def cti(self, token: str, data: dict) -> None:
+        """Call event to Zammad's generic CTI endpoint (token from Admin → Integrationen → CTI (generisch))."""
+        if not CTI_TOKEN_RE.match(token or ""):
+            raise ZammadError("Ungültiges CTI-Token")
+        url = f"{self.base}/api/v1/cti/{token}"
+        try:
+            r = self.session.post(url, data=data, headers={"Authorization": None}, timeout=min(self.timeout, 8),
+                                  allow_redirects=False)
+        except requests.exceptions.SSLError as exc:
+            raise ZammadError(tlspin.tls_message(self.base, exc)) from exc
+        except requests.RequestException as exc:
+            raise ZammadError(f"Zammad nicht erreichbar ({self.base}): {exc}") from exc
+        if r.status_code >= 400:
+            hint = " – CTI (generisch) in Zammad aktivieren und Token prüfen" if r.status_code in (401, 404) else ""
+            raise ZammadError(f"Zammad CTI: HTTP {r.status_code}{hint}", r.status_code)
 
     # ------------------------------------------------------------------ webhook + trigger
     def setup_webhook(self, endpoint: str, secret: str, verify_ssl: bool = True) -> dict:
