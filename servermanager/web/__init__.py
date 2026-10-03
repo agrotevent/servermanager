@@ -15,7 +15,7 @@ from .. import __version__, settings
 from ..config import get_config
 from ..core import bootstrap, setup_logging
 from ..db import new_session
-from ..models import (CONNECTIONS, JOB_STATUSES, LEVELS, ROLES, STATUSES, utcnow)
+from ..models import (CONNECTIONS, JOB_STATUSES, KIND_LEVEL_LABELS, LEVELS, ROLES, STATUSES, utcnow)
 from ..modules import MODULES, TYPE_LABELS
 from ..schedules import get_tz
 from ..security import derive_key
@@ -90,7 +90,7 @@ def create_app(testing: bool = False) -> Flask:
         site = settings.get(db, "general.site_name") if db is not None else "Servermanager"
         return {
             "csrf_token": csrf_token, "can": can, "user": g.get("user"), "site_name": site,
-            "version": __version__, "MODULES": MODULES, "TYPE_LABELS": TYPE_LABELS, "LEVELS": LEVELS,
+            "version": __version__, "MODULES": MODULES, "TYPE_LABELS": TYPE_LABELS, "LEVELS": LEVELS, "KIND_LEVEL_LABELS": KIND_LEVEL_LABELS,
             "ROLES": ROLES, "STATUSES": STATUSES, "JOB_STATUSES": JOB_STATUSES, "CONNECTIONS": CONNECTIONS,
             "now": utcnow(), "nav_integrations": _nav_integrations, "int_can": _int_can,
         }
@@ -206,13 +206,13 @@ def create_app(testing: bool = False) -> Flask:
         return re.sub(r"[^a-z0-9]+", "-", (value or "").lower()).strip("-")
 
     # ---- blueprints ------------------------------------------------------------
-    from .views import (admin, auth_views, easybell, enroll, help, ispconfig, jobs, mailcow, main, nextcloud_users,
+    from .views import (admin, auth_views, easybell, enroll, hetzner, help, ispconfig, jobs, mailcow, main, nextcloud_users,
                         optimize,
                         pangolin, pbx, pve, routers, schedules, sso, systems, tickets, updates, users, wg, zabbix,
                         zammad)
     for bp in (auth_views.bp, main.bp, systems.bp, updates.bp, schedules.bp, jobs.bp, enroll.bp,
                wg.bp, users.bp, admin.bp, help.bp, pve.bp, routers.bp, pangolin.bp, optimize.bp, mailcow.bp, sso.bp,
-               nextcloud_users.bp, pbx.bp, zabbix.bp, tickets.bp, ispconfig.bp, zammad.bp, easybell.bp):
+               nextcloud_users.bp, pbx.bp, zabbix.bp, tickets.bp, ispconfig.bp, zammad.bp, easybell.bp, hetzner.bp):
         app.register_blueprint(bp)
 
     @app.get("/healthz")

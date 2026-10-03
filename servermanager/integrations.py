@@ -11,8 +11,9 @@ from .mikrotik import MikroTik, MikroTikError
 from .authentik import Authentik, AuthentikError
 from .mailcow import Mailcow, MailcowError
 from .ispconfig_api import IspConfig, IspError
-from .models import (KIND_EASYBELL, KIND_ISPC, KIND_MAILCOW, KIND_PANGOLIN, KIND_PBX, KIND_PVE, KIND_ROUTER,
-                     KIND_SSO, KIND_ZABBIX, KIND_ZAMMAD, STATUS_ERROR, STATUS_ONLINE, EasybellAccount, IspServer,
+from .models import (KIND_EASYBELL, KIND_HETZNER, KIND_HETZNER_SRV, KIND_ISPC, KIND_MAILCOW, KIND_PANGOLIN, KIND_PBX, KIND_PVE, KIND_ROUTER,
+                     KIND_SSO, KIND_ZABBIX, KIND_ZAMMAD, STATUS_ERROR, STATUS_ONLINE, EasybellAccount, HetznerAccount,
+                     HetznerServer, IspServer,
                      MailcowServer, PangolinServer, PbxServer, PveServer, RouterDevice, SsoServer, System, ZabbixHost,
                      ZabbixServer, ZammadServer, utcnow)
 from .pangolin import Pangolin, PangolinError
@@ -22,19 +23,23 @@ from .ssh import SSHError
 from .zabbix import Zabbix, ZabbixError
 from .zammad import Zammad, ZammadError
 from .ami import Ami, AmiError
+from .hetzner import Robot, RobotError
 
 log = logging.getLogger(__name__)
 
 MODELS = {KIND_PVE: PveServer, KIND_ROUTER: RouterDevice, KIND_PANGOLIN: PangolinServer,
           KIND_MAILCOW: MailcowServer, KIND_SSO: SsoServer, KIND_PBX: PbxServer, KIND_ZABBIX: ZabbixServer,
-          KIND_ISPC: IspServer, KIND_ZAMMAD: ZammadServer, KIND_EASYBELL: EasybellAccount}
+          KIND_ISPC: IspServer, KIND_ZAMMAD: ZammadServer, KIND_EASYBELL: EasybellAccount,
+          KIND_HETZNER: HetznerAccount}
+# objects permissions can be granted on (single Hetzner servers are not polled on their own)
+ACCESS_MODELS = {**MODELS, KIND_HETZNER_SRV: HetznerServer}
 LABELS = {KIND_PVE: "Proxmox", KIND_ROUTER: "RouterOS", KIND_PANGOLIN: "Pangolin", KIND_MAILCOW: "Mailcow",
           KIND_SSO: "SSO", KIND_PBX: "Telefonie", KIND_ZABBIX: "Zabbix", KIND_ISPC: "ISPConfig",
-          KIND_ZAMMAD: "Zammad", KIND_EASYBELL: "easybell"}
+          KIND_ZAMMAD: "Zammad", KIND_EASYBELL: "easybell", KIND_HETZNER: "Hetzner"}
 Integration = Union[PveServer, RouterDevice, PangolinServer, MailcowServer, SsoServer, PbxServer, ZabbixServer,
-                    IspServer, ZammadServer, EasybellAccount]
+                    IspServer, ZammadServer, EasybellAccount, HetznerAccount]
 ApiError = (PveError, MikroTikError, PangolinError, MailcowError, AuthentikError, PbxError, ZabbixError, IspError,
-            ZammadError, AmiError, SSHError, ValueError)
+            ZammadError, AmiError, RobotError, SSHError, ValueError)
 
 
 def kind_of(obj: Integration) -> str:
@@ -179,6 +184,93 @@ def easybell_overview(e: EasybellAccount) -> tuple[dict, list[dict]]:
     return data, alerts
 
 
+def hetzner_client(a: HetznerAccount, timeout: int = 25) -> Robot:
+    from . import hetzner
+    return Robot(a.username, security.decrypt(a.password_enc) if a.password_enc else "",
+                 base=a.api_url or hetzner.API_URL, fingerprint=a.fingerprint or "", timeout=timeout)
+
+
+def hetzner_sync(db: Session, a: HetznerAccount, today=None) -> tuple[dict, list[dict]]:
+    """Servers, IPs, subnets, reverse DNS, reset options and the traffic of the current month."""
+    from datetime import date
+
+    from . import hetzner
+    robot = hetzner_client(a)
+    servers = robot.servers()
+    ips = {i["ip"]: i for i in robot.ips()}
+    subnets = robot.subnets()
+    rdns = robot.rdns()
+    try:
+        resets = robot.reset_options()
+    except RobotError:
+        resets = {}
+    today = today or date.today()
+    start, end = hetzner.month_range(today.year, today.month, today)
+    all_ips, all_nets = [], []
+    for s in servers:
+        i, n = hetzner.addresses_of(s)
+        all_ips += i
+        all_nets += n
+    try:
+        traffic = robot.traffic("month", start, end, all_ips, all_nets)
+        traffic_error = ""
+    except RobotError as exc:
+        traffic, traffic_error = {}, str(exc)
+    by_number = {r.number: r for r in db.query(HetznerServer).filter(HetznerServer.account_id == a.id)}
+    systems = db.query(System).all()
+    alerts: list[dict] = []
+    seen = set()
+    total_gb = 0.0
+    for s in servers:
+        number = int(s["server_number"])
+        seen.add(number)
+        row = by_number.get(number)
+        if row is None:
+            row = HetznerServer(account_id=a.id, number=number)
+            db.add(row)
+        addr_ips, addr_nets = hetzner.addresses_of(s)
+        days, total = hetzner.sum_series(traffic, addr_ips + addr_nets)
+        total_gb += total["sum"]
+        own_nets = [x for x in subnets if int(x.get("server_number") or 0) == number]
+        limit = hetzner.parse_limit_gb(s.get("traffic"))
+        row.name = (s.get("server_name") or f"#{number}")[:128]
+        row.server_ip = s.get("server_ip") or ""
+        row.product, row.dc = (s.get("product") or "")[:128], (s.get("dc") or "")[:32]
+        row.status, row.cancelled = (s.get("status") or "")[:32], bool(s.get("cancelled"))
+        addresses = sorted(set(addr_ips) | {r for r in rdns if hetzner.belongs_to(r, s)},
+                           key=lambda x: (":" in x, x))
+        row.data = {
+            "server": s, "reset": resets.get(number, []), "subnets": own_nets,
+            "ips": [{"ip": ip, "ptr": rdns.get(ip, ""), "main": ip == s.get("server_ip"),
+                     **{k: ips.get(ip, {}).get(k) for k in ("locked", "traffic_warnings", "traffic_hourly",
+                                                             "traffic_daily", "traffic_monthly")}}
+                    for ip in addresses],
+            "traffic": {"month": start[:7], "days": days, "total": total, "limit_gb": limit,
+                        "error": traffic_error},
+        }
+        match = next((x for x in systems if x.host in set(addr_ips) | {s.get("server_ip")}), None)
+        row.system_id = match.id if match else row.system_id if row.system_id in {x.id for x in systems} else None
+        label = row.name if row.name == f"#{number}" else f"{row.name} (#{number})"
+        if row.status and row.status != "ready":
+            alerts.append({"key": f"status:{number}", "severity": "warn",
+                           "text": f"{label}: Status „{row.status}“"})
+        if row.cancelled:
+            alerts.append({"key": f"cancelled:{number}", "severity": "warn",
+                           "text": f"{label} ist gekündigt (bezahlt bis {s.get('paid_until') or '?'})"})
+        if limit and a.traffic_alert_pct and total["sum"] >= limit * a.traffic_alert_pct / 100:
+            pct = round(total["sum"] * 100 / limit)
+            alerts.append({"key": f"traffic:{number}", "severity": "crit" if pct >= 100 else "warn",
+                           "text": f"{label}: {pct} % des Inklusiv-Traffics verbraucht ({total['sum']:.0f} GB)"})
+    for number, row in by_number.items():
+        if number not in seen:
+            from . import access
+            access.remove_integration(db, KIND_HETZNER_SRV, row.id)
+            db.delete(row)
+    data = {"servers": len(servers), "ips": len(ips), "subnets": len(subnets), "rdns": len(rdns),
+            "month": start[:7], "traffic_gb": round(total_gb, 1), "traffic_error": traffic_error}
+    return data, alerts
+
+
 def zammad_overview(db: Session, z: ZammadServer) -> tuple[dict, list[dict]]:
     from . import tickets
     from .models import Ticket
@@ -275,6 +367,8 @@ def poll(db: Session, obj: Integration) -> list[dict]:
             data, alerts = zammad_overview(db, obj)
         elif kind == KIND_EASYBELL:
             data, alerts = easybell_overview(obj)
+        elif kind == KIND_HETZNER:
+            data, alerts = hetzner_sync(db, obj)
         elif kind == KIND_ISPC:
             data = ispconfig_overview(ispconfig_client(obj))
         elif kind == KIND_SSO:
@@ -328,6 +422,8 @@ def _alert_changes(db: Session, obj: Integration, alerts: list[dict]) -> None:
 def due(obj: Integration, interval_min: int) -> bool:
     if not obj.monitor or interval_min <= 0:
         return False
+    if isinstance(obj, HetznerAccount):
+        interval_min = max(interval_min, 15)  # Robot rate limits; the data changes slowly
     return obj.last_poll is None or (utcnow() - obj.last_poll).total_seconds() >= interval_min * 60
 
 

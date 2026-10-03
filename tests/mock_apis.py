@@ -37,6 +37,7 @@ PG_KEY = "pgkey.secret"
 MC_KEY = "mc-api-key"
 AK_TOKEN = "ak-token"
 PG_ORG = "acme"
+HZ_USER, HZ_PASS = "#ws+test", "robot-secret"
 
 EXPORT = (Path(__file__).parent / "data" / "chr_export.rsc").read_text()
 
@@ -134,6 +135,22 @@ class State:
         self.ak_apps: dict[str, dict] = {}
         self.ak_passwords: dict[int, str] = {}
         self.ak_seq = 10
+        # ---------------- hetzner robot
+        self.hz_servers = [
+            {"server_ip": "88.99.10.1", "server_ipv6_net": "2a01:4f8:10:1::", "server_number": 321,
+             "server_name": "pve-fsn", "product": "AX42", "dc": "FSN1-DC14", "traffic": "unlimited",
+             "status": "ready", "cancelled": False, "paid_until": "2026-12-31", "ip": ["88.99.10.1", "88.99.10.7"],
+             "subnet": [{"ip": "2a01:4f8:10:1::", "mask": "64"}]},
+            {"server_ip": "5.9.20.2", "server_ipv6_net": "2a01:4f8:20:2::", "server_number": 654,
+             "server_name": "", "product": "EX44", "dc": "NBG1-DC3", "traffic": "30 GB", "status": "ready",
+             "cancelled": True, "paid_until": "2026-10-31", "ip": ["5.9.20.2"], "subnet": []}]
+        self.hz_ips = {ip: {"ip": ip, "server_ip": s["server_ip"], "server_number": s["server_number"],
+                            "locked": False, "separate_mac": None, "traffic_warnings": False, "traffic_hourly": 200,
+                            "traffic_daily": 2000, "traffic_monthly": 20}
+                       for s in self.hz_servers for ip in s["ip"]}
+        self.hz_rdns = {"88.99.10.1": "pve-fsn.example.com", "2a01:4f8:10:1::2": "mail.example.com"}
+        self.hz_resets: list[tuple[int, str]] = []
+        self.hz_traffic_queries: list[dict] = []
         self.ak_codes: dict[str, dict] = {}     # code -> {"user", "challenge", "nonce", "client_id", "redirect"}
         self.ak_tokens: dict[str, dict] = {}    # access token -> user info
 
@@ -205,6 +222,8 @@ class MockApp:
                 resp = self.mailcow(req, req.path[len("/api/v1/"):])
             elif req.path.startswith("/api/v3/"):
                 resp = self.authentik(req, req.path[len("/api/v3/"):])
+            elif req.path.startswith("/robot/"):
+                resp = self.robot(req, req.path[len("/robot/"):])
             elif req.path.startswith("/application/o/"):
                 resp = self.authentik_oauth(req, req.path[len("/application/o/"):])
             elif req.path == "/zabbix/api_jsonrpc.php":
@@ -927,6 +946,82 @@ class MockApp:
                 s.ak_users.remove(u)
                 return Response(status=204)
         return _json({"detail": "Not found."}, 404)
+
+    def robot(self, req: Request, path: str) -> Response:
+        s = self.s
+        auth = req.authorization
+        if not auth or auth.username != HZ_USER or auth.password != HZ_PASS:
+            return _json({"error": {"status": 401, "code": "UNAUTHORIZED", "message": "Unauthorized"}}, 401)
+        p = path.strip("/").split("/")
+        f = req.form
+
+        def err(status, code, msg="error"):
+            return _json({"error": {"status": status, "code": code, "message": msg}}, status)
+        srv = {x["server_number"]: x for x in s.hz_servers}
+        if p == ["server"]:
+            return _json([{"server": x} for x in s.hz_servers])
+        if p[0] == "server" and len(p) == 2:
+            x = srv.get(int(p[1]))
+            if x is None:
+                return err(404, "SERVER_NOT_FOUND")
+            if req.method == "POST":
+                x["server_name"] = f.get("server_name", "")
+            return _json({"server": x})
+        if p == ["ip"]:
+            return _json([{"ip": x} for x in s.hz_ips.values()])
+        if p[0] == "ip" and len(p) == 2 and req.method == "POST":
+            x = s.hz_ips.get(p[1])
+            if x is None:
+                return err(404, "IP_NOT_FOUND")
+            x["traffic_warnings"] = f.get("traffic_warnings") == "true"
+            for k in ("traffic_hourly", "traffic_daily", "traffic_monthly"):
+                if k in f:
+                    x[k] = int(f[k])
+            return _json({"ip": x})
+        if p == ["subnet"]:
+            subs = [{"ip": n["ip"], "mask": int(n["mask"]), "gateway": "fe80::1", "server_ip": x["server_ip"],
+                     "server_number": x["server_number"], "failover": False, "locked": False,
+                     "traffic_warnings": False, "traffic_hourly": 0, "traffic_daily": 0, "traffic_monthly": 0}
+                    for x in s.hz_servers for n in x["subnet"]]
+            return _json([{"subnet": n} for n in subs]) if subs else err(404, "SUBNET_NOT_FOUND")
+        if p == ["rdns"]:
+            if not s.hz_rdns:
+                return err(404, "RDNS_NOT_FOUND")
+            return _json([{"rdns": {"ip": k, "ptr": v}} for k, v in s.hz_rdns.items()])
+        if p[0] == "rdns" and len(p) == 2:
+            if req.method in ("POST", "PUT"):
+                if not f.get("ptr"):
+                    return _json({"error": {"status": 400, "code": "INVALID_INPUT", "message": "invalid input",
+                                            "missing": ["ptr"], "invalid": None}}, 400)
+                s.hz_rdns[p[1]] = f["ptr"]
+                return _json({"rdns": {"ip": p[1], "ptr": f["ptr"]}})
+            if req.method == "DELETE":
+                if s.hz_rdns.pop(p[1], None) is None:
+                    return err(404, "RDNS_NOT_FOUND")
+                return Response(status=200)
+        if p == ["reset"]:
+            return _json([{"reset": {"server_ip": x["server_ip"], "server_number": x["server_number"],
+                                     "type": ["sw", "hw", "man"] if x["server_number"] == 321 else ["hw", "man"]}}
+                          for x in s.hz_servers])
+        if p[0] == "reset" and len(p) == 2 and req.method == "POST":
+            if len(s.hz_resets) >= 50:
+                return _json({"error": {"status": 403, "code": "RATE_LIMIT_EXCEEDED", "message": "rate limit",
+                                        "max_request": 50, "interval": 3600}}, 403)
+            s.hz_resets.append((int(p[1]), f.get("type", "")))
+            return _json({"reset": {"server_ip": srv[int(p[1])]["server_ip"], "type": f.get("type")}})
+        if p[0] == "wol" and len(p) == 2 and req.method == "POST":
+            s.hz_resets.append((int(p[1]), "wol"))
+            return _json({"wol": {"server_ip": srv[int(p[1])]["server_ip"], "server_number": int(p[1])}})
+        if p == ["traffic"] and req.method == "POST":
+            q = {"type": f.get("type"), "from": f.get("from"), "to": f.get("to"), "ip": f.getlist("ip[]"),
+                 "subnet": f.getlist("subnet[]"), "single_values": f.get("single_values")}
+            s.hz_traffic_queries.append(q)
+            slots = ["01", "02", "03"] if q["type"] != "year" else ["01", "02"]
+            data = {a: {sl: {"in": 1.5, "out": 10.0, "sum": 11.5} for sl in slots} for a in q["ip"]}
+            data.update({n.split("/")[0]: {sl: {"in": 0.5, "out": 1.0, "sum": 1.5} for sl in slots}
+                         for n in q["subnet"]})
+            return _json({"traffic": {"type": q["type"], "from": q["from"], "to": q["to"], "data": data}})
+        return err(404, "NOT_FOUND")
 
     def authentik_oauth(self, req: Request, path: str) -> Response:
         s = self.s

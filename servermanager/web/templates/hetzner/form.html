@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% set help_page = "hetzner" %}
+{% from "_macros.html" import csrf, field, checkbox, textarea with context %}
+{% block title %}{{ 'Hetzner-Konto anbinden' if is_new else 'Hetzner-Konto bearbeiten' }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>{{ 'Hetzner-Konto anbinden' if is_new else a.name ~ ' bearbeiten' }}</h1>
+  <p>In der Hetzner Robot-Oberfläche unter <em>Einstellungen → Webservice- und App-Einstellungen</em> einen <strong>Webservice-Benutzer</strong> anlegen. Das ist nicht die Kundennummer. Alle Root-Server des Kontos werden automatisch übernommen.</p></div></div>
+<form method="post" autocomplete="off">{{ csrf() }}
+<div class="card"><div class="card-body"><div class="form-grid">
+  {{ field('Name', 'name', a.name, required=True, placeholder='Hetzner Hauptkonto') }}
+  {{ field('Webservice-Benutzer', 'username', a.username, required=True, placeholder='#ws+AbCdEfGh', attrs='autocomplete="off"') }}
+  {{ field('Passwort', 'password', '', type='password', help=('Hinterlegt – leer lassen, um es zu behalten' if a.password_enc else 'wird verschlüsselt gespeichert'), attrs='autocomplete="new-password"') }}
+  {{ field('Warnung ab … % des Inklusiv-Traffics', 'traffic_alert_pct', a.traffic_alert_pct, type='number', help='0 = keine Warnung; nur bei Servern mit Traffic-Grenze') }}
+  <div class="full">{{ checkbox('Überwachen (alle 15 Minuten abfragen, Warnungen melden)', 'monitor', a.monitor) }}</div>
+  {{ textarea('Beschreibung', 'description', a.description, rows=2, cls='full') }}
+</div></div></div>
+<div class="actions mt-1"><button class="btn primary">Speichern</button><a class="btn" href="{{ url_for('hetzner.index') }}">Abbrechen</a></div>
+</form>
+{% if not is_new %}
+<div class="card danger-zone mt-2"><div class="card-head"><h2>Konto entfernen</h2></div><div class="card-body">
+  <form method="post" action="{{ url_for('hetzner.delete', aid=a.id) }}" data-confirm="Konto {{ a.name }} entfernen? Die Server bei Hetzner bleiben unverändert, die Rechte im Servermanager werden gelöscht.">{{ csrf() }}<button class="btn danger">Entfernen</button></form>
+</div></div>
+{% endif %}
+{% endblock %}

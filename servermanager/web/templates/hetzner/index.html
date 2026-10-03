@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% set help_page = "hetzner" %}
+{% from "_macros.html" import csrf, empty with context %}
+{% from "integrations/_macros.html" import int_status, alerts_box with context %}
+{% block title %}Hetzner{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>Hetzner Root-Server</h1><p>Status, IP-Adressen mit PTR-Einträgen, Traffic und Neustarts über den Robot-Webservice.</p></div>
+  {% if user.is_admin %}<div class="actions"><a class="btn primary" href="{{ url_for('hetzner.new') }}"><svg class="icon"><use href="#i-plus"/></svg>Hetzner-Konto anbinden</a></div>{% endif %}
+</div>
+{% for a in accounts %}
+<div class="card"><div class="card-head"><h2>{{ a.name }} {{ int_status(a) }}</h2>
+  <div class="actions">
+    <small class="muted">{{ a.username }} · {{ a.data.servers or 0 }} Server · Traffic {{ a.data.month or '' }}: {{ a.data.traffic_gb or 0 }} GB · {{ a.last_poll|ago }}</small>
+    {% if int_can('hetzner', a.id, 'operate') %}<form method="post" action="{{ url_for('hetzner.refresh', aid=a.id) }}" class="inline">{{ csrf() }}<button class="btn xs ghost"><svg class="icon"><use href="#i-refresh"/></svg>Aktualisieren</button></form>{% endif %}
+    {% if user.is_admin %}<a class="btn xs ghost" href="{{ url_for('hetzner.edit', aid=a.id) }}"><svg class="icon"><use href="#i-edit"/></svg>Bearbeiten</a>{% endif %}
+  </div></div>
+  {% if a.status_message %}<div class="card-body"><div class="alert danger">{{ a.status_message }}</div></div>{% endif %}
+  {% if a.alert_list %}<div class="card-body">{{ alerts_box(a) }}</div>{% endif %}
+</div>
+{% endfor %}
+{% if servers %}
+<div class="card"><div class="table-wrap"><table class="table">
+  <thead><tr><th>Server</th><th>Produkt / RZ</th><th>IP-Adresse</th><th>Status</th><th>Traffic (Monat)</th><th>System</th><th>Recht</th></tr></thead>
+  <tbody>{% for s in servers %}{% set t = s.info.traffic or {} %}
+    <tr><td><a href="{{ url_for('hetzner.server', sid=s.id) }}"><strong>{{ s.name }}</strong></a><span class="sub">#{{ s.number }} · {{ names.get(s.account_id, '') }}</span></td>
+      <td>{{ s.product }}<span class="sub">{{ s.dc }}</span></td>
+      <td class="mono">{{ s.server_ip }}</td>
+      <td>{% if s.status == 'ready' %}<span class="badge success">bereit</span>{% else %}<span class="badge warning">{{ s.status or '?' }}</span>{% endif %}{% if s.cancelled %} <span class="badge danger">gekündigt</span>{% endif %}</td>
+      <td class="mono">{{ '%.1f'|format((t.total or {}).get('sum', 0)) }} GB{% if t.limit_gb %} <small class="muted">/ {{ '%.0f'|format(t.limit_gb) }} GB</small>{% endif %}</td>
+      <td>{% set sy = systems.get(s.system_id) %}{% if sy %}<a href="{{ url_for('systems.detail', system_id=sy.id) }}">{{ sy.name }}</a>{% else %}<span class="muted">–</span>{% endif %}</td>
+      <td><small>{{ KIND_LEVEL_LABELS['hetzner_srv'][levels[s.id]] }}</small></td></tr>
+  {% endfor %}</tbody></table></div></div>
+{% elif not accounts %}<div class="card"><div class="card-body">{{ empty('Noch kein Hetzner-Konto angebunden.', 'i-server') }}</div></div>
+{% else %}<div class="card"><div class="card-body"><p class="muted">Keine Server gefunden.</p></div></div>{% endif %}
+{% endblock %}

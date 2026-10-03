@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 
 from ... import security
 from ...core import audit
-from ...integrations import MODELS as INTEGRATION_MODELS
+from ...integrations import ACCESS_MODELS as INTEGRATION_MODELS
 from ...models import INTEGRATION_KINDS, LEVELS, ROLE_ADMIN, ROLES, IntegrationAccess, System, SystemAccess, User
 from ..auth import admin_required, client_ip
 

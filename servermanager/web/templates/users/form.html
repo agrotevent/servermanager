@@ -43,12 +43,12 @@
     <div class="card">
       <div class="card-head"><h2>Infrastruktur (API-Verbindungen)</h2></div>
       <div class="card-body">
-        <p class="muted"><small>Lesen: Status und Überwachung · Bedienen: Start/Stopp, Snapshots, Backups, Leases statisch machen, Dienste ein-/ausschalten · Vollzugriff: anlegen, ändern, löschen.</small></p>
+        <p class="muted"><small>Lesen: Status und Überwachung · Bedienen: Start/Stopp, Snapshots, Backups, Leases statisch machen, Dienste ein-/ausschalten · Vollzugriff: anlegen, ändern, löschen.<br>Hetzner: Rechte für das ganze Konto gelten für alle seine Server, Rechte für einen Server nur für diesen; es gilt die höhere Stufe. Auswerten = Status, IPs, PTR, Traffic · Neustarten = Auswerten + Reset und Wake-on-LAN · Ändern = Neustarten + PTR, Servername, Traffic-Warnungen, Reset durch Techniker.</small></p>
         <table class="table compact"><tbody>
         {% for kind, label, objs in integrations %}{% for o in objs %}
-          <tr><td><span class="badge outline">{{ label }}</span> {{ o.name }}</td>
+          <tr><td><span class="badge outline">{{ label }}</span> {{ o.name }}{% if kind == 'hetzner_srv' %} <small class="muted">#{{ o.number }} · {{ o.server_ip }}</small>{% endif %}</td>
             <td><select name="int_{{ kind }}_{{ o.id }}"><option value="">kein Zugriff</option>
-              {% for k, v in LEVELS.items() %}<option value="{{ k }}" {% if int_levels.get(kind ~ '_' ~ o.id) == k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></td></tr>
+              {% for k, v in KIND_LEVEL_LABELS.get(kind, LEVELS).items() %}<option value="{{ k }}" {% if int_levels.get(kind ~ '_' ~ o.id) == k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></td></tr>
         {% endfor %}{% endfor %}
         </tbody></table>
       </div>

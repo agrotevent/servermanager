@@ -80,9 +80,9 @@ def dashboard():
     endpoints = {"pve": "pve.server", "router": "routers.detail", "pangolin": "pangolin.detail",
                  "mailcow": "mailcow.detail", "sso": "sso.detail", "pbx": "pbx.detail",
                  "zabbix": "zabbix.detail", "ispconfig": "ispc.detail", "zammad": "zammad.detail",
-                 "easybell": "easybell.detail"}
+                 "easybell": "easybell.detail", "hetzner": "hetzner.index"}
     params = {"pve": "pve_id", "router": "router_id", "pangolin": "pg_id", "mailcow": "mc_id", "sso": "sso_id",
-              "pbx": "pbx_id", "zabbix": "zid", "ispconfig": "isp_id", "zammad": "zid", "easybell": "aid"}
+              "pbx": "pbx_id", "zabbix": "zid", "ispconfig": "isp_id", "zammad": "zid", "easybell": "aid", "hetzner": None}
     for kind, model in integrations.MODELS.items():
         levels = access.integration_levels(g.db, g.user, kind)
         for obj in g.db.execute(select(model).order_by(model.name)).scalars():
@@ -91,7 +91,7 @@ def dashboard():
             for a in obj.alert_list:
                 int_alerts.append({"name": obj.name, "text": a["text"], "severity": a["severity"],
                                    "since": a.get("since"),
-                                   "url": url_for(endpoints[kind], **{params[kind]: obj.id})})
+                                   "url": url_for(endpoints[kind], **({params[kind]: obj.id} if params[kind] else {}))})
     return render_template("dashboard.html", stats=stats, problems=problems, jobs=jobs, running=running,
                            failed=failed, upcoming=upcoming, warnings=warnings, int_alerts=int_alerts)
 

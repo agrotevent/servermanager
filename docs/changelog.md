@@ -2,6 +2,19 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.15.0 – 03.10.2026
+
+### Neu
+
+- **Hetzner Root-Server** über den Robot-Webservice, mit mehreren Konten:
+  - Status und Traffic je Tag, Monat oder Jahr, mit Warnung beim Inklusivvolumen.
+  - IP-Adressen mit PTR-Einträgen, auch für IPv6, PTR setzen und löschen.
+  - Traffic-Warnungen, Neustarts (Software, Hardware, Ein-/Ausschalter, Techniker) und Wake-on-LAN.
+  - Rechte für ein ganzes Konto oder einzelne Server mit den Stufen *Auswerten*, *Neustarten* und
+    *Ändern*.
+
+  Details unter [Hetzner Root-Server](hetzner.md).
+
 ## 1.14.0 – 02.10.2026
 
 ### Neu

@@ -35,6 +35,11 @@ erscheint danach „Mit *authentik* anmelden“.
 - Technik: OpenID Connect (Authorization Code mit PKCE, State und Nonce). Der Code wird über die interne,
   per Fingerabdruck gepinnte Adresse von authentik eingelöst.
 
+## Hetzner
+
+Rechte gibt es für ein ganzes Robot-Konto oder einzelne Root-Server, mit den Stufen *Auswerten*,
+*Neustarten* und *Ändern*. Details stehen unter [Hetzner Root-Server](hetzner.md#rechte).
+
 ## Infrastruktur (Proxmox, RouterOS, Pangolin)
 
 API-Verbindungen legen nur Administratoren an. Anderen Benutzern wird der Zugriff je Verbindung unter

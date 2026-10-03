@@ -38,6 +38,9 @@
 - easybell (AMI ohne TLS): Anmeldung nur per MD5-Challenge (Klartext-Passwort nur nach ausdrücklicher
   Freigabe), Werte mit Zeilenumbrüchen werden abgelehnt (keine eingeschleusten AMI-Befehle), das
   Anrufjournal wird nach der eingestellten Frist gelöscht.
+- Hetzner Robot: Neustarts und Änderungen nur mit dem passenden Recht je Konto oder Server; PTR-Einträge
+  nur für Adressen des jeweiligen Servers (kein Umbiegen fremder Adressen desselben Kontos); jede
+  Aktion im Audit-Log.
 - Enrollment-Tokens sind zufällig, nur gehasht gespeichert, zeitlich begrenzt und auf eine Anzahl
   Verwendungen beschränkt.
 

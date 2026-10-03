@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% set help_page = "hetzner" %}
+{% from "_macros.html" import csrf with context %}
+{% from "integrations/_macros.html" import line_chart with context %}
+{% block title %}{{ srv.name }} · Hetzner{% endblock %}
+{% set can_op = level in ('operate', 'full') %}{% set can_full = level == 'full' %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>{{ srv.name }} {% if srv.status == 'ready' %}<span class="badge success">bereit</span>{% else %}<span class="badge warning">{{ srv.status or '?' }}</span>{% endif %}{% if srv.cancelled %} <span class="badge danger">gekündigt</span>{% endif %}</h1>
+    <p>#{{ srv.number }} · {{ srv.product }} · {{ srv.dc }} · <span class="mono">{{ srv.server_ip }}</span>{% if s.paid_until %} · bezahlt bis {{ s.paid_until }}{% endif %} · Konto {{ acc.name }}{% if system %} · System <a href="{{ url_for('systems.detail', system_id=system.id) }}">{{ system.name }}</a>{% endif %}</p>
+    <p><small class="muted">Ihr Recht: {{ KIND_LEVEL_LABELS['hetzner_srv'][level] }} · Stand {{ srv.updated_at|dt }}</small></p></div>
+  <div class="actions"><a class="btn ghost" href="{{ url_for('hetzner.index') }}">Alle Server</a></div>
+</div>
+
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>Neustart</h2></div><div class="card-body">
+    {% if can_op %}
+      {% set offered = info.reset or operate_resets %}
+      <div class="flex" style="gap:8px;flex-wrap:wrap">
+      {% for k in offered if k in reset_types %}{% if k in operate_resets or can_full %}
+        <form method="post" action="{{ url_for('hetzner.reset', sid=srv.id) }}" class="inline" data-confirm="{{ reset_types[k] }} für {{ srv.name }} ({{ srv.server_ip }}) auslösen?{% if k == 'man' %} Ein Hetzner-Techniker schaltet den Server aus und wieder ein.{% elif k in ('hw', 'power_long') %} Der Server startet ohne sauberes Herunterfahren neu.{% endif %}">{{ csrf() }}<input type="hidden" name="type" value="{{ k }}">
+          <button class="btn {{ 'danger-outline' if k in ('hw', 'power_long', 'man') else '' }}">{{ reset_types[k] }}</button></form>
+      {% endif %}{% endfor %}
+        <form method="post" action="{{ url_for('hetzner.wol', sid=srv.id) }}" class="inline" data-confirm="Wake-on-LAN an {{ srv.name }} senden?">{{ csrf() }}<button class="btn ghost">Wake-on-LAN</button></form>
+      </div>
+      <p class="mt-1"><small class="muted">Zuerst den Software-Reset versuchen: Er fährt Linux sauber herunter. Der Hardware-Reset entspricht dem Reset-Knopf.{% if not can_full %} Einen Reset durch einen Techniker darf nur auslösen, wer „Ändern“ hat.{% endif %}</small></p>
+    {% else %}<p class="muted">Für Neustarts fehlt das Recht „Neustarten“.</p>{% endif %}
+  </div></div>
+  <div class="card"><div class="card-head"><h2>Server</h2></div><div class="card-body">
+    <dl class="kv"><dt>Produkt</dt><dd>{{ srv.product }}</dd><dt>Rechenzentrum</dt><dd>{{ srv.dc }}</dd>
+      <dt>IPv6-Netz</dt><dd class="mono">{{ s.server_ipv6_net or '–' }}</dd><dt>Traffic inklusive</dt><dd>{{ s.traffic or '–' }}</dd></dl>
+    {% if can_full %}
+    <form method="post" action="{{ url_for('hetzner.rename', sid=srv.id) }}" class="flex mt-1" style="gap:8px">{{ csrf() }}
+      <input type="text" name="name" value="{{ s.server_name or '' }}" placeholder="Servername in Robot" maxlength="100"><button class="btn">Umbenennen</button></form>
+    {% endif %}
+  </div></div>
+</div>
+
+<div class="card"><div class="card-head"><h2>IP-Adressen und PTR-Einträge</h2></div>
+  <div class="table-wrap"><table class="table compact"><thead><tr><th>Adresse</th><th>PTR (Reverse DNS)</th><th>Traffic-Warnungen</th></tr></thead><tbody>
+  {% for r in info.ips or [] %}
+    <tr><td class="mono">{{ r.ip }}{% if r.main %} <span class="badge outline">Haupt-IP</span>{% endif %}{% if r.locked %} <span class="badge danger">gesperrt</span>{% endif %}</td>
+      <td>{% if can_full %}
+        <form method="post" action="{{ url_for('hetzner.rdns', sid=srv.id) }}" class="flex" style="gap:6px">{{ csrf() }}<input type="hidden" name="ip" value="{{ r.ip }}">
+          <input type="text" name="ptr" value="{{ r.ptr }}" placeholder="kein Eintrag" class="mono" style="min-width:220px"><button class="btn xs">Speichern</button></form>
+        {% else %}<span class="mono">{{ r.ptr or '–' }}</span>{% endif %}</td>
+      <td>{% if ':' in r.ip %}<span class="muted">–</span>{% elif r.traffic_warnings %}<small>an: {{ r.traffic_hourly }} MB/h · {{ r.traffic_daily }} MB/Tag · {{ r.traffic_monthly }} GB/Monat</small>{% else %}<small class="muted">aus</small>{% endif %}
+        {% if can_full and ':' not in r.ip %}
+        <details class="mt-1"><summary><small>ändern</small></summary>
+          <form method="post" action="{{ url_for('hetzner.traffic_warnings', sid=srv.id) }}" class="flex" style="gap:6px;flex-wrap:wrap">{{ csrf() }}<input type="hidden" name="ip" value="{{ r.ip }}">
+            <label class="check"><input type="checkbox" name="enabled" value="1" {{ 'checked' if r.traffic_warnings }}> aktiv</label>
+            <input type="number" name="hourly" value="{{ r.traffic_hourly or 200 }}" min="1" style="width:90px" title="MB pro Stunde"> MB/h
+            <input type="number" name="daily" value="{{ r.traffic_daily or 2000 }}" min="1" style="width:100px" title="MB pro Tag"> MB/Tag
+            <input type="number" name="monthly" value="{{ r.traffic_monthly or 20 }}" min="1" style="width:80px" title="GB pro Monat"> GB/Monat
+            <button class="btn xs">Speichern</button></form></details>
+        {% endif %}</td></tr>
+  {% else %}<tr><td colspan="3" class="muted">Keine Adressen.</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% if can_full %}
+  <div class="card-body"><h4>PTR für eine weitere Adresse</h4>
+    <form method="post" action="{{ url_for('hetzner.rdns', sid=srv.id) }}" class="form-grid">{{ csrf() }}
+      <div class="field"><label for="f-ptr-ip">Adresse</label><input type="text" id="f-ptr-ip" name="ip" required class="mono" placeholder="{{ (s.server_ipv6_net or '2a01:4f8::').split('/')[0] }}2"></div>
+      <div class="field"><label for="f-ptr-name">PTR</label><input type="text" id="f-ptr-name" name="ptr" required class="mono" placeholder="mail.example.com"></div>
+      <div class="full"><button class="btn">PTR setzen</button> <small class="muted">z. B. eine IPv6-Adresse aus {{ s.server_ipv6_net or 'dem IPv6-Netz' }} oder aus einem Subnetz des Servers</small></div>
+    </form></div>
+  {% endif %}
+  {% if info.subnets %}<div class="card-body"><small class="muted">Subnetze: {% for n in info.subnets %}<span class="mono">{{ n.ip }}/{{ n.mask }}</span>{% if not loop.last %}, {% endif %}{% endfor %}</small></div>{% endif %}
+</div>
+
+<div class="card"><div class="card-head"><h2>Traffic</h2>
+  <form method="get" class="filters">
+    <select name="period"><option value="month" {{ 'selected' if period == 'month' }}>Monat (täglich)</option><option value="year" {{ 'selected' if period == 'year' }}>Jahr (monatlich)</option></select>
+    {% if period == 'year' %}<select name="m">{% for y in range(year - 3, year + 1)|reverse %}<option value="{{ y }}-01" {{ 'selected' if y == year }}>{{ y }}</option>{% endfor %}</select>
+    {% else %}<select name="m">{% for mm in months %}<option value="{{ mm }}" {{ 'selected' if mm == ym }}>{{ mm[5:] }}/{{ mm[:4] }}</option>{% endfor %}</select>{% endif %}
+    <button class="btn xs">Anzeigen</button></form></div>
+  <div class="card-body">
+  {% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+  {% if traffic.error %}<div class="alert warning">{{ traffic.error }}</div>{% endif %}
+  {% set tot = traffic.total or {} %}
+  <div class="stats">
+    <div class="stat"><div class="label">Gesamt</div><div class="value">{{ '%.1f'|format(tot.get('sum', 0)) }} GB</div>{% if traffic.limit_gb and period == 'month' %}<div class="sub">von {{ '%.0f'|format(traffic.limit_gb) }} GB inklusive ({{ (tot.get('sum', 0) * 100 / traffic.limit_gb)|round|int }} %)</div>{% endif %}</div>
+    <div class="stat"><div class="label">Eingehend</div><div class="value">{{ '%.1f'|format(tot.get('in', 0)) }} GB</div></div>
+    <div class="stat"><div class="label">Ausgehend</div><div class="value">{{ '%.1f'|format(tot.get('out', 0)) }} GB</div></div>
+  </div>
+  {% if chart %}{{ line_chart(chart) }}{% elif not error %}<p class="muted">Noch keine Werte für diesen Zeitraum.</p>{% endif %}
+  <p><small class="muted">Summe aller IPs und Subnetze des Servers laut Hetzner, in GB. Hetzner berechnet in der Regel nur ausgehenden Traffic über einem Inklusivvolumen.</small></p>
+  </div>
+</div>
+{% endblock %}

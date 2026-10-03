@@ -369,10 +369,17 @@ KIND_ZABBIX = "zabbix"
 KIND_ISPC = "ispconfig"
 KIND_ZAMMAD = "zammad"
 KIND_EASYBELL = "easybell"
+KIND_HETZNER = "hetzner"            # Robot account: all its root servers
+KIND_HETZNER_SRV = "hetzner_srv"    # a single root server
 INTEGRATION_KINDS = {KIND_PVE: "Proxmox VE", KIND_ROUTER: "RouterOS", KIND_PANGOLIN: "Pangolin",
                      KIND_MAILCOW: "Mailcow", KIND_SSO: "SSO (authentik)", KIND_PBX: "Telefonie (Asterisk/FreePBX)",
                      KIND_ZABBIX: "Zabbix & Tickets", KIND_ISPC: "ISPConfig", KIND_ZAMMAD: "Zammad",
-                     KIND_EASYBELL: "easybell Cloud Telefonanlage"}
+                     KIND_EASYBELL: "easybell Cloud Telefonanlage", KIND_HETZNER: "Hetzner (alle Server des Kontos)",
+                     KIND_HETZNER_SRV: "Hetzner Root-Server"}
+# access levels named after what they allow, where the general names would be misleading
+# (each level includes the ones before: Ändern may also restart and evaluate)
+KIND_LEVEL_LABELS = {k: {"view": "Auswerten", "operate": "Neustarten", "full": "Ändern"}
+                     for k in (KIND_HETZNER, KIND_HETZNER_SRV)}
 MAIL_PORTS_DEFAULT = "25,465,587,143,993,110,995,4190,80"
 PANGOLIN_ROLES = {"primary": "Primär", "backup": "Backup-Weg"}
 PVE_HOSTING = {"local": "Lokal (gemeinsames Netz)", "hetzner": "Hetzner (vSwitch)"}
@@ -582,6 +589,42 @@ class EasybellAccount(IntegrationMixin, Base):
                                                      nullable=True)
     cti_token_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # token of Zammad's CTI (generic)
     listener: Mapped[Optional[dict]] = mapped_column(JSONText, default=dict)  # state of the event connection
+
+
+class HetznerAccount(IntegrationMixin, Base):
+    """Hetzner Robot webservice user: the root servers of this customer account."""
+
+    __tablename__ = "hetzner_accounts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    api_url: Mapped[str] = mapped_column(String(255), default="https://robot-ws.your-server.de")
+    username: Mapped[str] = mapped_column(String(128), default="")
+    password_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    traffic_alert_pct: Mapped[int] = mapped_column(Integer, default=90)   # of the included traffic
+
+
+class HetznerServer(Base):
+    """A root server of a Hetzner account (synchronised on every poll)."""
+
+    __tablename__ = "hetzner_servers"
+    __table_args__ = (UniqueConstraint("account_id", "number"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("hetzner_accounts.id", ondelete="CASCADE"), index=True)
+    number: Mapped[int] = mapped_column(Integer)
+    name: Mapped[str] = mapped_column(String(128), default="")        # server name in Robot (or #number)
+    server_ip: Mapped[str] = mapped_column(String(64), default="")
+    product: Mapped[str] = mapped_column(String(128), default="")
+    dc: Mapped[str] = mapped_column(String(32), default="")
+    status: Mapped[str] = mapped_column(String(32), default="")
+    cancelled: Mapped[bool] = mapped_column(Boolean, default=False)
+    system_id: Mapped[Optional[int]] = mapped_column(ForeignKey("systems.id", ondelete="SET NULL"), nullable=True)
+    data: Mapped[Optional[dict]] = mapped_column(JSONText, default=dict)  # raw server, ips, subnets, traffic
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+    @property
+    def info(self) -> dict:
+        return self.data or {}
 
 
 class EasybellCall(Base):

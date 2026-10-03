@@ -110,3 +110,18 @@ def remove_integration(db: Session, kind: str, obj_id: int) -> None:
     for row in db.execute(select(IntegrationAccess).where(IntegrationAccess.kind == kind,
                                                           IntegrationAccess.obj_id == obj_id)).scalars():
         db.delete(row)
+
+
+# --------------------------------------------------------------------------
+# Hetzner: rights on the whole Robot account or on single root servers (the higher one counts)
+# --------------------------------------------------------------------------
+def hetzner_server_level(db: Session, user: Optional[User], server) -> Optional[str]:
+    from .models import KIND_HETZNER, KIND_HETZNER_SRV
+    levels = [lv for lv in (integration_level(db, user, KIND_HETZNER, server.account_id),
+                            integration_level(db, user, KIND_HETZNER_SRV, server.id)) if lv]
+    return max(levels, key=lambda lv: LEVEL_ORDER[lv]) if levels else None
+
+
+def has_hetzner_level(db: Session, user: Optional[User], server, level: str) -> bool:
+    current = hetzner_server_level(db, user, server)
+    return bool(current) and LEVEL_ORDER[current] >= LEVEL_ORDER[level]
