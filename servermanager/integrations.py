@@ -11,8 +11,9 @@ from .mikrotik import MikroTik, MikroTikError
 from .authentik import Authentik, AuthentikError
 from .mailcow import Mailcow, MailcowError
 from .ispconfig_api import IspConfig, IspError
-from .models import (KIND_EASYBELL, KIND_HETZNER, KIND_HETZNER_SRV, KIND_ISPC, KIND_MAILCOW, KIND_PANGOLIN, KIND_PBX, KIND_PVE, KIND_ROUTER,
-                     KIND_SSO, KIND_ZABBIX, KIND_ZAMMAD, STATUS_ERROR, STATUS_ONLINE, EasybellAccount, HetznerAccount,
+from .models import (KIND_EASYBELL, KIND_HCLOUD, KIND_HCLOUD_SRV, KIND_HETZNER, KIND_HETZNER_SRV, KIND_ISPC, KIND_MAILCOW, KIND_PANGOLIN, KIND_PBX, KIND_PVE, KIND_ROUTER,
+                     KIND_SSO, KIND_ZABBIX, KIND_ZAMMAD, STATUS_ERROR, STATUS_ONLINE, EasybellAccount, HcloudProject, HcloudServer,
+                     HetznerAccount,
                      HetznerServer, IspServer,
                      MailcowServer, PangolinServer, PbxServer, PveServer, RouterDevice, SsoServer, System, ZabbixHost,
                      ZabbixServer, ZammadServer, utcnow)
@@ -24,22 +25,24 @@ from .zabbix import Zabbix, ZabbixError
 from .zammad import Zammad, ZammadError
 from .ami import Ami, AmiError
 from .hetzner import Robot, RobotError
+from .hcloud import Cloud, CloudError
 
 log = logging.getLogger(__name__)
 
 MODELS = {KIND_PVE: PveServer, KIND_ROUTER: RouterDevice, KIND_PANGOLIN: PangolinServer,
           KIND_MAILCOW: MailcowServer, KIND_SSO: SsoServer, KIND_PBX: PbxServer, KIND_ZABBIX: ZabbixServer,
           KIND_ISPC: IspServer, KIND_ZAMMAD: ZammadServer, KIND_EASYBELL: EasybellAccount,
-          KIND_HETZNER: HetznerAccount}
+          KIND_HETZNER: HetznerAccount, KIND_HCLOUD: HcloudProject}
 # objects permissions can be granted on (single Hetzner servers are not polled on their own)
-ACCESS_MODELS = {**MODELS, KIND_HETZNER_SRV: HetznerServer}
+ACCESS_MODELS = {**MODELS, KIND_HETZNER_SRV: HetznerServer, KIND_HCLOUD_SRV: HcloudServer}
 LABELS = {KIND_PVE: "Proxmox", KIND_ROUTER: "RouterOS", KIND_PANGOLIN: "Pangolin", KIND_MAILCOW: "Mailcow",
           KIND_SSO: "SSO", KIND_PBX: "Telefonie", KIND_ZABBIX: "Zabbix", KIND_ISPC: "ISPConfig",
-          KIND_ZAMMAD: "Zammad", KIND_EASYBELL: "easybell", KIND_HETZNER: "Hetzner"}
+          KIND_ZAMMAD: "Zammad", KIND_EASYBELL: "easybell", KIND_HETZNER: "Hetzner",
+          KIND_HCLOUD: "Hetzner Cloud"}
 Integration = Union[PveServer, RouterDevice, PangolinServer, MailcowServer, SsoServer, PbxServer, ZabbixServer,
-                    IspServer, ZammadServer, EasybellAccount, HetznerAccount]
+                    IspServer, ZammadServer, EasybellAccount, HetznerAccount, HcloudProject]
 ApiError = (PveError, MikroTikError, PangolinError, MailcowError, AuthentikError, PbxError, ZabbixError, IspError,
-            ZammadError, AmiError, RobotError, SSHError, ValueError)
+            ZammadError, AmiError, RobotError, CloudError, SSHError, ValueError)
 
 
 def kind_of(obj: Integration) -> str:
@@ -271,6 +274,67 @@ def hetzner_sync(db: Session, a: HetznerAccount, today=None) -> tuple[dict, list
     return data, alerts
 
 
+def hcloud_client(p: HcloudProject, timeout: int = 25) -> Cloud:
+    from . import hcloud
+    return Cloud(security.decrypt(p.token_enc) if p.token_enc else "", base=p.api_url or hcloud.API_URL,
+                 fingerprint=p.fingerprint or "", timeout=timeout)
+
+
+def hcloud_sync(db: Session, p: HcloudProject) -> tuple[dict, list[dict]]:
+    """Servers with status, addresses (PTR), traffic of the billing period; alerts."""
+    from . import hcloud
+    cloud = hcloud_client(p)
+    servers = cloud.servers()
+    floating = cloud.floating_ips()
+    by_id = {r.cloud_id: r for r in db.query(HcloudServer).filter(HcloudServer.project_id == p.id)}
+    systems = db.query(System).all()
+    alerts: list[dict] = []
+    seen, out_total = set(), 0
+    for s in servers:
+        cid = int(s["id"])
+        seen.add(cid)
+        row = by_id.get(cid)
+        if row is None:
+            row = HcloudServer(project_id=p.id, cloud_id=cid)
+            db.add(row)
+        pub = s.get("public_net") or {}
+        stype, dc = s.get("server_type") or {}, s.get("datacenter") or {}
+        row.name = (s.get("name") or f"#{cid}")[:128]
+        row.status = (s.get("status") or "")[:32]
+        row.ipv4 = ((pub.get("ipv4") or {}).get("ip") or "")[:64]
+        row.ipv6_net = ((pub.get("ipv6") or {}).get("ip") or "")[:64]
+        row.server_type = (stype.get("name") or "")[:64]
+        row.location = (((dc.get("location") or {}).get("city")) or dc.get("name") or "")[:64]
+        out_b, in_b, incl = (int(s.get(k) or 0) for k in ("outgoing_traffic", "ingoing_traffic", "included_traffic"))
+        out_total += out_b
+        addrs = hcloud.addresses(s, floating)
+        row.data = {"server": {k: s.get(k) for k in ("id", "name", "status", "created", "labels", "protection",
+                                                     "rescue_enabled", "locked", "backup_window",
+                                                     "primary_disk_size", "image", "server_type", "datacenter",
+                                                     "public_net", "private_net")},
+                    "ips": addrs, "floating": [f for f in floating if f.get("server") == cid],
+                    "traffic": {"out": out_b, "in": in_b, "included": incl}}
+        own = {a["ip"] for a in addrs}
+        match = next((x for x in systems if x.host in own), None)
+        row.system_id = match.id if match else (row.system_id if row.system_id in {x.id for x in systems} else None)
+        if row.status not in ("running", "off", ""):
+            alerts.append({"key": f"status:{cid}", "severity": "warn", "text": f"{row.name}: Status „{row.status}“"})
+        if s.get("locked"):
+            alerts.append({"key": f"locked:{cid}", "severity": "warn", "text": f"{row.name} ist gesperrt"})
+        if incl and p.traffic_alert_pct and out_b >= incl * p.traffic_alert_pct / 100:
+            pct = round(out_b * 100 / incl)
+            alerts.append({"key": f"traffic:{cid}", "severity": "crit" if pct >= 100 else "warn",
+                           "text": f"{row.name}: {pct} % des Inklusiv-Traffics verbraucht"})
+    for cid, row in by_id.items():
+        if cid not in seen:
+            from . import access
+            access.remove_integration(db, KIND_HCLOUD_SRV, row.id)
+            db.delete(row)
+    data = {"servers": len(servers), "running": sum(1 for s in servers if s.get("status") == "running"),
+            "floating_ips": len(floating), "outgoing_gb": round(out_total / 1024 ** 3, 1)}
+    return data, alerts
+
+
 def zammad_overview(db: Session, z: ZammadServer) -> tuple[dict, list[dict]]:
     from . import tickets
     from .models import Ticket
@@ -369,6 +433,8 @@ def poll(db: Session, obj: Integration) -> list[dict]:
             data, alerts = easybell_overview(obj)
         elif kind == KIND_HETZNER:
             data, alerts = hetzner_sync(db, obj)
+        elif kind == KIND_HCLOUD:
+            data, alerts = hcloud_sync(db, obj)
         elif kind == KIND_ISPC:
             data = ispconfig_overview(ispconfig_client(obj))
         elif kind == KIND_SSO:
@@ -422,7 +488,7 @@ def _alert_changes(db: Session, obj: Integration, alerts: list[dict]) -> None:
 def due(obj: Integration, interval_min: int) -> bool:
     if not obj.monitor or interval_min <= 0:
         return False
-    if isinstance(obj, HetznerAccount):
+    if isinstance(obj, (HetznerAccount, HcloudProject)):
         interval_min = max(interval_min, 15)  # Robot rate limits; the data changes slowly
     return obj.last_poll is None or (utcnow() - obj.last_poll).total_seconds() >= interval_min * 60
 

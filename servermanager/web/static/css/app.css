@@ -415,3 +415,5 @@ pre.small, .small pre { font-size: 12px; }
 .login-or { display: flex; align-items: center; gap: 10px; margin: 16px 0; color: var(--muted); font-size: .85em; }
 .login-or::before, .login-or::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
 .login-card a.btn { justify-content: center; }
+.section-title { font-size: 1.05rem; margin: 22px 0 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.tabs-inline { display: flex; gap: 6px; flex-wrap: wrap; }

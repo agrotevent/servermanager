@@ -33,7 +33,7 @@ PAGES: list[tuple[str, str, str]] = [
     ("apps", "Nextcloud, Mailcow & SSO", "Infrastruktur"),
     ("telefonie", "Telefonie: Asterisk & FreePBX", "Infrastruktur"),
     ("easybell", "easybell Cloud Telefonanlage", "Infrastruktur"),
-    ("hetzner", "Hetzner Root-Server", "Infrastruktur"),
+    ("hetzner", "Hetzner Root- und Cloud-Server", "Infrastruktur"),
     ("zabbix", "Zabbix & Tickets", "Infrastruktur"),
     ("zammad", "Zammad", "Infrastruktur"),
     ("ispconfig", "ISPConfig", "Infrastruktur"),

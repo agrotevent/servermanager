@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% set help_page = "hetzner" %}
+{% from "_macros.html" import csrf with context %}
+{% from "integrations/_macros.html" import line_chart with context %}
+{% block title %}{{ srv.name }} · Hetzner Cloud{% endblock %}
+{% set can_op = level in ('operate', 'full') %}{% set can_full = level == 'full' %}
+{% set st = s.server_type or {} %}{% set t = info.traffic or {} %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>{{ srv.name }} {% if srv.status == 'running' %}<span class="badge success">läuft</span>{% elif srv.status == 'off' %}<span class="badge">aus</span>{% else %}<span class="badge warning">{{ status_labels.get(srv.status, srv.status) }}</span>{% endif %}{% if s.locked %} <span class="badge danger">gesperrt</span>{% endif %}</h1>
+    <p>Cloud #{{ srv.cloud_id }} · {{ srv.server_type }} · {{ srv.location }} · <span class="mono">{{ srv.ipv4 }}</span> · Projekt {{ proj.name }}{% if system %} · System <a href="{{ url_for('systems.detail', system_id=system.id) }}">{{ system.name }}</a>{% endif %}</p>
+    <p><small class="muted">Ihr Recht: {{ KIND_LEVEL_LABELS['hcloud_srv'][level] }} · Stand {{ srv.updated_at|dt }}</small></p></div>
+  <div class="actions"><a class="btn ghost" href="{{ url_for('hetzner.index') }}">Alle Server</a></div>
+</div>
+
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>Neustart und Energie</h2></div><div class="card-body">
+    {% if can_op %}
+      <div class="flex" style="gap:8px;flex-wrap:wrap">
+      {% for k, label in power_actions.items() %}
+        {% if (k == 'poweron') == (srv.status == 'off') %}
+        <form method="post" action="{{ url_for('hcloud.power', sid=srv.id) }}" class="inline" data-confirm="{{ label }} für {{ srv.name }}?{% if k in ('reset', 'poweroff') %} Der Server wird ohne sauberes Herunterfahren {{ 'neu gestartet' if k == 'reset' else 'ausgeschaltet' }}.{% endif %}">{{ csrf() }}<input type="hidden" name="action" value="{{ k }}">
+          <button class="btn {{ 'danger-outline' if k in ('reset', 'poweroff') else '' }}">{{ label }}</button></form>
+        {% endif %}
+      {% endfor %}
+      </div>
+      <p class="mt-1"><small class="muted">Zuerst den sauberen Neustart versuchen. „Reset“ und „Ausschalten“ wirken wie Stromtrennung. Auch ein ausgeschalteter Server wird weiter berechnet.</small></p>
+    {% else %}<p class="muted">Für Neustarts fehlt das Recht „Neustarten“.</p>{% endif %}
+  </div></div>
+  <div class="card"><div class="card-head"><h2>Server</h2></div><div class="card-body">
+    <dl class="kv"><dt>Typ</dt><dd>{{ st.name }}{% if st.cores %} · {{ st.cores }} vCPU · {{ st.memory }} GB RAM · {{ st.disk }} GB{% endif %}</dd>
+      <dt>Image</dt><dd>{{ (s.image or {}).description or (s.image or {}).name or '–' }}</dd>
+      <dt>Standort</dt><dd>{{ (s.datacenter or {}).name or srv.location }}</dd>
+      <dt>Traffic</dt><dd>{{ '%.1f'|format((t.out or 0) / 1073741824) }} GB ausgehend, {{ '%.1f'|format((t['in'] or 0) / 1073741824) }} GB eingehend{% if t.included %} · {{ '%.0f'|format(t.included / 1099511627776) }} TB inklusive ({{ ((t.out or 0) * 100 / t.included)|round(1) }} %){% endif %}</dd>
+      <dt>Schutz</dt><dd>{% if (s.protection or {}).delete %}Löschschutz{% else %}–{% endif %}{% if s.backup_window %} · Backups {{ s.backup_window }}{% endif %}</dd>
+      {% if s.private_net %}<dt>Private Netze</dt><dd class="mono">{% for n in s.private_net %}{{ n.ip }}{% if not loop.last %}, {% endif %}{% endfor %}</dd>{% endif %}
+    </dl>
+    {% if can_full %}
+    <form method="post" action="{{ url_for('hcloud.rename', sid=srv.id) }}" class="flex mt-1" style="gap:8px">{{ csrf() }}
+      <input type="text" name="name" value="{{ srv.name }}" maxlength="63" pattern="[A-Za-z0-9][A-Za-z0-9.\-]*"><button class="btn">Umbenennen</button></form>
+    {% endif %}
+  </div></div>
+</div>
+
+<div class="card"><div class="card-head"><h2>IP-Adressen und PTR-Einträge</h2></div>
+  <div class="table-wrap"><table class="table compact"><thead><tr><th>Adresse</th><th>PTR (Reverse DNS)</th></tr></thead><tbody>
+  {% for r in info.ips or [] %}
+    <tr><td class="mono">{{ r.ip }} {% if r.kind == 'floating' %}<span class="badge outline">Floating-IP{% if r.name %} {{ r.name }}{% endif %}</span>{% else %}<span class="badge outline">Primär</span>{% endif %}{% if r.blocked %} <span class="badge danger">gesperrt</span>{% endif %}</td>
+      <td>{% if can_full %}
+        <form method="post" action="{{ url_for('hcloud.ptr', sid=srv.id) }}" class="flex" style="gap:6px">{{ csrf() }}<input type="hidden" name="ip" value="{{ r.ip }}">
+          <input type="text" name="ptr" value="{{ r.ptr }}" placeholder="Standard von Hetzner" class="mono" style="min-width:240px"><button class="btn xs">Speichern</button></form>
+        {% else %}<span class="mono">{{ r.ptr or '–' }}</span>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="2" class="muted">Keine öffentlichen Adressen.</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% if can_full %}
+  <div class="card-body"><h4>PTR für eine weitere Adresse</h4>
+    <form method="post" action="{{ url_for('hcloud.ptr', sid=srv.id) }}" class="form-grid">{{ csrf() }}
+      <div class="field"><label for="f-ptr-ip">Adresse</label><input type="text" id="f-ptr-ip" name="ip" required class="mono" placeholder="{{ (srv.ipv6_net or '2a01:4f8::/64').split('/')[0] }}2"></div>
+      <div class="field"><label for="f-ptr-name">PTR</label><input type="text" id="f-ptr-name" name="ptr" required class="mono" placeholder="mail.example.com"></div>
+      <div class="full"><button class="btn">PTR setzen</button> <small class="muted">z. B. eine Adresse aus {{ srv.ipv6_net or 'dem IPv6-Netz' }} oder aus einer Floating-IPv6 des Servers. Leer speichern stellt den Standard von Hetzner wieder her.</small></div>
+    </form></div>
+  {% endif %}
+</div>
+
+<div class="card"><div class="card-head"><h2>Auslastung</h2>
+  <div class="tabs-inline">{% for k, v in {'24h': '24 Stunden', '7d': '7 Tage', '30d': '30 Tage'}.items() %}<a href="?range={{ k }}" class="btn xs {{ 'primary' if rng == k else 'ghost' }}">{{ v }}</a>{% endfor %}</div></div>
+  <div class="card-body">
+    {% if error %}<div class="alert warning">{{ error }}</div>{% endif %}
+    {% for ch in charts %}{{ line_chart(ch) }}{% else %}{% if not error %}<p class="muted">Keine Messwerte (der Server ist ausgeschaltet oder gerade erst angelegt).</p>{% endif %}{% endfor %}
+    <p><small class="muted">Messwerte der Hetzner Cloud. Bei der CPU entsprechen 100 % einem vollständig ausgelasteten vCPU-Kern.</small></p>
+  </div>
+</div>
+{% endblock %}

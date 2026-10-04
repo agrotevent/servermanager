@@ -5,9 +5,10 @@
 {% block title %}Hetzner{% endblock %}
 {% block content %}
 <div class="page-head">
-  <div class="grow"><h1>Hetzner Root-Server</h1><p>Status, IP-Adressen mit PTR-Einträgen, Traffic und Neustarts über den Robot-Webservice.</p></div>
-  {% if user.is_admin %}<div class="actions"><a class="btn primary" href="{{ url_for('hetzner.new') }}"><svg class="icon"><use href="#i-plus"/></svg>Hetzner-Konto anbinden</a></div>{% endif %}
+  <div class="grow"><h1>Hetzner</h1><p>Root-Server (Robot) und Cloud-Server: Status, IP-Adressen mit PTR-Einträgen, Traffic und Neustarts.</p></div>
+  {% if user.is_admin %}<div class="actions"><a class="btn primary" href="{{ url_for('hetzner.new') }}"><svg class="icon"><use href="#i-plus"/></svg>Robot-Konto anbinden</a><a class="btn primary" href="{{ url_for('hcloud.new') }}"><svg class="icon"><use href="#i-cloud"/></svg>Cloud-Projekt anbinden</a></div>{% endif %}
 </div>
+{% if accounts or servers %}<h2 class="section-title">Root-Server (Robot)</h2>{% endif %}
 {% for a in accounts %}
 <div class="card"><div class="card-head"><h2>{{ a.name }} {{ int_status(a) }}</h2>
   <div class="actions">
@@ -31,6 +32,33 @@
       <td>{% set sy = systems.get(s.system_id) %}{% if sy %}<a href="{{ url_for('systems.detail', system_id=sy.id) }}">{{ sy.name }}</a>{% else %}<span class="muted">–</span>{% endif %}</td>
       <td><small>{{ KIND_LEVEL_LABELS['hetzner_srv'][levels[s.id]] }}</small></td></tr>
   {% endfor %}</tbody></table></div></div>
-{% elif not accounts %}<div class="card"><div class="card-body">{{ empty('Noch kein Hetzner-Konto angebunden.', 'i-server') }}</div></div>
-{% else %}<div class="card"><div class="card-body"><p class="muted">Keine Server gefunden.</p></div></div>{% endif %}
+{% elif accounts %}<div class="card"><div class="card-body"><p class="muted">Keine Root-Server gefunden.</p></div></div>{% endif %}
+
+{% if projects or cloud %}<h2 class="section-title">Cloud-Server</h2>{% endif %}
+{% for p in projects %}
+<div class="card"><div class="card-head"><h2>{{ p.name }} {{ int_status(p) }}</h2>
+  <div class="actions">
+    <small class="muted">{{ p.data.servers or 0 }} Server, {{ p.data.running or 0 }} laufen · ausgehend {{ p.data.outgoing_gb or 0 }} GB · {{ p.last_poll|ago }}</small>
+    {% if int_can('hcloud', p.id, 'operate') %}<form method="post" action="{{ url_for('hcloud.refresh', pid=p.id) }}" class="inline">{{ csrf() }}<button class="btn xs ghost"><svg class="icon"><use href="#i-refresh"/></svg>Aktualisieren</button></form>{% endif %}
+    {% if user.is_admin %}<a class="btn xs ghost" href="{{ url_for('hcloud.edit', pid=p.id) }}"><svg class="icon"><use href="#i-edit"/></svg>Bearbeiten</a>{% endif %}
+  </div></div>
+  {% if p.status_message %}<div class="card-body"><div class="alert danger">{{ p.status_message }}</div></div>{% endif %}
+  {% if p.alert_list %}<div class="card-body">{{ alerts_box(p) }}</div>{% endif %}
+</div>
+{% endfor %}
+{% if cloud %}
+<div class="card"><div class="table-wrap"><table class="table">
+  <thead><tr><th>Server</th><th>Typ / Standort</th><th>IP-Adresse</th><th>Status</th><th>Traffic (ausgehend)</th><th>System</th><th>Recht</th></tr></thead>
+  <tbody>{% for s in cloud %}{% set t = s.info.traffic or {} %}
+    <tr><td><a href="{{ url_for('hcloud.server', sid=s.id) }}"><strong>{{ s.name }}</strong></a><span class="sub">#{{ s.cloud_id }} · {{ pnames.get(s.project_id, '') }}</span></td>
+      <td>{{ s.server_type }}<span class="sub">{{ s.location }}</span></td>
+      <td class="mono">{{ s.ipv4 or s.ipv6_net }}</td>
+      <td>{% if s.status == 'running' %}<span class="badge success">läuft</span>{% elif s.status == 'off' %}<span class="badge">aus</span>{% else %}<span class="badge warning">{{ s.status or '?' }}</span>{% endif %}</td>
+      <td class="mono">{{ '%.1f'|format((t.out or 0) / 1073741824) }} GB{% if t.included %} <small class="muted">/ {{ '%.0f'|format(t.included / 1099511627776) }} TB</small>{% endif %}</td>
+      <td>{% set sy = systems.get(s.system_id) %}{% if sy %}<a href="{{ url_for('systems.detail', system_id=sy.id) }}">{{ sy.name }}</a>{% else %}<span class="muted">–</span>{% endif %}</td>
+      <td><small>{{ KIND_LEVEL_LABELS['hcloud_srv'][cloud_levels[s.id]] }}</small></td></tr>
+  {% endfor %}</tbody></table></div></div>
+{% elif projects %}<div class="card"><div class="card-body"><p class="muted">Keine Cloud-Server im Projekt.</p></div></div>{% endif %}
+
+{% if not accounts and not servers and not projects and not cloud %}<div class="card"><div class="card-body">{{ empty('Noch kein Hetzner-Konto und kein Cloud-Projekt angebunden.', 'i-server') }}</div></div>{% endif %}
 {% endblock %}

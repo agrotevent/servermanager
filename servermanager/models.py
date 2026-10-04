@@ -371,15 +371,18 @@ KIND_ZAMMAD = "zammad"
 KIND_EASYBELL = "easybell"
 KIND_HETZNER = "hetzner"            # Robot account: all its root servers
 KIND_HETZNER_SRV = "hetzner_srv"    # a single root server
+KIND_HCLOUD = "hcloud"              # Hetzner Cloud project: all its servers
+KIND_HCLOUD_SRV = "hcloud_srv"      # a single cloud server
 INTEGRATION_KINDS = {KIND_PVE: "Proxmox VE", KIND_ROUTER: "RouterOS", KIND_PANGOLIN: "Pangolin",
                      KIND_MAILCOW: "Mailcow", KIND_SSO: "SSO (authentik)", KIND_PBX: "Telefonie (Asterisk/FreePBX)",
                      KIND_ZABBIX: "Zabbix & Tickets", KIND_ISPC: "ISPConfig", KIND_ZAMMAD: "Zammad",
                      KIND_EASYBELL: "easybell Cloud Telefonanlage", KIND_HETZNER: "Hetzner (alle Server des Kontos)",
-                     KIND_HETZNER_SRV: "Hetzner Root-Server"}
+                     KIND_HETZNER_SRV: "Hetzner Root-Server", KIND_HCLOUD: "Hetzner Cloud (alle Server des Projekts)",
+                     KIND_HCLOUD_SRV: "Hetzner Cloud-Server"}
 # access levels named after what they allow, where the general names would be misleading
 # (each level includes the ones before: Ändern may also restart and evaluate)
 KIND_LEVEL_LABELS = {k: {"view": "Auswerten", "operate": "Neustarten", "full": "Ändern"}
-                     for k in (KIND_HETZNER, KIND_HETZNER_SRV)}
+                     for k in (KIND_HETZNER, KIND_HETZNER_SRV, KIND_HCLOUD, KIND_HCLOUD_SRV)}
 MAIL_PORTS_DEFAULT = "25,465,587,143,993,110,995,4190,80"
 PANGOLIN_ROLES = {"primary": "Primär", "backup": "Backup-Weg"}
 PVE_HOSTING = {"local": "Lokal (gemeinsames Netz)", "hetzner": "Hetzner (vSwitch)"}
@@ -620,6 +623,41 @@ class HetznerServer(Base):
     cancelled: Mapped[bool] = mapped_column(Boolean, default=False)
     system_id: Mapped[Optional[int]] = mapped_column(ForeignKey("systems.id", ondelete="SET NULL"), nullable=True)
     data: Mapped[Optional[dict]] = mapped_column(JSONText, default=dict)  # raw server, ips, subnets, traffic
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+    @property
+    def info(self) -> dict:
+        return self.data or {}
+
+
+class HcloudProject(IntegrationMixin, Base):
+    """Hetzner Cloud project (one API token): its servers."""
+
+    __tablename__ = "hcloud_projects"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    api_url: Mapped[str] = mapped_column(String(255), default="https://api.hetzner.cloud/v1")
+    token_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    traffic_alert_pct: Mapped[int] = mapped_column(Integer, default=90)   # of the included traffic
+
+
+class HcloudServer(Base):
+    """A server of a Hetzner Cloud project (synchronised on every poll)."""
+
+    __tablename__ = "hcloud_servers"
+    __table_args__ = (UniqueConstraint("project_id", "cloud_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("hcloud_projects.id", ondelete="CASCADE"), index=True)
+    cloud_id: Mapped[int] = mapped_column(Integer)
+    name: Mapped[str] = mapped_column(String(128), default="")
+    status: Mapped[str] = mapped_column(String(32), default="")
+    ipv4: Mapped[str] = mapped_column(String(64), default="")
+    ipv6_net: Mapped[str] = mapped_column(String(64), default="")
+    server_type: Mapped[str] = mapped_column(String(64), default="")
+    location: Mapped[str] = mapped_column(String(64), default="")
+    system_id: Mapped[Optional[int]] = mapped_column(ForeignKey("systems.id", ondelete="SET NULL"), nullable=True)
+    data: Mapped[Optional[dict]] = mapped_column(JSONText, default=dict)  # raw server, addresses, traffic
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
     @property

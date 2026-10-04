@@ -206,13 +206,13 @@ def create_app(testing: bool = False) -> Flask:
         return re.sub(r"[^a-z0-9]+", "-", (value or "").lower()).strip("-")
 
     # ---- blueprints ------------------------------------------------------------
-    from .views import (admin, auth_views, easybell, enroll, hetzner, help, ispconfig, jobs, mailcow, main, nextcloud_users,
+    from .views import (admin, auth_views, easybell, enroll, hcloud, hetzner, help, ispconfig, jobs, mailcow, main, nextcloud_users,
                         optimize,
                         pangolin, pbx, pve, routers, schedules, sso, systems, tickets, updates, users, wg, zabbix,
                         zammad)
     for bp in (auth_views.bp, main.bp, systems.bp, updates.bp, schedules.bp, jobs.bp, enroll.bp,
                wg.bp, users.bp, admin.bp, help.bp, pve.bp, routers.bp, pangolin.bp, optimize.bp, mailcow.bp, sso.bp,
-               nextcloud_users.bp, pbx.bp, zabbix.bp, tickets.bp, ispconfig.bp, zammad.bp, easybell.bp, hetzner.bp):
+               nextcloud_users.bp, pbx.bp, zabbix.bp, tickets.bp, ispconfig.bp, zammad.bp, easybell.bp, hetzner.bp, hcloud.bp):
         app.register_blueprint(bp)
 
     @app.get("/healthz")

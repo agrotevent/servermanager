@@ -125,3 +125,16 @@ def hetzner_server_level(db: Session, user: Optional[User], server) -> Optional[
 def has_hetzner_level(db: Session, user: Optional[User], server, level: str) -> bool:
     current = hetzner_server_level(db, user, server)
     return bool(current) and LEVEL_ORDER[current] >= LEVEL_ORDER[level]
+
+
+def hcloud_server_level(db: Session, user: Optional[User], server) -> Optional[str]:
+    """Hetzner Cloud: rights on the project or on the single server (the higher one counts)."""
+    from .models import KIND_HCLOUD, KIND_HCLOUD_SRV
+    levels = [lv for lv in (integration_level(db, user, KIND_HCLOUD, server.project_id),
+                            integration_level(db, user, KIND_HCLOUD_SRV, server.id)) if lv]
+    return max(levels, key=lambda lv: LEVEL_ORDER[lv]) if levels else None
+
+
+def has_hcloud_level(db: Session, user: Optional[User], server, level: str) -> bool:
+    current = hcloud_server_level(db, user, server)
+    return bool(current) and LEVEL_ORDER[current] >= LEVEL_ORDER[level]

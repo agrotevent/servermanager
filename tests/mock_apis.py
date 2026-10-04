@@ -38,6 +38,7 @@ MC_KEY = "mc-api-key"
 AK_TOKEN = "ak-token"
 PG_ORG = "acme"
 HZ_USER, HZ_PASS = "#ws+test", "robot-secret"
+HC_TOKEN, HC_RO_TOKEN = "hc-rw-token", "hc-ro-token"
 
 EXPORT = (Path(__file__).parent / "data" / "chr_export.rsc").read_text()
 
@@ -151,6 +152,31 @@ class State:
         self.hz_rdns = {"88.99.10.1": "pve-fsn.example.com", "2a01:4f8:10:1::2": "mail.example.com"}
         self.hz_resets: list[tuple[int, str]] = []
         self.hz_traffic_queries: list[dict] = []
+        # ---------------- hetzner cloud
+        self.hc_servers = [
+            {"id": 1001, "name": "web-1", "status": "running", "created": "2026-01-01T00:00:00+00:00",
+             "public_net": {"ipv4": {"ip": "49.12.0.10", "dns_ptr": "static.10.0.12.49.clients.your-server.de",
+                                     "blocked": False},
+                            "ipv6": {"ip": "2a01:4f8:c0c:1::/64", "blocked": False,
+                                     "dns_ptr": [{"ip": "2a01:4f8:c0c:1::1", "dns_ptr": "web-1.example.com"}]},
+                            "floating_ips": [77]},
+             "private_net": [{"network": 5, "ip": "10.0.0.2"}],
+             "server_type": {"name": "cx32", "cores": 4, "memory": 8.0, "disk": 80},
+             "datacenter": {"name": "fsn1-dc14", "location": {"name": "fsn1", "city": "Falkenstein"}},
+             "image": {"name": "debian-13", "description": "Debian 13"}, "protection": {"delete": True},
+             "locked": False, "rescue_enabled": False, "backup_window": None, "labels": {},
+             "outgoing_traffic": 300 * 1024 ** 3, "ingoing_traffic": 20 * 1024 ** 3,
+             "included_traffic": 20 * 1024 ** 4},
+            {"id": 1002, "name": "db-1", "status": "off", "created": "2026-01-01T00:00:00+00:00",
+             "public_net": {"ipv4": {"ip": "49.12.0.11", "dns_ptr": "", "blocked": False},
+                            "ipv6": {"ip": "2a01:4f8:c0c:2::/64", "dns_ptr": [], "blocked": False}, "floating_ips": []},
+             "private_net": [], "server_type": {"name": "cx22"}, "datacenter": {"name": "nbg1-dc3",
+                                                                               "location": {"city": "Nürnberg"}},
+             "image": None, "protection": {"delete": False}, "locked": False, "labels": {},
+             "outgoing_traffic": 19 * 1024 ** 4, "ingoing_traffic": 0, "included_traffic": 20 * 1024 ** 4}]
+        self.hc_floating = [{"id": 77, "name": "mail-ip", "ip": "78.46.0.5", "type": "ipv4", "server": 1001,
+                             "dns_ptr": [{"ip": "78.46.0.5", "dns_ptr": "mail.example.com"}], "blocked": False}]
+        self.hc_actions: list[tuple] = []
         self.ak_codes: dict[str, dict] = {}     # code -> {"user", "challenge", "nonce", "client_id", "redirect"}
         self.ak_tokens: dict[str, dict] = {}    # access token -> user info
 
@@ -222,6 +248,8 @@ class MockApp:
                 resp = self.mailcow(req, req.path[len("/api/v1/"):])
             elif req.path.startswith("/api/v3/"):
                 resp = self.authentik(req, req.path[len("/api/v3/"):])
+            elif req.path.startswith("/hcloud/v1/"):
+                resp = self.hcloud(req, req.path[len("/hcloud/v1/"):])
             elif req.path.startswith("/robot/"):
                 resp = self.robot(req, req.path[len("/robot/"):])
             elif req.path.startswith("/application/o/"):
@@ -946,6 +974,68 @@ class MockApp:
                 s.ak_users.remove(u)
                 return Response(status=204)
         return _json({"detail": "Not found."}, 404)
+
+    def hcloud(self, req: Request, path: str) -> Response:
+        s = self.s
+        token = req.headers.get("Authorization", "").removeprefix("Bearer ")
+        if token not in (HC_TOKEN, HC_RO_TOKEN):
+            return _json({"error": {"code": "unauthorized", "message": "unable to authenticate"}}, 401)
+        if req.method != "GET" and token == HC_RO_TOKEN:
+            return _json({"error": {"code": "forbidden", "message": "insufficient permissions"}}, 403)
+        p = path.strip("/").split("/")
+        body = req.get_json(silent=True) or {}
+
+        def page(key, items):  # one item per page to exercise the pagination
+            n = int(req.args.get("page", 1))
+            nxt = n + 1 if n < len(items) else None
+            return _json({key: items[n - 1:n], "meta": {"pagination": {"page": n, "per_page": 1, "next_page": nxt,
+                                                                          "total_entries": len(items)}}})
+        srv = {x["id"]: x for x in s.hc_servers}
+
+        def action(cmd):
+            return _json({"action": {"id": len(s.hc_actions), "command": cmd, "status": "running"}}, 201)
+        if p == ["servers"]:
+            return page("servers", s.hc_servers)
+        if p == ["floating_ips"]:
+            return page("floating_ips", s.hc_floating)
+        if p[0] == "servers" and len(p) >= 2:
+            x = srv.get(int(p[1]))
+            if x is None:
+                return _json({"error": {"code": "not_found", "message": "server not found"}}, 404)
+            if len(p) == 2 and req.method == "PUT":
+                x["name"] = body.get("name", x["name"])
+                return _json({"server": x})
+            if p[2:] == ["metrics"]:
+                start = int(__import__("datetime").datetime.fromisoformat(req.args["start"]).timestamp())
+                step = int(req.args["step"])
+                vals = [[start + i * step, str(10 + i)] for i in range(6)]
+                return _json({"metrics": {"start": req.args["start"], "end": req.args["end"], "step": step,
+                                          "time_series": {"cpu": {"values": vals},
+                                                          "network.0.bandwidth.in": {"values": vals},
+                                                          "network.0.bandwidth.out": {"values": vals}}}})
+            if len(p) == 4 and p[2] == "actions":
+                if p[3] == "change_dns_ptr":
+                    s.hc_actions.append((x["id"], "ptr", body.get("ip"), body.get("dns_ptr")))
+                    v4 = x["public_net"]["ipv4"]
+                    if body.get("ip") == v4["ip"]:
+                        v4["dns_ptr"] = body.get("dns_ptr") or ""
+                    else:
+                        lst = x["public_net"]["ipv6"]["dns_ptr"]
+                        lst[:] = [e for e in lst if e["ip"] != body.get("ip")]
+                        if body.get("dns_ptr"):
+                            lst.append({"ip": body["ip"], "dns_ptr": body["dns_ptr"]})
+                    return action("change_dns_ptr")
+                if p[3] in ("reboot", "reset", "shutdown", "poweron", "poweroff"):
+                    s.hc_actions.append((x["id"], p[3]))
+                    return action(p[3])
+        if p[0] == "floating_ips" and len(p) == 4 and p[3] == "change_dns_ptr":
+            f = next((x for x in s.hc_floating if x["id"] == int(p[1])), None)
+            if f is None:
+                return _json({"error": {"code": "not_found", "message": "floating ip not found"}}, 404)
+            s.hc_actions.append((f["id"], "fptr", body.get("ip"), body.get("dns_ptr")))
+            f["dns_ptr"] = [{"ip": body["ip"], "dns_ptr": body.get("dns_ptr") or ""}]
+            return action("change_dns_ptr")
+        return _json({"error": {"code": "not_found", "message": "not found"}}, 404)
 
     def robot(self, req: Request, path: str) -> Response:
         s = self.s

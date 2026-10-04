@@ -43,7 +43,7 @@
     <div class="card">
       <div class="card-head"><h2>Infrastruktur (API-Verbindungen)</h2></div>
       <div class="card-body">
-        <p class="muted"><small>Lesen: Status und Überwachung · Bedienen: Start/Stopp, Snapshots, Backups, Leases statisch machen, Dienste ein-/ausschalten · Vollzugriff: anlegen, ändern, löschen.<br>Hetzner: Rechte für das ganze Konto gelten für alle seine Server, Rechte für einen Server nur für diesen; es gilt die höhere Stufe. Auswerten = Status, IPs, PTR, Traffic · Neustarten = Auswerten + Reset und Wake-on-LAN · Ändern = Neustarten + PTR, Servername, Traffic-Warnungen, Reset durch Techniker.</small></p>
+        <p class="muted"><small>Lesen: Status und Überwachung · Bedienen: Start/Stopp, Snapshots, Backups, Leases statisch machen, Dienste ein-/ausschalten · Vollzugriff: anlegen, ändern, löschen.<br>Hetzner: Rechte für das ganze Robot-Konto bzw. Cloud-Projekt gelten für alle seine Server, Rechte für einen Server nur für diesen; es gilt die höhere Stufe. Auswerten = Status, IPs, PTR, Traffic · Neustarten = Auswerten + Reset und Wake-on-LAN · Ändern = Neustarten + PTR, Servername, Traffic-Warnungen, Reset durch Techniker.</small></p>
         <table class="table compact"><tbody>
         {% for kind, label, objs in integrations %}{% for o in objs %}
           <tr><td><span class="badge outline">{{ label }}</span> {{ o.name }}{% if kind == 'hetzner_srv' %} <small class="muted">#{{ o.number }} · {{ o.server_ip }}</small>{% endif %}</td>

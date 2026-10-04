@@ -14,8 +14,8 @@ from sqlalchemy import select
 from ... import access, hetzner, integrations, security
 from ...core import audit
 from ...hetzner import RESET_TYPES, RobotError
-from ...models import (KIND_HETZNER, KIND_HETZNER_SRV, LEVEL_FULL, LEVEL_OPERATE, LEVEL_VIEW, HetznerAccount,
-                       HetznerServer, System)
+from ...models import (KIND_HCLOUD, KIND_HETZNER, KIND_HETZNER_SRV, LEVEL_FULL, LEVEL_OPERATE, LEVEL_VIEW,
+                       HcloudProject, HetznerAccount, HetznerServer, System)
 from ..auth import admin_required, client_ip, login_required, rate_ok
 from ..charts import fmt_bytes, line_chart
 from . import _integration as common
@@ -51,14 +51,19 @@ def _level(srv: HetznerServer) -> str:
 @bp.get("/")
 @login_required
 def index():
+    from .hcloud import visible_servers as cloud_visible
     accounts = common.visible(KIND_HETZNER)
     servers = _visible_servers()
-    if not accounts and not servers and not g.user.is_admin:
+    projects = common.visible(KIND_HCLOUD)
+    cloud = cloud_visible()
+    if not accounts and not servers and not projects and not cloud and not g.user.is_admin:
         abort(403)
     names = {a.id: a.name for a in g.db.execute(select(HetznerAccount)).scalars()}
+    pnames = {p.id: p.name for p in g.db.execute(select(HcloudProject)).scalars()}
     systems = {s.id: s for s in g.db.execute(select(System)).scalars()}
     return render_template("hetzner/index.html", accounts=accounts, servers=servers, names=names, systems=systems,
-                           levels={s.id: _level(s) for s in servers})
+                           levels={s.id: _level(s) for s in servers}, projects=projects, cloud=[c for c, _ in cloud],
+                           cloud_levels={c.id: lv for c, lv in cloud}, pnames=pnames)
 
 
 # ------------------------------------------------------------------ accounts (administrators)

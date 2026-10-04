@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% set help_page = "hetzner" %}
+{% from "_macros.html" import csrf, field, checkbox, textarea with context %}
+{% block title %}{{ 'Cloud-Projekt anbinden' if is_new else 'Cloud-Projekt bearbeiten' }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>{{ 'Hetzner Cloud-Projekt anbinden' if is_new else p.name ~ ' bearbeiten' }}</h1>
+  <p>In der Hetzner Cloud Console im Projekt unter <em>Sicherheit → API-Tokens</em> ein Token erzeugen. Mit <strong>Lesen</strong> funktioniert nur die Auswertung. Für Neustarts, PTR-Einträge und Umbenennen braucht es <strong>Lesen &amp; Schreiben</strong>. Jedes Projekt hat sein eigenes Token.</p></div></div>
+<form method="post" autocomplete="off">{{ csrf() }}
+<div class="card"><div class="card-body"><div class="form-grid">
+  {{ field('Name', 'name', p.name, required=True, placeholder='Cloud Produktion') }}
+  {{ field('API-Token', 'token', '', type='password', help=('Hinterlegt – leer lassen, um es zu behalten' if p.token_enc else 'wird verschlüsselt gespeichert'), attrs='autocomplete="new-password"') }}
+  {{ field('Warnung ab … % des Inklusiv-Traffics', 'traffic_alert_pct', p.traffic_alert_pct, type='number', help='ausgehender Traffic im Abrechnungszeitraum; 0 = keine Warnung') }}
+  <div class="full">{{ checkbox('Überwachen (alle 15 Minuten abfragen, Warnungen melden)', 'monitor', p.monitor) }}</div>
+  {{ textarea('Beschreibung', 'description', p.description, rows=2, cls='full') }}
+</div></div></div>
+<div class="actions mt-1"><button class="btn primary">Speichern</button><a class="btn" href="{{ url_for('hetzner.index') }}">Abbrechen</a></div>
+</form>
+{% if not is_new %}
+<div class="card danger-zone mt-2"><div class="card-head"><h2>Projekt entfernen</h2></div><div class="card-body">
+  <form method="post" action="{{ url_for('hcloud.delete', pid=p.id) }}" data-confirm="Projekt {{ p.name }} entfernen? Die Server in der Hetzner Cloud bleiben unverändert, die Rechte im Servermanager werden gelöscht.">{{ csrf() }}<button class="btn danger">Entfernen</button></form>
+</div></div>
+{% endif %}
+{% endblock %}

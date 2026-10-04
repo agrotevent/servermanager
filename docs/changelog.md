@@ -2,6 +2,20 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.16.0 – 04.10.2026
+
+### Neu
+
+- **Hetzner Cloud** neben den Root-Servern, mit mehreren Projekten:
+  - Status, IP-Adressen und Floating-IPs mit PTR-Einträgen (auch IPv6), Traffic im
+    Abrechnungszeitraum mit Warnung beim Inklusivvolumen.
+  - CPU- und Netzwerk-Auslastung.
+  - Neustart, Herunterfahren, Reset, Aus- und Einschalten sowie Umbenennen.
+  - Rechte für ein ganzes Projekt oder einzelne Server mit den Stufen *Auswerten*, *Neustarten* und
+    *Ändern*.
+
+  Details unter [Hetzner](hetzner.md#cloud-server).
+
 ## 1.15.0 – 03.10.2026
 
 ### Neu
