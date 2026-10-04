@@ -39,7 +39,21 @@ unverschlüsselt übertragen wird.
 
 ## Pangolin: „Anmeldung fehlgeschlagen“
 
-Die Integration-API ist erreichbar, lehnt aber den API-Schlüssel ab (HTTP 401):
+Unter der eingetragenen Adresse antwortet ein Server mit HTTP 401. Die Meldung nennt die verwendete
+Adresse und die Antwort des Servers. Außerdem prüft der Servermanager selbst, ob dort überhaupt die
+Integration-API läuft: Die hat unter `…/v1/docs` eine API-Dokumentation, die ohne Anmeldung erreichbar
+ist.
+
+- **„… ist die interne API des Pangolin-Dashboards“:** Eingetragen ist `https://<dashboard>/api/v1`.
+  Diese API nimmt nur Browser-Sitzungen an. Die Integration-API hat eine eigene Adresse, z. B.
+  `https://api.<domain>/v1` (intern Port 3003, Pfad `/v1`).
+- **„… antwortet offenbar nicht die Integration-API“:** Unter der Adresse läuft etwas anderes, z. B.
+  das Dashboard. Oder ein Login ist vorgeschaltet, etwa wenn die API selbst als Pangolin-Resource mit
+  aktivierter Anmeldung veröffentlicht ist. Die Integration-API muss ohne Pangolin-Anmeldung erreichbar
+  sein (in der Resource die Anmeldung ausschalten oder die API über Traefik direkt freigeben). Test im
+  Browser: `https://api.<domain>/v1/docs` muss die API-Dokumentation zeigen.
+- **„API-Schlüssel prüfen. Die Adresse stimmt“:** Die Integration-API ist erreichbar und lehnt den
+  Schlüssel ab:
 
 - **Schlüssel unvollständig:** Pangolin zeigt den Schlüssel nur einmal beim Anlegen an, im Format
   `<ID>.<Geheimnis>`. Beide Teile samt Punkt eintragen. Ist er nicht mehr bekannt, einen neuen anlegen.

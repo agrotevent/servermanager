@@ -2,6 +2,16 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.16.2 – 04.10.2026
+
+### Verbessert
+
+- Pangolin: Bei „Anmeldung fehlgeschlagen“ (HTTP 401) prüft der Servermanager, ob unter der Adresse
+  überhaupt die Integration-API läuft (API-Dokumentation unter `…/v1/docs`). Die Meldung unterscheidet
+  dann zwischen falschem Schlüssel, der internen Dashboard-API (`…/api/v1`) und einer anderen
+  Gegenstelle, etwa einem vorgeschalteten Login. Sie nennt außerdem die verwendete Adresse und die
+  Antwort des Servers.
+
 ## 1.16.1 – 04.10.2026
 
 ### Neu

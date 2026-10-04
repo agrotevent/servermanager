@@ -153,15 +153,51 @@ class Pangolin:
         if r.status_code >= 400 or (isinstance(j, dict) and j.get("error") is True):
             msg = (j.get("message") if isinstance(j, dict) else "") or r.reason or r.text[:200]
             if r.status_code == 401:
-                server = f": {msg}" if msg and msg not in ("Unauthorized", r.reason) else ""
-                msg = (f"Anmeldung fehlgeschlagen{server} – API-Schlüssel prüfen. Er muss vollständig sein "
-                       "(Format <ID>.<Geheimnis>, wird beim Anlegen nur einmal angezeigt), darf nicht gelöscht "
-                       f"sein und muss zur Organisation „{self.org}“ gehören (Organisation → API-Schlüssel) "
-                       "oder ein Server-Admin-Schlüssel sein." + self.key_hint)
+                msg = self._explain_401(msg, r)
             elif r.status_code == 403:
                 msg = f"Keine Berechtigung ({msg}) – Rechte des API-Schlüssels prüfen"
             raise PangolinError(f"Pangolin: {msg}", r.status_code)
         return j.get("data") if isinstance(j, dict) else None
+
+    def _explain_401(self, msg: str, r: requests.Response) -> str:
+        """HTTP 401: is it really the integration API rejecting the key, or the wrong address?"""
+        answer = f"Antwort von {self.base}: HTTP 401" + (f" „{msg[:120]}“" if msg and msg != r.reason else "")
+        path = urlsplit(self.base).path.rstrip("/")
+        if path.endswith("/api/v1"):
+            return (f"Anmeldung fehlgeschlagen – {self.base} ist die interne API des Pangolin-Dashboards, die nur "
+                    "Browser-Sitzungen annimmt und jeden API-Schlüssel ablehnt. Die Integration-API hat eine eigene "
+                    "Adresse (z. B. https://api.<domain>/v1, intern Port 3003, Pfad /v1) und muss in der config.yml "
+                    f"mit flags.enable_integration_api: true aktiviert sein. ({answer})")
+        docs = self._probe_docs()
+        if docs is False:
+            return (f"Anmeldung fehlgeschlagen – unter {self.base} antwortet offenbar nicht die Integration-API von "
+                    f"Pangolin (keine API-Dokumentation unter {self.base}/docs). Häufige Ursache: die Adresse des "
+                    "Dashboards oder ein vorgeschalteter Login (z. B. die API selbst als Pangolin-Resource mit "
+                    "Anmeldung veröffentlicht). Die Integration-API muss unter einer eigenen Adresse ohne "
+                    f"Pangolin-Anmeldung erreichbar sein (z. B. https://api.<domain>/v1). ({answer})")
+        where = (f" Die Adresse stimmt (API-Dokumentation unter {self.base}/docs erreichbar)." if docs else
+                 f" Zur Kontrolle {self.base}/docs im Browser öffnen – dort muss die API-Dokumentation erscheinen.")
+        return (f"Anmeldung fehlgeschlagen – API-Schlüssel prüfen.{where} Der Schlüssel muss vollständig sein "
+                "(Format <ID>.<Geheimnis>, wird beim Anlegen nur einmal angezeigt), darf nicht gelöscht sein und "
+                f"muss zur Organisation „{self.org}“ gehören (Organisation → API-Schlüssel) oder ein "
+                f"Server-Admin-Schlüssel sein.{self.key_hint} ({answer})")
+
+    def _probe_docs(self) -> Optional[bool]:
+        """True: the integration API's Swagger docs answer; False: something else answers; None: unknown."""
+        try:
+            r = self.session.get(f"{self.base}/docs/", headers={"Authorization": None}, timeout=min(self.timeout, 8),
+                                 allow_redirects=False)
+        except requests.RequestException:
+            return None
+        body = r.text[:4000].lower() if r.content else ""
+        if r.status_code in (200, 301, 302, 304) and ("swagger" in body or r.headers.get("location", "")
+                                                     .rstrip("/").endswith("/docs")):
+            return True
+        if r.status_code in (401, 403, 404) or "<html" in body:
+            return False
+        if r.status_code in (301, 302, 303, 307, 308):
+            return False  # redirected to a login page or elsewhere
+        return None
 
     def _list(self, path: str, key: str) -> list[dict]:
         items: list[dict] = []

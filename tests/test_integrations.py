@@ -414,3 +414,24 @@ def test_https_to_plain_http_port_is_explained():
             Authentik(f"127.0.0.1:{port}", "tok", fingerprint="AA:" * 31 + "AA").version()
     finally:
         srv.shutdown()
+
+
+def test_pangolin_401_is_explained():
+    """HTTP 401: wrong key at the integration API vs. the dashboard's internal API vs. something else."""
+    from servermanager.pangolin import Pangolin, PangolinError
+    srv = m.MockServer().start()
+    try:
+        def err(url, key="falsch.key"):
+            with pytest.raises(PangolinError) as e:
+                Pangolin(url, key, m.PG_ORG, fingerprint=srv.fingerprint).sites()
+            return str(e.value)
+        msg = err(f"{srv.url}/v1")
+        assert "API-Schlüssel prüfen" in msg and "Die Adresse stimmt" in msg and f"{srv.url}/v1" in msg
+        msg = err(f"{srv.url}/api/v1")
+        assert "interne API des Pangolin-Dashboards" in msg and "enable_integration_api" in msg
+        msg = err(f"{srv.url}/dash/v1")
+        assert "antwortet offenbar nicht die Integration-API" in msg and "„Unauthorized“" in msg
+        assert "HTTP 401" in msg
+        assert "ID-Teil" in err(f"{srv.url}/v1", key="nurgeheimnis")
+    finally:
+        srv.stop()

@@ -241,6 +241,9 @@ class MockApp:
                 resp = self.pve(req, req.path[len("/api2/json/"):])
             elif req.path.startswith("/rest/"):
                 resp = self.ros(req, req.path[len("/rest/"):])
+            elif req.path.startswith("/dash/"):  # dashboard / login proxy in front: 401 for API calls
+                resp = (Response("<html>Login</html>", 404, content_type="text/html") if "/docs" in req.path
+                        else _json({"message": "Unauthorized"}, 401))
             elif req.path.startswith("/v1/"):
                 resp = self.pangolin(req, req.path[len("/v1/"):])
             elif req.path.startswith("/api/v1/cti/"):
@@ -772,6 +775,9 @@ class MockApp:
 
     # ------------------------------------------------------------------ pangolin
     def pangolin(self, req: Request, path: str) -> Response:
+        if path.startswith("docs"):  # Swagger UI of the integration API (no authentication)
+            return Response("<!doctype html><html><head><title>Swagger UI</title></head></html>",
+                            content_type="text/html")
         if req.headers.get("Authorization") != f"Bearer {PG_KEY}":
             return _json({"error": True, "message": "Unauthorized", "status": 401}, 401)
         s = self.s
