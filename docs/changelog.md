@@ -2,6 +2,24 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.16.1 – 04.10.2026
+
+### Neu
+
+- **Hetzner vSwitch:**
+  - VLAN, angebundene Server mit Status und Warnung bei fehlgeschlagener Anbindung.
+  - IP-Netze und Cloud-Netze.
+  - PTR-Einträge in den vSwitch-Netzen.
+  - Traffic der vSwitch-Netze.
+  - Verknüpfung zum Proxmox-Server mit demselben VLAN; auf der Serverseite eine Übersicht der
+    vSwitches.
+
+### Behoben
+
+- Hetzner Robot: Die Traffic-Abfrage scheiterte mit „Ungültige Eingabe (subnet)“, weil Subnetze mit
+  Präfixlänge übergeben wurden. Ein einzelnes Subnetz, das Hetzner nicht auswertet, bricht die Abfrage
+  nicht mehr ab.
+
 ## 1.16.0 – 04.10.2026
 
 ### Neu

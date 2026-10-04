@@ -207,6 +207,21 @@ def hetzner_sync(db: Session, a: HetznerAccount, today=None) -> tuple[dict, list
         resets = robot.reset_options()
     except RobotError:
         resets = {}
+    vswitches, vswitch_error = [], ""
+    try:
+        for ref in robot.vswitches():
+            v = robot.vswitch(int(ref["id"]))
+            vswitches.append({"id": int(v.get("id") or ref["id"]), "name": v.get("name") or ref.get("name") or "",
+                              "vlan": v.get("vlan") or ref.get("vlan"), "cancelled": bool(v.get("cancelled")),
+                              "servers": [{"number": int(x.get("server_number") or 0),
+                                           "ip": x.get("server_ip") or "", "status": x.get("status") or ""}
+                                          for x in v.get("server") or []],
+                              "subnets": [{"ip": n.get("ip"), "mask": n.get("mask"), "gateway": n.get("gateway")}
+                                          for n in v.get("subnet") or [] if n.get("ip")],
+                              "cloud_networks": [{"id": n.get("id"), "ip": n.get("ip"), "mask": n.get("mask")}
+                                                 for n in v.get("cloud_network") or []]})
+    except RobotError as exc:
+        vswitch_error = str(exc)
     today = today or date.today()
     start, end = hetzner.month_range(today.year, today.month, today)
     all_ips, all_nets = [], []
@@ -214,9 +229,14 @@ def hetzner_sync(db: Session, a: HetznerAccount, today=None) -> tuple[dict, list
         i, n = hetzner.addresses_of(s)
         all_ips += i
         all_nets += n
+    for v in vswitches:
+        all_nets += [f"{n['ip']}/{n['mask']}" for n in v["subnets"]]
     try:
         traffic = robot.traffic("month", start, end, all_ips, all_nets)
         traffic_error = ""
+        if robot.skipped_subnets:
+            traffic_error = ("Traffic ohne " + ", ".join(robot.skipped_subnets)
+                             + " – Hetzner liefert für dieses Subnetz keine Werte")
     except RobotError as exc:
         traffic, traffic_error = {}, str(exc)
     by_number = {r.number: r for r in db.query(HetznerServer).filter(HetznerServer.account_id == a.id)}
@@ -242,8 +262,12 @@ def hetzner_sync(db: Session, a: HetznerAccount, today=None) -> tuple[dict, list
         row.status, row.cancelled = (s.get("status") or "")[:32], bool(s.get("cancelled"))
         addresses = sorted(set(addr_ips) | {r for r in rdns if hetzner.belongs_to(r, s)},
                            key=lambda x: (":" in x, x))
+        own_vswitches = [{"id": v["id"], "name": v["name"], "vlan": v["vlan"],
+                          "status": next(x["status"] for x in v["servers"] if x["number"] == number),
+                          "subnets": v["subnets"]}
+                         for v in vswitches if any(x["number"] == number for x in v["servers"])]
         row.data = {
-            "server": s, "reset": resets.get(number, []), "subnets": own_nets,
+            "server": s, "reset": resets.get(number, []), "subnets": own_nets, "vswitches": own_vswitches,
             "ips": [{"ip": ip, "ptr": rdns.get(ip, ""), "main": ip == s.get("server_ip"),
                      **{k: ips.get(ip, {}).get(k) for k in ("locked", "traffic_warnings", "traffic_hourly",
                                                              "traffic_daily", "traffic_monthly")}}
@@ -264,13 +288,28 @@ def hetzner_sync(db: Session, a: HetznerAccount, today=None) -> tuple[dict, list
             pct = round(total["sum"] * 100 / limit)
             alerts.append({"key": f"traffic:{number}", "severity": "crit" if pct >= 100 else "warn",
                            "text": f"{label}: {pct} % des Inklusiv-Traffics verbraucht ({total['sum']:.0f} GB)"})
+    # vSwitches: networks with their PTR entries and traffic, connection state of the servers
+    names = {int(s["server_number"]): s.get("server_name") or f"#{s['server_number']}" for s in servers}
+    for v in vswitches:
+        keys = [f"{n['ip']}/{n['mask']}" for n in v["subnets"]]
+        days, total = hetzner.sum_series(traffic, keys)
+        v["traffic"] = {"month": start[:7], "days": days, "total": total}
+        v["rdns"] = sorted(({"ip": ip, "ptr": ptr} for ip, ptr in rdns.items() if hetzner.in_nets(ip, v["subnets"])),
+                           key=lambda r: (":" in r["ip"], r["ip"]))
+        for x in v["servers"]:
+            x["name"] = names.get(x["number"], f"#{x['number']}")
+            if x["status"] == "failed":
+                alerts.append({"key": f"vswitch:{v['id']}:{x['number']}", "severity": "warn",
+                               "text": f"vSwitch {v['name']} (VLAN {v['vlan']}): Anbindung von {x['name']} "
+                                       "fehlgeschlagen"})
     for number, row in by_number.items():
         if number not in seen:
             from . import access
             access.remove_integration(db, KIND_HETZNER_SRV, row.id)
             db.delete(row)
     data = {"servers": len(servers), "ips": len(ips), "subnets": len(subnets), "rdns": len(rdns),
-            "month": start[:7], "traffic_gb": round(total_gb, 1), "traffic_error": traffic_error}
+            "month": start[:7], "traffic_gb": round(total_gb, 1), "traffic_error": traffic_error,
+            "vswitches": vswitches, "vswitch_error": vswitch_error}
     return data, alerts
 
 

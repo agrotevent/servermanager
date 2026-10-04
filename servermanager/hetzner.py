@@ -45,6 +45,21 @@ def validate_ptr(ptr: str) -> str:
     return ptr
 
 
+def in_nets(ip: str, nets: list[dict]) -> bool:
+    """Is ``ip`` inside one of the networks [{ip, mask}]?"""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    for n in nets:
+        try:
+            if addr in ipaddress.ip_network(f"{n.get('ip')}/{n.get('mask')}", strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def belongs_to(ip: str, server: dict) -> bool:
     """Is ``ip`` one of the server's addresses or inside one of its subnets (e.g. the IPv6 /64)?"""
     try:
@@ -74,6 +89,7 @@ class Robot:
         if not self.base.startswith("https://"):
             raise RobotError("Die Robot-API ist nur über https erreichbar")
         self.timeout = timeout
+        self.skipped_subnets: list[str] = []
         self.session = requests.Session()
         self.session.trust_env = False
         if fingerprint:  # only for tests/mirrors – the real API has a publicly trusted certificate
@@ -163,6 +179,22 @@ class Robot:
                 data[k] = str(int(v))
         return (self.request("POST", f"ip/{ip}", data) or {}).get("ip", {})
 
+    # ------------------------------------------------------------------ vSwitch
+    def vswitches(self) -> list[dict]:
+        """Plain list (no wrapper key): [{id, name, vlan, cancelled}]."""
+        try:
+            rows = self.request("GET", "vswitch") or []
+        except RobotError as exc:
+            if exc.code.endswith("NOT_FOUND"):
+                return []
+            raise
+        return [r for r in rows if isinstance(r, dict)]
+
+    def vswitch(self, vid: int) -> dict:
+        """{id, name, vlan, cancelled, server: [{server_number, server_ip, status}], subnet: [{ip, mask,
+        gateway}], cloud_network: [{id, ip, mask, gateway}]}"""
+        return self.request("GET", f"vswitch/{int(vid)}") or {}
+
     # ------------------------------------------------------------------ reverse DNS
     def rdns(self) -> dict[str, str]:
         return {r["ip"]: r.get("ptr") or "" for r in self._list("rdns", "rdns")}
@@ -186,10 +218,31 @@ class Robot:
         Returns {address: {"01": {"in", "out", "sum"}, ...}} in GB."""
         if kind not in ("day", "month", "year"):
             raise RobotError("Ungültiger Zeitraum")
+        self.skipped_subnets = []
         if not ips and not subnets:
             return {}
+        # Robot expects the network address of a subnet without the prefix length ("2a01:4f8:1:2::")
+        nets = sorted({s.split("/")[0] for s in subnets})
+        try:
+            return self._traffic(kind, start, end, ips, nets)
+        except RobotError as exc:
+            if exc.code != "INVALID_INPUT" or "subnet" not in str(exc) or not nets:
+                raise
+        # a subnet is not accepted (e.g. not queryable for this product): keep the IPs, add the
+        # subnets one by one and skip those Hetzner rejects
+        data = self._traffic(kind, start, end, ips, []) if ips else {}
+        for net in nets:
+            try:
+                data.update(self._traffic(kind, start, end, [], [net]))
+            except RobotError as exc:
+                if exc.code != "INVALID_INPUT":
+                    raise
+                self.skipped_subnets.append(net)
+        return data
+
+    def _traffic(self, kind: str, start: str, end: str, ips: list[str], nets: list[str]) -> dict:
         body: list[tuple[str, str]] = [("type", kind), ("from", start), ("to", end), ("single_values", "true")]
-        body += [("ip[]", i) for i in ips] + [("subnet[]", s) for s in subnets]
+        body += [("ip[]", i) for i in ips] + [("subnet[]", s) for s in nets]
         res = (self.request("POST", "traffic", body) or {}).get("traffic", {})
         return res.get("data") or {}
 

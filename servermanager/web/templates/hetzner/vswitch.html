@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% set help_page = "hetzner" %}
+{% from "_macros.html" import csrf with context %}
+{% from "integrations/_macros.html" import line_chart with context %}
+{% block title %}vSwitch {{ v.name }} · Hetzner{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>vSwitch {{ v.name }} {% if v.cancelled %}<span class="badge danger">gekündigt</span>{% endif %}</h1>
+    <p>#{{ v.id }} · VLAN <span class="mono">{{ v.vlan }}</span> · Konto {{ acc.name }}{% for p in pves %} · Proxmox <a href="{{ url_for('pve.server', pve_id=p.id) }}">{{ p.name }}</a>{% endfor %}</p></div>
+  <div class="actions"><a class="btn ghost" href="{{ url_for('hetzner.index') }}">Alle Server</a></div>
+</div>
+
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>Angebundene Server</h2></div>
+    <div class="table-wrap"><table class="table compact"><thead><tr><th>Server</th><th>IP-Adresse</th><th>Anbindung</th></tr></thead><tbody>
+    {% for x in v.servers %}{% set row = rows.get(x.number) %}
+      <tr><td>{% if row %}<a href="{{ url_for('hetzner.server', sid=row.id) }}"><strong>{{ row.name }}</strong></a>{% else %}<strong>{{ x.name }}</strong>{% endif %}<span class="sub">#{{ x.number }}</span></td>
+        <td class="mono">{{ x.ip }}</td>
+        <td>{% if x.status == 'ready' %}<span class="badge success">verbunden</span>{% elif x.status == 'failed' %}<span class="badge danger">fehlgeschlagen</span>{% else %}<span class="badge warning">{{ x.status or '?' }}</span>{% endif %}</td></tr>
+    {% else %}<tr><td colspan="3" class="muted">Kein Server angebunden.</td></tr>{% endfor %}</tbody></table></div></div>
+  <div class="card"><div class="card-head"><h2>Netze</h2></div>
+    <div class="table-wrap"><table class="table compact"><thead><tr><th>Netz</th><th>Gateway</th></tr></thead><tbody>
+    {% for n in v.subnets %}<tr><td class="mono">{{ n.ip }}/{{ n.mask }}</td><td class="mono">{{ n.gateway or '–' }}</td></tr>
+    {% else %}<tr><td colspan="2" class="muted">Kein öffentliches Netz am vSwitch.</td></tr>{% endfor %}
+    {% for n in v.cloud_networks %}<tr><td class="mono">{{ n.ip }}/{{ n.mask }}</td><td><span class="badge outline">Cloud-Netz #{{ n.id }}</span></td></tr>{% endfor %}
+    </tbody></table></div></div>
+</div>
+
+{% if v.subnets %}
+<div class="card"><div class="card-head"><h2>PTR-Einträge in den vSwitch-Netzen</h2></div>
+  <div class="table-wrap"><table class="table compact"><thead><tr><th>Adresse</th><th>PTR (Reverse DNS)</th></tr></thead><tbody>
+  {% for r in v.rdns or [] %}
+    <tr><td class="mono">{{ r.ip }}</td><td>{% if can_full %}
+      <form method="post" action="{{ url_for('hetzner.vswitch_rdns', aid=acc.id, vid=v.id) }}" class="flex" style="gap:6px">{{ csrf() }}<input type="hidden" name="ip" value="{{ r.ip }}">
+        <input type="text" name="ptr" value="{{ r.ptr }}" class="mono" style="min-width:240px"><button class="btn xs">Speichern</button></form>
+      {% else %}<span class="mono">{{ r.ptr }}</span>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="2" class="muted">Noch keine PTR-Einträge in diesen Netzen.</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% if can_full %}
+  <div class="card-body"><h4>PTR für eine Adresse setzen</h4>
+    <form method="post" action="{{ url_for('hetzner.vswitch_rdns', aid=acc.id, vid=v.id) }}" class="form-grid">{{ csrf() }}
+      <div class="field"><label for="f-ptr-ip">Adresse</label><input type="text" id="f-ptr-ip" name="ip" required class="mono" placeholder="{{ v.subnets[0].ip }}"></div>
+      <div class="field"><label for="f-ptr-name">PTR</label><input type="text" id="f-ptr-name" name="ptr" required class="mono" placeholder="host.example.com"></div>
+      <div class="full"><button class="btn">PTR setzen</button> <small class="muted">nur Adressen aus {% for n in v.subnets %}{{ n.ip }}/{{ n.mask }}{% if not loop.last %}, {% endif %}{% endfor %}; leer speichern löscht den Eintrag</small></div>
+    </form></div>
+  {% endif %}
+</div>
+{% endif %}
+
+{% set traffic_note = "Summe der öffentlichen vSwitch-Netze laut Hetzner, in GB. Traffic im vSwitch selbst (zwischen den Servern) zählt Hetzner nicht." %}
+{% include "hetzner/_traffic.html" %}
+{% endblock %}

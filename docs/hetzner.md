@@ -30,6 +30,13 @@ Der Servermanager steuert und wertet dedizierte Hetzner-Server über den **Robot
   Wake-on-LAN sowie ein manueller Reset durch einen Hetzner-Techniker. Angeboten wird nur, was Hetzner
   für den jeweiligen Server zulässt.
 - **Servername** in Robot ändern.
+- **vSwitches** des Kontos:
+  - VLAN und angebundene Server samt Status der Anbindung, mit Warnung bei „fehlgeschlagen“.
+  - Öffentliche IP-Netze des vSwitches und gekoppelte Cloud-Netze.
+  - PTR-Einträge in diesen Netzen, setzbar mit *Ändern* am Konto.
+  - Traffic der vSwitch-Netze für Monat und Jahr.
+  - Proxmox-Server mit demselben VLAN werden verlinkt.
+  - Auf der Seite eines Servers stehen seine vSwitches als Übersicht.
 
 ### Einrichten
 
@@ -89,6 +96,10 @@ beides, zählt die höhere Stufe.
 | Neustarten | alles aus *Auswerten*, dazu Software- und Hardware-Reset, Ein-/Ausschalter, Wake-on-LAN; in der Cloud Neustart, Herunterfahren, Reset, Aus- und Einschalten |
 | Ändern | alles aus *Neustarten*, dazu PTR-Einträge, Servername, Traffic-Warnungen (Robot) und der Reset durch einen Techniker (Robot) |
 
+vSwitches gehören zum ganzen Konto: Ihre Seite sehen nur Benutzer mit Rechten auf das Konto, PTR-Einträge
+in vSwitch-Netzen setzt, wer *Ändern* am Konto hat. Wer nur einen Server sehen darf, sieht auf dessen
+Seite die angebundenen vSwitches mit VLAN und Netzen.
+
 Konten und Projekte anlegen, bearbeiten und entfernen dürfen nur Administratoren. Jeder Reset und jede Änderung
 steht mit Benutzer und Details im Audit-Log, ebenso ein fehlgeschlagener Reset.
 
@@ -98,6 +109,9 @@ steht mit Benutzer und Details im Audit-Log, ebenso ein fehlgeschlagener Reset.
   Webservice-Benutzer stammen (beginnt meist mit `#ws+`), nicht vom Robot-Login.
 - **„Hetzner begrenzt die Anfragen“:** Einige Minuten warten. Resets sind bei Hetzner besonders knapp
   bemessen.
+- **„Ungültige Eingabe (subnet)“ beim Traffic** (bis Version 1.16.0): Subnetze wurden mit Präfixlänge
+  abgefragt. Ab 1.16.1 wird nur die Netzadresse übergeben. Lehnt Hetzner ein einzelnes Subnetz
+  trotzdem ab, werden die übrigen Adressen ausgewertet, und der Hinweis nennt das fehlende Subnetz.
 - **Server fehlt:** Er gehört zu einem anderen Robot-Konto bzw. Cloud-Projekt. Cloud-Server werden über
   ein Cloud-Projekt angebunden, nicht über das Robot-Konto.
 - **Cloud: „für Neustarts und Änderungen braucht das Token Lesen & Schreiben“:** In der Cloud Console ein

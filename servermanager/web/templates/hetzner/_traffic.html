@@ -1,0 +1,20 @@
+{# traffic card: expects traffic, chart, error, period, ym, year, months; optional traffic_note #}
+<div class="card"><div class="card-head"><h2>Traffic</h2>
+  <form method="get" class="filters">
+    <select name="period"><option value="month" {{ 'selected' if period == 'month' }}>Monat (täglich)</option><option value="year" {{ 'selected' if period == 'year' }}>Jahr (monatlich)</option></select>
+    {% if period == 'year' %}<select name="m">{% for y in range(year - 3, year + 1)|reverse %}<option value="{{ y }}-01" {{ 'selected' if y == year }}>{{ y }}</option>{% endfor %}</select>
+    {% else %}<select name="m">{% for mm in months %}<option value="{{ mm }}" {{ 'selected' if mm == ym }}>{{ mm[5:] }}/{{ mm[:4] }}</option>{% endfor %}</select>{% endif %}
+    <button class="btn xs">Anzeigen</button></form></div>
+  <div class="card-body">
+  {% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+  {% if traffic.error %}<div class="alert warning">{{ traffic.error }}</div>{% endif %}
+  {% set tot = traffic.total or {} %}
+  <div class="stats">
+    <div class="stat"><div class="label">Gesamt</div><div class="value">{{ '%.1f'|format(tot.get('sum', 0)) }} GB</div>{% if traffic.limit_gb and period == 'month' %}<div class="sub">von {{ '%.0f'|format(traffic.limit_gb) }} GB inklusive ({{ (tot.get('sum', 0) * 100 / traffic.limit_gb)|round|int }} %)</div>{% endif %}</div>
+    <div class="stat"><div class="label">Eingehend</div><div class="value">{{ '%.1f'|format(tot.get('in', 0)) }} GB</div></div>
+    <div class="stat"><div class="label">Ausgehend</div><div class="value">{{ '%.1f'|format(tot.get('out', 0)) }} GB</div></div>
+  </div>
+  {% if chart %}{{ line_chart(chart) }}{% elif not error %}<p class="muted">Noch keine Werte für diesen Zeitraum.</p>{% endif %}
+  <p><small class="muted">{{ traffic_note }}</small></p>
+  </div>
+</div>

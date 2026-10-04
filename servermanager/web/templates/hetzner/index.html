@@ -18,6 +18,16 @@
   </div></div>
   {% if a.status_message %}<div class="card-body"><div class="alert danger">{{ a.status_message }}</div></div>{% endif %}
   {% if a.alert_list %}<div class="card-body">{{ alerts_box(a) }}</div>{% endif %}
+  {% if a.data.vswitches %}
+  <div class="table-wrap"><table class="table compact"><thead><tr><th>vSwitch</th><th>VLAN</th><th>Server</th><th>Netze</th><th>Traffic (Monat)</th></tr></thead><tbody>
+  {% for v in a.data.vswitches %}
+    <tr><td><a href="{{ url_for('hetzner.vswitch', aid=a.id, vid=v.id) }}"><strong>{{ v.name }}</strong></a>{% if v.cancelled %} <span class="badge danger">gekündigt</span>{% endif %}</td>
+      <td class="mono">{{ v.vlan }}</td>
+      <td>{{ v.servers|length }}{% set bad = v.servers|rejectattr('status', 'equalto', 'ready')|list %}{% if bad %} <span class="badge warning">{{ bad|length }} nicht bereit</span>{% endif %}</td>
+      <td class="mono"><small>{% for n in v.subnets %}{{ n.ip }}/{{ n.mask }}{% if not loop.last %}, {% endif %}{% else %}–{% endfor %}</small></td>
+      <td class="mono">{{ '%.1f'|format(((v.traffic or {}).total or {}).get('sum', 0)) }} GB</td></tr>
+  {% endfor %}</tbody></table></div>
+  {% elif a.data.vswitch_error %}<div class="card-body"><small class="muted">vSwitches: {{ a.data.vswitch_error }}</small></div>{% endif %}
 </div>
 {% endfor %}
 {% if servers %}

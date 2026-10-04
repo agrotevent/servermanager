@@ -64,8 +64,16 @@ def test_client(mock):
     data = r.traffic("month", "2026-10-01", "2026-10-03", ["88.99.10.1"], ["2a01:4f8:10:1::/64"])
     q = mock.state.hz_traffic_queries[-1]
     assert q == {"type": "month", "from": "2026-10-01", "to": "2026-10-03", "ip": ["88.99.10.1"],
-                 "subnet": ["2a01:4f8:10:1::/64"], "single_values": "true"}
-    assert data["88.99.10.1"]["01"]["sum"] == 11.5
+                 "subnet": ["2a01:4f8:10:1::"], "single_values": "true"}  # network address without prefix
+    assert data["88.99.10.1"]["01"]["sum"] == 11.5 and data["2a01:4f8:10:1::"]["01"]["sum"] == 1.5
+    # a subnet Hetzner refuses: the IPs and the other subnets are still evaluated
+    mock.state.hz_reject_subnets = {"2a01:4f8:10:1::"}
+    try:
+        data = r.traffic("month", "2026-10-01", "2026-10-03", ["88.99.10.1"],
+                         ["2a01:4f8:10:1::/64", "2a01:4f8:fff0:53::/64"])
+        assert set(data) == {"88.99.10.1", "2a01:4f8:fff0:53::"} and r.skipped_subnets == ["2a01:4f8:10:1::"]
+    finally:
+        mock.state.hz_reject_subnets = set()
     with pytest.raises(RobotError, match="Webservice-Benutzer"):
         robot(mock, "falsch").servers()
     with pytest.raises(RobotError, match="Ungültige Eingabe \\(ptr\\)"):
@@ -211,3 +219,66 @@ def test_admin_pages(app, db, mock, monkeypatch):
     db.commit()
     c.post(f"/hetzner/account/{a.id}/delete", data={"csrf_token": c.csrf})
     assert not db.query(HetznerAccount).filter_by(name="hz-neu").first()
+
+
+def test_vswitch(app, db, mock, account):
+    from servermanager import integrations
+    from servermanager.models import HetznerServer, IntegrationAccess, PveServer
+    st = mock.state
+    st.hz_rdns["88.99.200.3"] = "gw.example.com"
+    pve = PveServer(name="pve-hz", api_url="https://10.0.0.9:8006", token_id="a@pve!b",
+                    token_secret_enc=security.encrypt("x"), hosting="hetzner", vswitch_vlan=4001)
+    db.add(pve)
+    db.commit()
+    try:
+        integrations.poll(db, account)
+        db.commit()
+        assert account.status == "online", account.status_message
+        v = account.data["vswitches"][0]
+        assert v["vlan"] == 4001 and [x["name"] for x in v["servers"]] == ["pve-fsn", "#654"]
+        assert v["rdns"] == [{"ip": "88.99.200.3", "ptr": "gw.example.com"}]
+        # vSwitch nets are part of the traffic query – as bare network addresses
+        q = st.hz_traffic_queries[-1]
+        assert "88.99.200.0" in q["subnet"] and "2a01:4f8:fff0:53::" in q["subnet"]
+        assert v["traffic"]["total"]["sum"] == pytest.approx(2 * 3 * 1.5)
+        assert any(a["key"] == "vswitch:50301:654" for a in account.alerts)  # failed connection
+        srv = db.query(HetznerServer).filter_by(account_id=account.id, number=321).one()
+        assert srv.info["vswitches"][0]["status"] == "ready"
+        # the 88.99.200.x PTR belongs to the vSwitch, not to the server
+        assert "88.99.200.3" not in {r["ip"] for r in srv.info["ips"]}
+
+        viewer, admin_like = make_user(db, "hz-vs-view"), make_user(db, "hz-vs-full")
+        db.add_all([IntegrationAccess(user_id=viewer.id, kind="hetzner_srv", obj_id=srv.id, level="full"),
+                    IntegrationAccess(user_id=admin_like.id, kind="hetzner", obj_id=account.id, level="full")])
+        db.commit()
+        c = login(app, "hz-vs-view")
+        page = c.get(f"/hetzner/server/{srv.id}").text
+        assert "pve-lan" in page and "88.99.200.0/29" in page  # summary on the server page
+        assert c.get(f"/hetzner/account/{account.id}/vswitch/50301").status_code == 403  # needs account rights
+        assert c.post(f"/hetzner/account/{account.id}/vswitch/50301/rdns",
+                      data={"ip": "88.99.200.4", "ptr": "x.example.com", "csrf_token": c.csrf}).status_code == 403
+        c = login(app, "hz-vs-full")
+        page = c.get(f"/hetzner/account/{account.id}/vswitch/50301").text
+        assert "gw.example.com" in page and "fehlgeschlagen" in page
+        assert "pve-hz" not in page  # no rights on the Proxmox server: no link
+        db.add(IntegrationAccess(user_id=admin_like.id, kind="pve", obj_id=pve.id, level="view"))
+        db.commit()
+        assert "pve-hz" in c.get(f"/hetzner/account/{account.id}/vswitch/50301").text
+        assert "pve-lan" in c.get("/hetzner/").text
+        c.post(f"/hetzner/account/{account.id}/vswitch/50301/rdns",
+               data={"ip": "2a01:4f8:fff0:53::10", "ptr": "v6.example.com", "csrf_token": c.csrf})
+        assert st.hz_rdns["2a01:4f8:fff0:53::10"] == "v6.example.com"
+        r = c.post(f"/hetzner/account/{account.id}/vswitch/50301/rdns",
+                   data={"ip": "88.99.10.1", "ptr": "x.example.com", "csrf_token": c.csrf})
+        assert r.status_code == 400  # a server address is not a vSwitch address
+        page = c.get(f"/hetzner/account/{account.id}/vswitch/50301?m=2026-02").text
+        assert st.hz_traffic_queries[-1]["ip"] == [] and "<svg" in page
+        for u in (viewer, admin_like):
+            db.query(IntegrationAccess).filter_by(user_id=u.id).delete()
+            db.delete(u)
+        db.commit()
+    finally:
+        st.hz_rdns.pop("88.99.200.3", None)
+        st.hz_rdns.pop("2a01:4f8:fff0:53::10", None)
+        db.delete(pve)
+        db.commit()

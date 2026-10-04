@@ -151,6 +151,15 @@ class State:
                        for s in self.hz_servers for ip in s["ip"]}
         self.hz_rdns = {"88.99.10.1": "pve-fsn.example.com", "2a01:4f8:10:1::2": "mail.example.com"}
         self.hz_resets: list[tuple[int, str]] = []
+        self.hz_reject_subnets: set[str] = set()      # subnets the traffic query refuses
+        self.hz_vswitches = [{"id": 50301, "name": "pve-lan", "vlan": 4001, "cancelled": False,
+                              "server": [{"server_number": 321, "server_ip": "88.99.10.1",
+                                          "server_ipv6_net": "2a01:4f8:10:1::", "status": "ready"},
+                                         {"server_number": 654, "server_ip": "5.9.20.2",
+                                          "server_ipv6_net": "2a01:4f8:20:2::", "status": "failed"}],
+                              "subnet": [{"ip": "88.99.200.0", "mask": 29, "gateway": "88.99.200.1"},
+                                         {"ip": "2a01:4f8:fff0:53::", "mask": 64, "gateway": "2a01:4f8:fff0:53::1"}],
+                              "cloud_network": [{"id": 9, "ip": "10.1.0.0", "mask": 24, "gateway": "10.1.0.1"}]}]
         self.hz_traffic_queries: list[dict] = []
         # ---------------- hetzner cloud
         self.hc_servers = [
@@ -1089,6 +1098,11 @@ class MockApp:
                 if s.hz_rdns.pop(p[1], None) is None:
                     return err(404, "RDNS_NOT_FOUND")
                 return Response(status=200)
+        if p == ["vswitch"]:
+            return _json([{k: v[k] for k in ("id", "name", "vlan", "cancelled")} for v in s.hz_vswitches])
+        if p[0] == "vswitch" and len(p) == 2:
+            v = next((x for x in s.hz_vswitches if x["id"] == int(p[1])), None)
+            return _json(v) if v else err(404, "NOT_FOUND")
         if p == ["reset"]:
             return _json([{"reset": {"server_ip": x["server_ip"], "server_number": x["server_number"],
                                      "type": ["sw", "hw", "man"] if x["server_number"] == 321 else ["hw", "man"]}}
@@ -1106,6 +1120,10 @@ class MockApp:
             q = {"type": f.get("type"), "from": f.get("from"), "to": f.get("to"), "ip": f.getlist("ip[]"),
                  "subnet": f.getlist("subnet[]"), "single_values": f.get("single_values")}
             s.hz_traffic_queries.append(q)
+            bad = [n for n in q["subnet"] if "/" in n or n in s.hz_reject_subnets]
+            if bad:  # Robot wants the bare network address and refuses some subnets
+                return _json({"error": {"status": 400, "code": "INVALID_INPUT", "message": "invalid input",
+                                        "missing": None, "invalid": ["subnet"]}}, 400)
             slots = ["01", "02", "03"] if q["type"] != "year" else ["01", "02"]
             data = {a: {sl: {"in": 1.5, "out": 10.0, "sum": 11.5} for sl in slots} for a in q["ip"]}
             data.update({n.split("/")[0]: {sl: {"in": 0.5, "out": 1.0, "sum": 1.5} for sl in slots}

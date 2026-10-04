@@ -174,16 +174,12 @@ def _traffic_chart(series: dict, period: str, year: int, month: int):
                       fmt_bytes, timeframe="year" if period == "year" else "month", tz=timezone.utc)
 
 
-@bp.get("/server/<int:sid>")
-@login_required
-def server(sid: int):
-    srv = _server(sid, LEVEL_VIEW)
-    acc = g.db.get(HetznerAccount, srv.account_id)
-    info = srv.info
+def _period_traffic(acc: HetznerAccount, ips: list[str], nets: list[str], cached: dict) -> dict:
+    """Traffic for the period chosen in the request: the current month from the cache, others live."""
     today = date.today()
     period = request.args.get("period", "month")
     ym = request.args.get("m", today.strftime("%Y-%m"))
-    traffic, error = info.get("traffic") or {}, ""
+    traffic, error = cached or {}, ""
     try:
         year, month = (int(x) for x in ym.split("-")[:2])
         date(year, month, 1)
@@ -194,7 +190,6 @@ def server(sid: int):
         if not rate_ok(f"hetzner-traffic:{g.user.id}", 20):
             error = "Zu viele Abfragen – bitte eine Minute warten."
         else:
-            ips, nets = hetzner.addresses_of(info.get("server") or {})
             try:
                 robot = integrations.hetzner_client(acc)
                 if period == "year":
@@ -203,20 +198,91 @@ def server(sid: int):
                 else:
                     data = robot.traffic("month", *hetzner.month_range(year, month, today), ips, nets)
                 days, total = hetzner.sum_series(data, ips + nets)
-                traffic = {"days": days, "total": total, "limit_gb": traffic.get("limit_gb")}
+                traffic = {"days": days, "total": total, "limit_gb": traffic.get("limit_gb"),
+                           "error": ("Ohne " + ", ".join(robot.skipped_subnets) + " – Hetzner liefert für dieses "
+                                     "Subnetz keine Werte") if robot.skipped_subnets else ""}
             except RobotError as exc:
                 error, traffic = str(exc), {}
-    chart = _traffic_chart(traffic.get("days") or {}, period, year, month) if traffic else None
-    system = g.db.get(System, srv.system_id) if srv.system_id else None
-    if system is not None and not (g.user.is_admin or access.system_level(g.db, g.user, system.id)):
-        system = None
     months = [f"{y:04d}-{m:02d}" for y, m in
               (((today.year * 12 + today.month - 1 - i) // 12, (today.year * 12 + today.month - 1 - i) % 12 + 1)
                for i in range(13))]
+    return {"traffic": traffic, "error": error, "period": period, "ym": f"{year:04d}-{month:02d}", "year": year,
+            "months": months,
+            "chart": _traffic_chart(traffic.get("days") or {}, period, year, month) if traffic else None}
+
+
+@bp.get("/server/<int:sid>")
+@login_required
+def server(sid: int):
+    srv = _server(sid, LEVEL_VIEW)
+    acc = g.db.get(HetznerAccount, srv.account_id)
+    info = srv.info
+    ips, nets = hetzner.addresses_of(info.get("server") or {})
+    ctx = _period_traffic(acc, ips, nets, info.get("traffic") or {})
+    system = g.db.get(System, srv.system_id) if srv.system_id else None
+    if system is not None and not (g.user.is_admin or access.system_level(g.db, g.user, system.id)):
+        system = None
     return render_template("hetzner/server.html", srv=srv, acc=acc, info=info, s=info.get("server") or {},
-                           level=_level(srv), traffic=traffic, chart=chart, error=error, period=period,
-                           ym=f"{year:04d}-{month:02d}", year=year, months=months, system=system,
-                           reset_types=RESET_TYPES, operate_resets=OPERATE_RESETS)
+                           level=_level(srv), system=system, reset_types=RESET_TYPES, operate_resets=OPERATE_RESETS,
+                           account_view=common.can(KIND_HETZNER, acc.id, LEVEL_VIEW), **ctx)
+
+
+# ------------------------------------------------------------------ vSwitch (rights on the whole account)
+def _vswitch(aid: int, vid: int, level: str) -> tuple[HetznerAccount, dict]:
+    acc = _account(aid, level)
+    v = next((x for x in acc.data.get("vswitches") or [] if int(x.get("id") or 0) == vid), None)
+    if v is None:
+        abort(404)
+    return acc, v
+
+
+@bp.get("/account/<int:aid>/vswitch/<int:vid>")
+@login_required
+def vswitch(aid: int, vid: int):
+    from ...models import KIND_PVE, PveServer
+    acc, v = _vswitch(aid, vid, LEVEL_VIEW)
+    nets = [f"{n['ip']}/{n['mask']}" for n in v.get("subnets") or []]
+    ctx = _period_traffic(acc, [], nets, v.get("traffic") or {})
+    rows = {r.number: r for r in g.db.execute(select(HetznerServer).where(HetznerServer.account_id == acc.id)).scalars()}
+    pves = [p for p in g.db.execute(select(PveServer).where(PveServer.vswitch_vlan == v.get("vlan"))).scalars()
+            if common.can(KIND_PVE, p.id, LEVEL_VIEW)]
+    return render_template("hetzner/vswitch.html", acc=acc, v=v, rows=rows, pves=pves,
+                           can_full=common.can(KIND_HETZNER, acc.id, LEVEL_FULL), **ctx)
+
+
+@bp.post("/account/<int:aid>/vswitch/<int:vid>/rdns")
+@login_required
+def vswitch_rdns(aid: int, vid: int):
+    acc, v = _vswitch(aid, vid, LEVEL_FULL)
+    back = url_for("hetzner.vswitch", aid=aid, vid=vid)
+    try:
+        ip = str(ipaddress.ip_address((request.form.get("ip") or "").strip()))
+    except ValueError:
+        abort(400, description="Ungültige IP-Adresse")
+    if not hetzner.in_nets(ip, v.get("subnets") or []):
+        abort(400, description="Die Adresse liegt in keinem Netz dieses vSwitches")
+    ptr = (request.form.get("ptr") or "").strip()
+    try:
+        robot = integrations.hetzner_client(acc)
+        if ptr:
+            ptr = hetzner.validate_ptr(ptr)
+            robot.set_rdns(ip, ptr)
+        else:
+            robot.delete_rdns(ip)
+    except RobotError as exc:
+        flash(f"PTR-Eintrag nicht gesetzt: {exc}", "danger")
+        return redirect(back)
+    audit(g.db, g.user, "hetzner.rdns", f"vSwitch {v.get('name')}", f"{ip} → {ptr or '(gelöscht)'}", ip=client_ip())
+    data = dict(acc.data)
+    switches = [dict(x) for x in data.get("vswitches") or []]
+    cur = next(x for x in switches if int(x.get("id") or 0) == vid)
+    entries = [r for r in cur.get("rdns") or [] if r["ip"] != ip] + ([{"ip": ip, "ptr": ptr}] if ptr else [])
+    cur["rdns"] = sorted(entries, key=lambda r: (":" in r["ip"], r["ip"]))
+    data["vswitches"] = switches
+    acc.cache = data
+    g.db.commit()
+    flash(f"PTR für {ip} {'gesetzt: ' + ptr if ptr else 'gelöscht'}.", "success")
+    return redirect(back)
 
 
 def _client_for(srv: HetznerServer):
