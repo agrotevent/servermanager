@@ -422,6 +422,15 @@ def router_overview(mt: MikroTik) -> dict:
     }
 
 
+def published_via_pangolin(db: Session, host: str) -> Optional[str]:
+    """Name of the Pangolin instance that publishes ``host`` (from the last poll), if any."""
+    host = (host or "").lower()
+    for p in db.query(PangolinServer).all():
+        if host and host in ((p.cache or {}).get("published") or []):
+            return p.name
+    return None
+
+
 def pangolin_overview(pg: Pangolin) -> dict:
     sites = pg.sites()
     resources = pg.resources()
@@ -429,6 +438,7 @@ def pangolin_overview(pg: Pangolin) -> dict:
         "sites": [{"id": s.get("siteId"), "name": s.get("name", ""), "online": bool(s.get("online")),
                    "type": s.get("type", ""), "subnet": s.get("subnet", "")} for s in sites],
         "resources": len(resources),
+        "published": sorted({str(r.get("fullDomain")).lower() for r in resources if r.get("fullDomain")}),
     }
 
 

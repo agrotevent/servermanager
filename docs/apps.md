@@ -41,8 +41,13 @@ Auf der System-Seite im Reiter *Nextcloud* → **Benutzer verwalten** (per SSH m
 - **Weboberfläche:** öffentliche Adresse über Pangolin.
 - **Mail über eigene Public-IP:** Mail-Hostname (MX, IMAP, SMTP), Public-IP, interne Adresse, Ports
   (Standard `25,465,587,143,993,110,995,4190,80` – Port 80 für das Let's-Encrypt-Zertifikat des
-  Mail-Hostnamens) und der zuständige RouterOS. Weboberfläche und Mail-Hostname brauchen
-  **verschiedene Namen**, weil der Mail-Hostname auf die Mail-IP zeigt.
+  Mail-Hostnamens) und der zuständige RouterOS.
+- Solange die Weboberfläche **nicht** über Pangolin läuft, dürfen Weboberfläche und Mailserver
+  denselben Namen haben, z. B. beide `mail.example.com` auf der eigenen IP.
+- Sobald die Weboberfläche über Pangolin läuft, braucht sie einen **eigenen Namen** (z. B.
+  `webmail.example.com`). Ihr DNS-Eintrag zeigt dann auf Pangolin, der Mail-Hostname muss aber
+  weiter auf die Mail-IP zeigen. Der Servermanager prüft das beim Speichern, und der Optimierer schlägt
+  die Veröffentlichung erst mit eigenem Namen vor.
 
 Reiter:
 

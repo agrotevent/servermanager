@@ -362,11 +362,30 @@ def test_mailcow_form_validation(app, db, apps):
     from tests.test_web import login, make_user
     make_user(db, "apps-admin", "admin")
     c = login(app, "apps-admin")
-    mc = apps["mc"]
-    r = c.post(f"/mailcow/{mc.id}/edit", data={"name": "mc", "api_url": mc.api_url, "fingerprint": mc.fingerprint,
-               "public_url": "https://mail.example.com", "mail_hostname": "mail.example.com",
-               "mail_public_ip": "5.9.10.11", "mail_ports": "25,993", "csrf_token": c.csrf}, follow_redirects=True)
-    assert "brauchen verschiedene Namen" in r.text
+    mc, pg = apps["mc"], apps["pg"]
+    same = {"name": "mc", "api_url": mc.api_url, "fingerprint": mc.fingerprint,
+            "public_url": "https://mail.example.com", "mail_hostname": "mail.example.com",
+            "mail_public_ip": "5.9.10.11", "mail_ports": "25,993"}
+    # web interface and mail server under one name on the own IP (not via Pangolin): allowed
+    r = c.post(f"/mailcow/{mc.id}/edit", data={**same, "csrf_token": c.csrf}, follow_redirects=True)
+    assert "eigenen Namen" not in r.text and "Gespeichert" in r.text
+    db.expire_all()
+    assert db.get(type(mc), mc.id).public_url == "https://mail.example.com"
+    # the same name published via Pangolin points to Pangolin: refused
+    pg.cache = {**(pg.cache or {}), "published": ["mail.example.com"]}
+    db.commit()
+    r = c.post(f"/mailcow/{mc.id}/edit", data={**same, "csrf_token": c.csrf}, follow_redirects=True)
+    assert "über Pangolin (pg-apps) veröffentlicht" in r.text
+    pg.cache = {**pg.cache, "published": []}
+    db.commit()
+    # the optimizer never proposes to publish it under the mail name (that would cut off SMTP/IMAP)
+    from servermanager import optimize
+    ids = {p["id"]: p for p in optimize.scan(db)["proposals"]}
+    prop = ids[f"app:mailcow:{mc.id}:publish"]
+    assert prop["action"] is None and prop["severity"] == "info" and "eigenen Namen" in prop["detail"]
+    mc = db.get(type(mc), mc.id)
+    mc.public_url = "https://webmail.example.com"
+    db.commit()
     r = c.post(f"/mailcow/{mc.id}/edit", data={"name": "mc", "api_url": mc.api_url, "fingerprint": mc.fingerprint,
                "public_url": "https://webmail.example.com", "mail_hostname": "mail.example.com",
                "mail_public_ip": "999.1.1.1", "mail_ports": "25;993", "csrf_token": c.csrf}, follow_redirects=True)
@@ -579,3 +598,16 @@ def test_sso_proxmox_needs_full_access(app, db, apps, pve_srv):
     make_user(db, "pve-sso-admin", "admin")
     page = login(app, "pve-sso-admin").get(f"/sso/{apps['ak'].id}").text
     assert "Proxmox VE verbinden" in page and "Realm.Allocate" in page and "pve-sso" in page
+
+
+def test_pangolin_poll_remembers_published_domains(db, mock, apps):
+    from servermanager import integrations
+    pg = apps["pg"]
+    client = integrations.pangolin_client(pg)
+    client.publish("Webmail", "http", 1, "10.20.0.30", 443, "https", "webmail", "dom1")
+    integrations.poll(db, pg)
+    db.commit()
+    assert "webmail.example.com" in pg.cache["published"]
+    assert integrations.published_via_pangolin(db, "WEBMAIL.example.com") == "pg-apps"  # DNS ignores case
+    assert integrations.published_via_pangolin(db, "webmail.example.com") == "pg-apps"
+    assert integrations.published_via_pangolin(db, "mail.example.com") is None

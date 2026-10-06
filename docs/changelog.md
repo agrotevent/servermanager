@@ -4,6 +4,14 @@ Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
 ## 1.17.0 – 06.10.2026
 
+### Behoben
+
+- Mailcow: „Weboberfläche und Mail-Hostname brauchen verschiedene Namen“ erschien auch, wenn die
+  Weboberfläche gar nicht über Pangolin läuft. Ein gemeinsamer Name (z. B. `mail.example.com` für
+  Weboberfläche und Mailserver auf der eigenen IP) ist jetzt erlaubt. Abgelehnt wird er nur, wenn der
+  Name tatsächlich über Pangolin veröffentlicht ist. Der Optimierer schlägt die Veröffentlichung unter
+  dem Mail-Namen nicht mehr vor, sondern empfiehlt zuerst einen eigenen Namen für die Weboberfläche.
+
 ### Neu
 
 - **Proxmox VE per Klick an authentik (SSO):**

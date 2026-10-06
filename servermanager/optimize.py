@@ -467,6 +467,15 @@ def scan_apps(db: Session, pangolins: list[PangolinServer], services: dict) -> l
         host, _p, _s = _host_port(public)
         if host in published:
             continue
+        if kind == "mailcow" and obj.mail_hostname and host == obj.mail_hostname.lower():
+            # publishing it would point the mail hostname to Pangolin and cut off SMTP/IMAP
+            out.append(proposal(f"app:{kind}:{obj.id}:publish", "goal", _obj(kind, obj),
+                                f"{label}: Weboberfläche erst unter eigenem Namen über Pangolin veröffentlichen",
+                                f"Weboberfläche und Mailserver heißen beide {host}. Über Pangolin zeigt der Name auf "
+                                "Pangolin, E-Mail (SMTP/IMAP) muss aber die eigene Mail-IP erreichen. Für die "
+                                "Weboberfläche einen eigenen Namen wählen (z. B. webmail.… statt mail.…) und in der "
+                                "Mailcow-Verbindung als öffentliche Adresse eintragen.", severity="info"))
+            continue
         ihost, iport, ischeme = _host_port(internal)
         match = next(((did, base) for did, base in domains.items() if host == base or host.endswith("." + base)),
                      None)

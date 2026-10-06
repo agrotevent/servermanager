@@ -74,9 +74,15 @@ def _save(mc: MailcowServer) -> list[str]:
     if not re.match(r"^\d{1,5}(,\d{1,5})*$", ports) or any(not 0 < int(p) < 65536 for p in ports.split(",")):
         errors.append("Ports als Liste, z. B. 25,465,587,993")
     mc.mail_ports = ports
-    if mc.public_url and mc.mail_hostname and urlsplit(mc.public_url).hostname == mc.mail_hostname:
-        errors.append("Weboberfläche (über Pangolin) und Mail-Hostname (eigene IP) brauchen verschiedene Namen, "
-                      "z. B. webmail.example.com und mail.example.com.")
+    # one name for both only breaks mail once the web interface really runs through Pangolin: its DNS
+    # record then points to Pangolin instead of the mail IP
+    web_host = urlsplit(mc.public_url).hostname if mc.public_url else ""
+    if web_host and mc.mail_hostname and web_host == mc.mail_hostname:
+        via = integrations.published_via_pangolin(g.db, web_host)
+        if via:
+            errors.append(f"{web_host} ist über Pangolin ({via}) veröffentlicht und zeigt damit auf Pangolin – der "
+                          "Mailserver braucht einen eigenen Namen auf seiner eigenen IP, z. B. webmail.example.com "
+                          "für die Weboberfläche und mail.example.com für den Mailserver.")
     for attr, model, key in (("system_id", System, "system_id"), ("router_id", RouterDevice, "router_id")):
         raw = f.get(key, "")
         setattr(mc, attr, int(raw) if raw.isdigit() and g.db.get(model, int(raw)) else None)
