@@ -13,8 +13,8 @@ from ...authentik import AuthentikError
 from ...core import audit
 from ...jobs import enqueue
 from ...mailcow import MailcowError
-from ...models import (KIND_MAILCOW, KIND_PANGOLIN, KIND_SSO, LEVEL_FULL, LEVEL_OPERATE, LEVEL_VIEW, MailcowServer,
-                       PangolinServer, SsoClient, SsoServer, System)
+from ...models import (KIND_MAILCOW, KIND_PANGOLIN, KIND_PVE, KIND_SSO, LEVEL_FULL, LEVEL_OPERATE, LEVEL_VIEW, MailcowServer,
+                       PangolinServer, PveServer, SsoClient, SsoServer, System)
 from ...pangolin import dashboard_guess
 from ..auth import admin_required, can, client_ip, login_required
 from . import _integration as common
@@ -160,6 +160,10 @@ def detail(sso_id: int):
                          if x.has_type("nextcloud") and can(x.id, LEVEL_FULL) and ("nextcloud", x.id) not in linked]
     ctx["mailcows"] = [x for x in g.db.execute(select(MailcowServer).order_by(MailcowServer.name)).scalars()
                        if common.can(KIND_MAILCOW, x.id, LEVEL_FULL) and ("mailcow", x.id) not in linked]
+    ctx["pves"] = [(x, _pve_gui(x))
+                   for x in g.db.execute(select(PveServer).order_by(PveServer.name)).scalars()
+                   if common.can(KIND_PVE, x.id, LEVEL_FULL) and ("pve", x.id) not in linked]
+    ctx["pve_realm"] = sso_lib.pve_realm(s)
     ctx["pangolins"] = [(x, dashboard_guess(x.api_url))
                         for x in g.db.execute(select(PangolinServer).order_by(PangolinServer.name)).scalars()
                         if common.can(KIND_PANGOLIN, x.id, LEVEL_FULL) and ("pangolin", x.id) not in linked]
@@ -172,6 +176,12 @@ def detail(sso_id: int):
                       "port": parts.port or (443 if parts.scheme == "https" else 80), "method": parts.scheme or "https",
                       "sso": "0", "subdomain": (urlsplit(s.public_url).hostname or "").split(".")[0]}
     return render_template("sso/detail.html", **ctx)
+
+
+def _pve_gui(server: PveServer) -> str:
+    """Address of the Proxmox web interface derived from the API address (https://host:8006)."""
+    parts = urlsplit(server.api_url or "")
+    return f"https://{parts.netloc}" if parts.hostname else ""
 
 
 @bp.post("/<int:sso_id>/connect")
@@ -188,6 +198,8 @@ def connect(sso_id: int):
         target = common.get_or_403(KIND_MAILCOW, target_id, LEVEL_FULL)
     elif kind == "pangolin":
         target = common.get_or_403(KIND_PANGOLIN, target_id, LEVEL_FULL)
+    elif kind == "pve":
+        target = common.get_or_403(KIND_PVE, target_id, LEVEL_FULL)
     elif kind == sso_login.KIND:
         if not g.user.is_admin:
             abort(403)
@@ -196,7 +208,7 @@ def connect(sso_id: int):
     else:
         abort(400)
     default = {"mailcow": getattr(target, "public_url", ""), "pangolin": dashboard_guess(getattr(target, "api_url", "")),
-               sso_login.KIND: settings.base_url(g.db)}
+               sso_login.KIND: settings.base_url(g.db), "pve": _pve_gui(target) if kind == "pve" else ""}
     app_url = (request.form.get("app_url") or default.get(kind) or "").strip().rstrip("/")
     if not re.match(r"^https://[A-Za-z0-9.-]+(:\d+)?(/[A-Za-z0-9._/-]*)?$", app_url):
         flash("Öffentliche Adresse der Anwendung als https://… angeben (über Pangolin erreichbar).", "danger")
@@ -207,7 +219,9 @@ def connect(sso_id: int):
         return redirect(url_for("sso.detail", sso_id=sso_id))
     job = enqueue(g.db, kind="sso_connect", title=f"SSO verbinden: {target.name} ↔ {s.name}", user=g.user,
                   system=target if kind == "nextcloud" else None,
-                  payload={"sso_id": s.id, "kind": kind, "target_id": target.id, "app_url": app_url})
+                  payload={"sso_id": s.id, "kind": kind, "target_id": target.id, "app_url": app_url,
+                           "options": {"groups": request.form.get("groups") == "1",
+                                       "default": request.form.get("default") == "1"} if kind == "pve" else {}})
     audit(g.db, g.user, "sso.connect_start", s.name, f"{kind} {target.name}", ip=client_ip())
     g.db.commit()
     return redirect(url_for("jobs.detail", job_id=job.id))

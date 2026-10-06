@@ -484,3 +484,98 @@ def test_servermanager_login_via_sso(app, db, mock, apps):
             if u:
                 db.delete(u)
         db.commit()
+
+
+@pytest.fixture()
+def pve_srv(db, mock):
+    from servermanager.models import PveServer
+    srv = PveServer(name="pve-sso", api_url=mock.url, token_id=m.PVE_TOKEN, token_secret_enc=security.encrypt(m.PVE_SECRET),
+                    fingerprint=mock.fingerprint)
+    db.add(srv)
+    db.commit()
+    yield srv
+    db.delete(srv)
+    db.commit()
+
+
+def test_sso_connect_proxmox(db, mock, apps, pve_srv):
+    from servermanager import sso
+    from servermanager.jobs import enqueue, log_path
+    from servermanager.models import Job, SsoClient
+    st = mock.state
+
+    def run(options=None):
+        job = enqueue(db, kind="sso_connect", title="sso", payload={
+            "sso_id": apps["ak"].id, "kind": "pve", "target_id": pve_srv.id, "app_url": "https://pve.example.com:8006",
+            "options": options or {}})
+        db.commit()
+        _run(job.id)
+        db.expire_all()
+        return db.get(Job, job.id), log_path(job.id).read_text()
+    job, log = run({"groups": True, "default": True})
+    assert job.status == "success", log
+    realm = sso.pve_realm(apps["ak"])
+    assert realm == "auth"
+    d = st.pve_domains[realm]
+    client = db.query(SsoClient).filter_by(target_kind="pve", target_id=pve_srv.id).one()
+    prov = st.ak_providers[client.provider_pk]
+    assert d["type"] == "openid" and d["client-id"] == prov["client_id"] and d["client-key"] == prov["client_secret"]
+    # exactly authentik's issuer incl. trailing slash (Proxmox compares it with the discovery document)
+    assert d["issuer-url"] == f"https://auth.example.com/application/o/{client.slug}/"
+    assert d["username-claim"] == "username" and d["autocreate"] == "1" and d["groups-claim"] == "groups"
+    assert d["default"] == "1" and client.target_ref == realm
+    assert {"matching_mode": "strict", "url": "https://pve.example.com:8006"} in prov["redirect_uris"]
+    # disconnect removes realm and application
+    slug, cid = client.slug, client.id
+    job = enqueue(db, kind="sso_disconnect", title="off", payload={"client_id": cid})
+    db.commit()
+    _run(job.id)
+    db.expire_all()
+    assert db.get(Job, job.id).status == "success"
+    assert realm not in st.pve_domains and slug not in st.ak_apps
+    # Proxmox before 8.1: realm without groups claim
+    st.pve_old = True
+    try:
+        job, log = run({"groups": True})
+        assert job.status == "success" and "groups-claim" not in st.pve_domains[realm], log
+        assert "ab PVE 8.1" in log
+    finally:
+        st.pve_old = False
+    c2 = db.query(SsoClient).filter_by(target_kind="pve").one()
+    db.delete(c2)
+    st.ak_apps.pop(c2.slug, None)
+    st.pve_domains.pop(realm, None)
+    db.commit()
+    # token without Realm.Allocate: clear message, authentik app removed again
+    st.pve_no_realm_perm = True
+    apps_before = set(st.ak_apps)
+    try:
+        job, log = run()
+    finally:
+        st.pve_no_realm_perm = False
+    assert job.status == "failed" and "Realm.Allocate" in log and set(st.ak_apps) == apps_before
+    # a realm of another type with the same name is never touched
+    st.pve_domains[realm] = {"realm": realm, "type": "ldap"}
+    try:
+        job, log = run()
+        assert job.status == "failed" and "anderen Typs" in log and st.pve_domains[realm]["type"] == "ldap"
+    finally:
+        st.pve_domains.pop(realm, None)
+    assert not db.query(SsoClient).filter_by(target_kind="pve").first()
+
+
+def test_sso_proxmox_needs_full_access(app, db, apps, pve_srv):
+    from servermanager.models import LEVEL_FULL, LEVEL_OPERATE, IntegrationAccess
+    from tests.test_web import login, make_user
+    u = make_user(db, "pve-sso-user")
+    db.add(IntegrationAccess(user_id=u.id, kind="sso", obj_id=apps["ak"].id, level=LEVEL_FULL))
+    db.add(IntegrationAccess(user_id=u.id, kind="pve", obj_id=pve_srv.id, level=LEVEL_OPERATE))
+    db.commit()
+    c = login(app, "pve-sso-user")
+    r = c.post(f"/sso/{apps['ak'].id}/connect", data={"kind": "pve", "target_id": pve_srv.id,
+                                                       "app_url": "https://pve.example.com:8006", "csrf_token": c.csrf})
+    assert r.status_code == 403
+    assert "Keine (weitere) Proxmox-Verbindung" in c.get(f"/sso/{apps['ak'].id}").text
+    make_user(db, "pve-sso-admin", "admin")
+    page = login(app, "pve-sso-admin").get(f"/sso/{apps['ak'].id}").text
+    assert "Proxmox VE verbinden" in page and "Realm.Allocate" in page and "pve-sso" in page

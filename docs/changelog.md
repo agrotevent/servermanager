@@ -2,6 +2,19 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.17.0 – 06.10.2026
+
+### Neu
+
+- **Proxmox VE per Klick an authentik (SSO):**
+  - OpenID-Connect-Realm in Proxmox und passende Anwendung in authentik.
+  - Benutzer werden beim ersten Login angelegt (ohne Rechte).
+  - Optional werden authentik-Gruppen übernommen (ab PVE 8.1), und der Realm lässt sich als Standard
+    vorwählen.
+  - *Trennen* entfernt Realm und Anwendung.
+
+  Details unter [Anwendungen](apps.md#sso-mit-authentik).
+
 ## 1.16.2 – 04.10.2026
 
 ### Verbessert

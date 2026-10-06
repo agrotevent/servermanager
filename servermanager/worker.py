@@ -1451,8 +1451,10 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
 
     # ------------------------------------------------------------------ SSO
     def _sso_env(self, ctx, kind: str, target_id: int):
-        """Callables to configure the target (occ via SSH for Nextcloud, API for Mailcow and Pangolin)."""
-        from .models import MailcowServer, PangolinServer
+        """Target and the clients to configure it: occ via SSH for Nextcloud, APIs for the others.
+
+        Returns (target, clients for sso.connect/disconnect, holder of an SSH connection to close)."""
+        from .models import MailcowServer, PangolinServer, PveServer
         from .modules.nextcloud import occ_task
         if kind == "nextcloud":
             system = self._system(target_id)
@@ -1462,23 +1464,23 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
                 if "conn" not in holder:
                     holder["conn"] = self._connect(ctx, system)
                 return occ_task(holder["conn"], system, task, env, timeout=600)
-            return system, occ, None, None, holder
+            return system, {"nextcloud_occ": occ}, holder
         if kind == "servermanager":
             from .sso_login import TARGET
-            return TARGET, None, None, None, {}
-        if kind == "pangolin":
-            with session_scope() as db:
-                pg = db.get(PangolinServer, target_id)
-                if pg is None:
-                    raise JobFailed("Pangolin-Verbindung existiert nicht mehr")
-                db.expunge(pg)
-            return pg, None, None, integrations.pangolin_client(pg), {}
+            return TARGET, {}, {}
+        model, label, key, factory = {
+            "pangolin": (PangolinServer, "Pangolin", "pangolin", integrations.pangolin_client),
+            "mailcow": (MailcowServer, "Mailcow", "mailcow", integrations.mailcow_client),
+            "pve": (PveServer, "Proxmox", "pve", lambda srv: pve.client(srv, timeout=30)),
+        }.get(kind, (None, "", "", None))
+        if model is None:
+            raise JobFailed("Unbekannter Anwendungstyp")
         with session_scope() as db:
-            mc = db.get(MailcowServer, target_id)
-            if mc is None:
-                raise JobFailed("Mailcow-Verbindung existiert nicht mehr")
-            db.expunge(mc)
-        return mc, None, integrations.mailcow_client(mc), None, {}
+            obj = db.get(model, target_id)
+            if obj is None:
+                raise JobFailed(f"{label}-Verbindung existiert nicht mehr")
+            db.expunge(obj)
+        return obj, {key: factory(obj)}, {}
 
     def job_sso_connect(self, ctx, job_id, system_id, payload) -> str:
         from . import sso
@@ -1489,10 +1491,10 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
                 raise JobFailed("SSO-Verbindung existiert nicht mehr")
             db.expunge(srv)
         kind, target_id = payload["kind"], int(payload["target_id"])
-        target, occ, mc, pg, holder = self._sso_env(ctx, kind, target_id)
+        target, clients, holder = self._sso_env(ctx, kind, target_id)
         try:
             data = sso.connect(integrations.sso_client(srv), srv, kind, target, payload["app_url"], ctx.say,
-                               nextcloud_occ=occ, mailcow=mc, pangolin=pg)
+                               options=payload.get("options") or {}, **clients)
         finally:
             if holder.get("conn"):
                 holder["conn"].close()
@@ -1511,10 +1513,9 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
             srv = db.get(SsoServer, client.sso_id)
             db.expunge(client)
             db.expunge(srv)
-        target, occ, mc, pg, holder = self._sso_env(ctx, client.target_kind, client.target_id)
+        target, clients, holder = self._sso_env(ctx, client.target_kind, client.target_id)
         try:
-            sso.disconnect(integrations.sso_client(srv), srv, client, ctx.say, nextcloud_occ=occ, mailcow=mc,
-                           pangolin=pg)
+            sso.disconnect(integrations.sso_client(srv), srv, client, ctx.say, **clients)
         finally:
             if holder.get("conn"):
                 holder["conn"].close()

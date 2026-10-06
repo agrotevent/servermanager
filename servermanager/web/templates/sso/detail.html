@@ -66,6 +66,20 @@
     <p class="mt-1"><small>Legt in Pangolin einen OIDC-Identity-Provider „{{ s.name }}“ an und in authentik die passende Anwendung mit der Rückruf-Adresse von Pangolin. Neue Benutzer werden beim ersten Login automatisch angelegt und der Organisation als <em>Member</em> zugeordnet. Benötigt einen <strong>Server-Admin-API-Schlüssel</strong> mit Rechten für Identity Provider. Der Login erscheint auf der Pangolin-Anmeldeseite und – bei aktivierter Pangolin-Anmeldung – vor jeder geschützten Ressource.</small></p>
     {% else %}<p class="muted">Keine (weitere) Pangolin-Verbindung mit Vollzugriff vorhanden.</p>{% endif %}
   </div></div>
+  <div class="card"><div class="card-head"><h2>Proxmox VE verbinden</h2></div><div class="card-body">
+    {% if pves %}
+    <form method="post" action="{{ url_for('sso.connect', sso_id=s.id) }}" class="form-grid" data-confirm="authentik als OpenID-Realm in Proxmox einrichten?">{{ csrf() }}<input type="hidden" name="kind" value="pve">
+      <div class="field full"><label>Proxmox-Server</label><select name="target_id">{% for x, gui in pves %}<option value="{{ x.id }}">{{ x.name }}{% if gui %} ({{ gui }}){% endif %}</option>{% endfor %}</select></div>
+      {{ field('Adresse der Proxmox-Oberfläche', 'app_url', pves[0][1], placeholder='https://pve.example.com:8006', help='so, wie Benutzer Proxmox im Browser aufrufen (dorthin leitet authentik nach dem Login zurück); leer = API-Adresse', cls='full') }}
+      <div class="full">
+        <label class="check"><input type="checkbox" name="groups" value="1"> authentik-Gruppen als Proxmox-Gruppen übernehmen (ab PVE 8.1)</label>
+        <label class="check"><input type="checkbox" name="default" value="1"> Als Standard-Realm auf der Proxmox-Anmeldeseite vorwählen</label>
+      </div>
+      <div class="full"><button class="btn primary">Per Klick verbinden</button></div>
+    </form>
+    <p class="mt-1"><small>Legt in Proxmox den OpenID-Connect-Realm <code>{{ pve_realm }}</code> an. In authentik entsteht die passende Anwendung. Benutzer melden sich als <code>&lt;authentik-Benutzer&gt;@{{ pve_realm }}</code> an und werden beim ersten Login angelegt, zunächst <strong>ohne Rechte</strong>. Rechte vergibst du in Proxmox unter <em>Rechenzentrum → Berechtigungen</em>, mit Gruppen-Übernahme auch für ganze authentik-Gruppen. Proxmox muss die Anmeldeseite von authentik erreichen können. Das API-Token braucht das Recht <code>Realm.Allocate</code> (Rolle Administrator).</small></p>
+    {% else %}<p class="muted">Keine (weitere) Proxmox-Verbindung mit Vollzugriff vorhanden.</p>{% endif %}
+  </div></div>
 </div>
 {% endif %}
 {% if user.is_admin %}

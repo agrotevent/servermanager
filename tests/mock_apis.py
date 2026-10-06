@@ -92,6 +92,10 @@ class State:
                              {"iface": "vmbr1", "type": "bridge", "bridge_ports": "", "active": 1},
                              {"iface": "enp0s31f6", "type": "eth", "active": 1}] for n in ("pve1", "pve2")}
         self.pve_users: dict[str, dict] = {"root@pam": {"userid": "root@pam"}}
+        self.pve_domains: dict[str, dict] = {"pam": {"realm": "pam", "type": "pam"},
+                                             "pve": {"realm": "pve", "type": "pve"}}
+        self.pve_old = False          # Proxmox before 8.1: no groups claim for OpenID realms
+        self.pve_no_realm_perm = False
         self.acl: list[dict] = []
         self.tokens: dict[str, str] = {}
         self.agent_hostkeys = "SM_HOSTKEY ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockHostKeyForTestsOnly0000000000000000"
@@ -525,6 +529,29 @@ class MockApp:
             return ok(str(max(s.guests) + 1))
         if path == "pools":
             return ok([{"poolid": "kunden"}])
+        if p[:2] == ["access", "domains"]:
+            if s.pve_no_realm_perm and req.method != "GET":
+                return Response("Permission check failed (/access/realm, Realm.Allocate)", 403)
+            if len(p) == 2 and req.method == "GET":
+                return ok(list(s.pve_domains.values()))
+            if len(p) == 2 and req.method == "POST":
+                if s.pve_old and "groups-claim" in f:
+                    return _json({"data": None, "errors": {"groups-claim": "property is not defined in schema"}},
+                                 400)
+                if f["realm"] in s.pve_domains:
+                    return _json({"data": None, "errors": {"realm": "domain already exists"}}, 400)
+                s.pve_domains[f["realm"]] = dict(f)
+                return ok(None)
+            if len(p) == 3:
+                d = s.pve_domains.get(p[2])
+                if d is None:
+                    return _json({"data": None, "message": f"domain '{p[2]}' does not exist"}, 500)
+                if req.method == "PUT":
+                    d.update(f)
+                    return ok(None)
+                if req.method == "DELETE":
+                    s.pve_domains.pop(p[2])
+                    return ok(None)
         if path == "access/users":
             if req.method == "POST":
                 s.pve_users[f["userid"]] = {"userid": f["userid"]}

@@ -1,6 +1,6 @@
 # Nextcloud, Mailcow & SSO
 
-Benutzer in Nextcloud und Mailcow anlegen und verwalten sowie beide (und Pangolin) per Klick an ein Single Sign-on
+Benutzer in Nextcloud und Mailcow anlegen und verwalten sowie beide (und Pangolin und Proxmox) per Klick an ein Single Sign-on
 (**authentik**) anbinden.
 
 ## Erreichbarkeit
@@ -90,6 +90,22 @@ Im Reiter *Anwendungen*:
   Mailcow den Identity Provider „Generic OIDC“ mit den öffentlichen Endpunkten von authentik
   (Mailcow ab Version 2025-03). Postfächer werden beim ersten SSO-Login angelegt, wenn die Domain
   existiert. IMAP/SMTP-Programme nutzen weiterhin Postfach- bzw. App-Passwörter.
+- **Proxmox VE verbinden:** Proxmox-Server wählen und die Adresse der Oberfläche prüfen (vorbelegt
+  aus der API-Adresse, z. B. `https://pve.example.com:8006`; dorthin leitet authentik nach dem Login
+  zurück).
+  - Der Servermanager legt in authentik die Anwendung an und in Proxmox über die API einen
+    OpenID-Connect-Realm (Name aus der SSO-Verbindung, z. B. `authentik`).
+  - Benutzer melden sich auf der Proxmox-Anmeldeseite mit diesem Realm an, als
+    `<authentik-Benutzer>@<realm>`. Beim ersten Login werden sie angelegt, zunächst **ohne Rechte**.
+    Rechte vergibst du in Proxmox unter *Rechenzentrum → Berechtigungen*.
+  - Optional (ab PVE 8.1): authentik-Gruppen als Proxmox-Gruppen übernehmen. Dann lassen sich Rechte für
+    ganze Gruppen vergeben. Ältere Versionen bekommen den Realm ohne Gruppen, das Protokoll sagt es.
+  - Optional: den Realm als Standard auf der Anmeldeseite vorwählen.
+  - **Voraussetzungen:** Das API-Token braucht `Realm.Allocate` auf `/access/realm` (Rolle
+    *Administrator*), und Proxmox muss die öffentliche Adresse von authentik erreichen.
+  - Ein vorhandener Realm gleichen Namens vom Typ OpenID wird aktualisiert, einer anderen Typs nie
+    angefasst.
+  - *Trennen* entfernt Realm und Anwendung. Die angelegten Proxmox-Benutzer bleiben bestehen.
 - **Anmeldung am Servermanager:** siehe [Benutzer und Rechte](benutzer.md#anmeldung-uber-authentik-sso).
 - **Pangolin verbinden:** Pangolin-Verbindung wählen, Adresse des Dashboards prüfen (vorbelegt aus der
   API-Adresse, ohne `api.` und Port). Der Servermanager legt in Pangolin einen OIDC-Identity-Provider

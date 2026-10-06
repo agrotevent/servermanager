@@ -8,7 +8,7 @@ from ... import access, integrations, pve, security, sshkeys
 from ...core import audit
 from ...jobs import enqueue
 from ...models import (KIND_PANGOLIN, KIND_PVE, KIND_ROUTER, LEVEL_FULL, PVE_HOSTING, LEVEL_OPERATE, LEVEL_VIEW, Job,
-                       PangolinServer, PveServer, RouterDevice, System)
+                       PangolinServer, PveServer, RouterDevice, SsoClient, System)
 from ...pveapi import TOKEN_ID_RE, PveError
 from ...schedules import get_tz
 from .. import charts
@@ -139,6 +139,9 @@ def delete(pve_id: int):
         s.pve_server_id = None
         s.pve_vmid = None
     access.remove_integration(g.db, KIND_PVE, server.id)
+    for c in g.db.execute(select(SsoClient).where(SsoClient.target_kind == "pve",
+                                                  SsoClient.target_id == server.id)).scalars():
+        g.db.delete(c)
     audit(g.db, g.user, "pve.delete", server.name, ip=client_ip())
     g.db.delete(server)
     g.db.commit()

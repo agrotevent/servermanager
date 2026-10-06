@@ -1,9 +1,10 @@
-"""Connect applications (Nextcloud, Mailcow, Pangolin) to the SSO (authentik) with one click.
+"""Connect applications (Nextcloud, Mailcow, Pangolin, Proxmox VE) to the SSO (authentik) with one click.
 
 1. OAuth2/OIDC provider + application are created in authentik (via its internal API URL).
 2. The application is configured with the public endpoints (reached through Pangolin):
    Nextcloud via ``occ`` (app user_oidc), Mailcow via its API (identity provider),
-   Pangolin via its integration API (OIDC identity provider + organization policy).
+   Pangolin via its integration API (OIDC identity provider + organization policy),
+   Proxmox VE via its API (OpenID Connect realm, users created on first login without permissions).
 If step 2 fails, the authentik application is removed again.
 
 Pangolin is special: its callback URL contains the id of the identity provider, so the IdP is created
@@ -18,8 +19,9 @@ from urllib.parse import urlsplit
 from . import security
 from .authentik import Authentik, AuthentikError
 from .mailcow import MailcowError
-from .models import MailcowServer, PangolinServer, SsoClient, SsoServer, System
+from .models import MailcowServer, PangolinServer, PveServer, SsoClient, SsoServer, System
 from .pangolin import PangolinError
+from .pveapi import PveError
 
 Log = Callable[[str], None]
 
@@ -40,8 +42,9 @@ def slug_for(kind: str, target_id: int) -> str:
     return f"sm-{kind}-{int(target_id)}"
 
 
-KIND_LABELS = {"nextcloud": "Nextcloud", "mailcow": "Mailcow", "pangolin": "Pangolin", "servermanager": "Anmeldung am"}
-TARGET_MODELS = {"nextcloud": System, "mailcow": MailcowServer, "pangolin": PangolinServer}
+KIND_LABELS = {"nextcloud": "Nextcloud", "mailcow": "Mailcow", "pangolin": "Pangolin", "pve": "Proxmox",
+               "servermanager": "Anmeldung am"}
+TARGET_MODELS = {"nextcloud": System, "mailcow": MailcowServer, "pangolin": PangolinServer, "pve": PveServer}
 
 
 def redirect_uris(kind: str, app_url: str) -> list[str]:
@@ -97,14 +100,71 @@ def _connect_pangolin(au: Authentik, sso: SsoServer, target, app_url: str, slug:
             "target_ref": str(idp_id)}
 
 
+def pve_realm(sso: SsoServer) -> str:
+    """Realm id in Proxmox (letters, digits, - and _, starts with a letter, max. 32)."""
+    realm = re.sub(r"[^a-z0-9_-]", "", (sso.name or "").lower())[:32] or "authentik"
+    return realm if realm[0].isalpha() else ("sso" + realm)[:32]
+
+
+def _connect_pve(au: Authentik, sso: SsoServer, target, app_url: str, slug: str, name: str, log: Log, pve,
+                 options: dict) -> dict:
+    realm = pve_realm(sso)
+    existing = {d.get("realm"): d for d in pve.get("access/domains") or []}
+    if realm in existing and existing[realm].get("type") != "openid":
+        raise SsoError(f"In Proxmox gibt es bereits einen Realm „{realm}“ anderen Typs – SSO-Verbindung umbenennen")
+    log(f"authentik: Anwendung „{name}“ ({slug}) anlegen ...")
+    app = au.create_oidc_app(name, slug, redirect_uris("pve", app_url), app_url)
+    log(f"Client-ID {app['client_id']}, Aussteller {app['issuer']}")
+    # exactly authentik's issuer incl. trailing slash – Proxmox compares it with the discovery document
+    params = {"issuer-url": app["issuer"], "client-id": app["client_id"],
+              "client-key": app["client_secret"], "autocreate": 1, "scopes": "openid email profile",
+              "comment": f"authentik {sso.name} (Servermanager)", "default": 1 if options.get("default") else 0}
+    if options.get("groups"):
+        params.update({"groups-claim": "groups", "groups-autocreate": 1})
+    try:
+        if realm in existing:
+            log(f"Proxmox: vorhandenen OpenID-Realm „{realm}“ aktualisieren ...")
+            pve.put(f"access/domains/{realm}", **params)
+        else:
+            log(f"Proxmox: OpenID-Realm „{realm}“ anlegen (Benutzername = authentik-Benutzername) ...")
+            try:
+                pve.post("access/domains", realm=realm, type="openid", **{"username-claim": "username"}, **params)
+            except PveError as exc:
+                if options.get("groups") and exc.status == 400 and "groups" in str(exc):
+                    log("Proxmox kennt die Gruppen-Übernahme noch nicht (ab PVE 8.1) – Realm ohne Gruppen anlegen")
+                    for k in ("groups-claim", "groups-autocreate"):
+                        params.pop(k, None)
+                    pve.post("access/domains", realm=realm, type="openid", **{"username-claim": "username"},
+                             **params)
+                else:
+                    raise
+    except PveError as exc:
+        log("Fehler – entferne die Anwendung wieder aus authentik")
+        try:
+            au.delete_oidc_app(slug, app["provider_pk"])
+        except AuthentikError as exc2:
+            log(f"Aufräumen fehlgeschlagen: {exc2}")
+        if exc.status == 403:
+            raise SsoError(f"{exc} – zum Anlegen eines Realms braucht das API-Token das Recht Realm.Allocate auf "
+                           "/access/realm (z. B. Rolle Administrator)") from exc
+        raise
+    log("Neue Benutzer werden beim ersten Login angelegt – ohne Rechte; Rechte in Proxmox unter "
+        "Rechenzentrum → Berechtigungen vergeben (Benutzer <name>@" + realm + ")")
+    return {"slug": slug, "provider_pk": app["provider_pk"], "client_id": app["client_id"], "app_url": app_url,
+            "target_ref": realm}
+
+
 def connect(au: Authentik, sso: SsoServer, kind: str, target, app_url: str, log: Log,
-            nextcloud_occ: Optional[Callable[[str, dict], str]] = None, mailcow=None, pangolin=None) -> dict:
+            nextcloud_occ: Optional[Callable[[str, dict], str]] = None, mailcow=None, pangolin=None, pve=None,
+            options: Optional[dict] = None) -> dict:
     """Returns the data for the SsoClient record."""
     app_url = public_base(app_url)
     slug = slug_for(kind, target.id)
     name = target.name if kind == "servermanager" else f"{KIND_LABELS.get(kind, kind)} {target.name}"
     if kind == "pangolin":
         return _connect_pangolin(au, sso, target, app_url, slug, name, log, pangolin)
+    if kind == "pve":
+        return _connect_pve(au, sso, target, app_url, slug, name, log, pve, options or {})
     if kind == "servermanager":
         log(f"authentik: Anwendung „{name}“ ({slug}) anlegen ...")
         app = au.create_oidc_app(name, slug, redirect_uris(kind, app_url), app_url)
@@ -143,7 +203,8 @@ def connect(au: Authentik, sso: SsoServer, kind: str, target, app_url: str, log:
 
 
 def disconnect(au: Authentik, sso: SsoServer, client: SsoClient, log: Log,
-               nextcloud_occ: Optional[Callable[[str, dict], str]] = None, mailcow=None, pangolin=None) -> None:
+               nextcloud_occ: Optional[Callable[[str, dict], str]] = None, mailcow=None, pangolin=None,
+               pve=None) -> None:
     if client.target_kind == "nextcloud" and nextcloud_occ:
         log("Nextcloud: OIDC-Anbieter entfernen ...")
         nextcloud_occ("oidc_remove", {"SM_OIDC_ID": provider_id(sso)})
@@ -161,6 +222,14 @@ def disconnect(au: Authentik, sso: SsoServer, client: SsoClient, log: Log,
             if exc.status != 404:
                 raise
             log("Pangolin: Identity Provider war bereits entfernt")
+    elif client.target_kind == "pve" and pve is not None and client.target_ref:
+        log(f"Proxmox: OpenID-Realm „{client.target_ref}“ entfernen (angelegte Benutzer bleiben bestehen) ...")
+        try:
+            pve.delete(f"access/domains/{client.target_ref}")
+        except PveError as exc:
+            if exc.status != 404 and "does not exist" not in str(exc):
+                raise
+            log("Proxmox: Realm war bereits entfernt")
     log("authentik: Anwendung entfernen ...")
     au.delete_oidc_app(client.slug, client.provider_pk)
 

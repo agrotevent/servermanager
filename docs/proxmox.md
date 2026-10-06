@@ -131,6 +131,12 @@ und Start/Stopp des Gastes – nutzbar für alle Benutzer mit dem Recht **Bedien
 auch ohne Zugriff auf die Proxmox-Verbindung. So kann z. B. ein Kunde „seinen“ Container neu starten,
 ohne die übrigen Gäste zu sehen.
 
+## Anmeldung über authentik (SSO)
+
+Unter *Infrastruktur → SSO → (authentik) → Anwendungen → Proxmox VE verbinden* wird authentik per Klick
+als OpenID-Connect-Realm in Proxmox eingerichtet. Danach melden sich Benutzer mit ihrem authentik-Konto
+an der Proxmox-Oberfläche an. Details stehen unter [Anwendungen](apps.md#sso-mit-authentik).
+
 ## Rechte
 
 Administratoren haben Vollzugriff. Anderen Benutzern wird der Zugriff je Proxmox-Verbindung unter
