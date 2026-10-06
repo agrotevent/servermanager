@@ -27,12 +27,17 @@ das **Asterisk Manager Interface (AMI)**. Eine öffentliche REST-API für Kunden
 
 ### Sicherheit der Verbindung
 
-easybell bietet für AMI **kein TLS** an, abgesichert wird über die IP-Freigabeliste. Der Servermanager
-sendet das Passwort deshalb nie: Die Anmeldung läuft über die MD5-Challenge von AMI, es geht nur eine
-Prüfsumme über die Leitung. Nur wenn der Server das nicht anbietet und Sie es ausdrücklich erlauben,
-wird das Passwort im Klartext gesendet. Die Ereignisse selbst, also Rufnummern, sind unverschlüsselt
-unterwegs, wie bei jeder AMI-Anbindung an easybell. Passwort und CTI-Token werden verschlüsselt
-gespeichert.
+Port 5039 ist bei Asterisk der Port für **AMI über TLS**. Mit der Verbindungsart *automatisch*
+(Standard) versucht der Servermanager zuerst TLS und prüft das Zertifikat gegen die System-CAs.
+Antwortet der Server unverschlüsselt, nimmt er die unverschlüsselte Verbindung. Bei einem ungültigen
+Zertifikat bricht er ab und weicht **nicht** auf unverschlüsselt aus. Welche Verbindung läuft, steht
+auf der Detailseite (*TLS* bzw. *unverschlüsselt*). Mit *nur TLS* lässt sich die unverschlüsselte
+Verbindung ganz ausschließen.
+
+Zusätzlich gilt die IP-Freigabeliste. Das Passwort sendet der Servermanager nie: Die Anmeldung läuft
+über die MD5-Challenge von AMI. Nur wenn der Server das nicht anbietet und Sie es ausdrücklich
+erlauben, wird das Passwort im Klartext gesendet. Ohne TLS sind die Ereignisse, also Rufnummern,
+unverschlüsselt unterwegs. Passwort und CTI-Token werden verschlüsselt gespeichert.
 
 ## Ereignis-Verbindung
 
@@ -73,6 +78,9 @@ und wählen Sie die Aufbewahrung nicht länger als nötig.
 
 - **„Verbindung steht, aber keine Begrüßung vom Server“** (früher „Zeitüberschreitung beim Lesen“):
   easybell nimmt die Verbindung an, meldet sich aber nicht. Mögliche Ursachen:
+  - Port 5039 erwartet TLS, die Verbindungsart steht aber auf *unverschlüsselt*. *Automatisch* oder
+    *nur TLS* wählen. Bis Version 1.17.3 konnte der Servermanager kein TLS, das war die
+    wahrscheinlichste Ursache.
   - Die öffentliche IP des Servermanagers fehlt in der IP-Freigabeliste.
   - Die AMI-Schnittstelle ist nicht aktiviert.
   - Der Zugang ist bereits verbunden: easybell erlaubt je Zugang nur eine AMI-Verbindung. Ein anderes

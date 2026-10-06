@@ -159,7 +159,7 @@ def zammad_client(z: ZammadServer, timeout: int = 20) -> Zammad:
 
 def easybell_client(e: EasybellAccount, timeout: float = 15.0) -> Ami:
     return Ami(e.host, e.port, e.username, security.decrypt(e.secret_enc) if e.secret_enc else "",
-               allow_plain=bool(e.allow_plain), timeout=timeout)
+               allow_plain=bool(e.allow_plain), timeout=timeout, transport=e.transport or "auto")
 
 
 def easybell_overview(e: EasybellAccount) -> tuple[dict, list[dict]]:
@@ -177,6 +177,7 @@ def easybell_overview(e: EasybellAccount) -> tuple[dict, list[dict]]:
         data.update({k: snap.get(k) or ([] if k != "version" else "") for k in ("version", "endpoints", "channels")})
         data["errors"] = dict(snap.get("errors") or {})
         data["via"] = "Ereignis-Verbindung"
+        data["transport"] = lst.get("transport", "")
     elif e.listen and lst.get("connected"):
         # connected, first snapshot still pending: do not disturb the event connection with a second login
         data.update({"version": "", "endpoints": [], "channels": [], "via": "Ereignis-Verbindung",
@@ -196,6 +197,7 @@ def easybell_overview(e: EasybellAccount) -> tuple[dict, list[dict]]:
 
 def _easybell_query(e: EasybellAccount, data: dict) -> None:
     with easybell_client(e) as ami:
+        data["transport"] = ami.transport_used
         data["version"] = ami.version()
         try:
             data["endpoints"] = sorted(ami.endpoints(), key=lambda x: x["name"])

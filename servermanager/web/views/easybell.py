@@ -8,7 +8,7 @@ from flask import Blueprint, abort, flash, g, redirect, render_template, request
 from sqlalchemy import or_, select
 
 from ... import access, integrations, security
-from ...ami import DEFAULT_HOST, DEFAULT_PORT, HOST_RE, USER_RE
+from ...ami import DEFAULT_HOST, DEFAULT_PORT, HOST_RE, TRANSPORTS, USER_RE
 from ...core import audit
 from ...models import (KIND_EASYBELL, LEVEL_FULL, LEVEL_OPERATE, LEVEL_VIEW, EasybellAccount, EasybellCall,
                        ZammadServer, utcnow)
@@ -59,6 +59,7 @@ def _save(a: EasybellAccount) -> list[str]:
     elif not a.secret_enc:
         errors.append("AMI-Passwort angeben.")
     a.allow_plain = bool(f.get("allow_plain"))
+    a.transport = f.get("transport") if f.get("transport") in TRANSPORTS else "auto"
     cc = (f.get("country_code") or "49").strip().lstrip("+")
     if not re.match(r"^[1-9][0-9]{0,3}$", cc):
         errors.append("Ländervorwahl als Zahl angeben (z. B. 49).")
@@ -95,13 +96,13 @@ def _save(a: EasybellAccount) -> list[str]:
 
 def _form(a: EasybellAccount, is_new: bool):
     zammads = g.db.execute(select(ZammadServer).order_by(ZammadServer.name)).scalars().all()
-    return render_template("easybell/form.html", a=a, is_new=is_new, zammads=zammads)
+    return render_template("easybell/form.html", a=a, is_new=is_new, zammads=zammads, transports=TRANSPORTS)
 
 
 @bp.route("/new", methods=["GET", "POST"])
 @admin_required
 def new():
-    a = EasybellAccount(host=DEFAULT_HOST, port=DEFAULT_PORT, monitor=True, listen=True, country_code="49",
+    a = EasybellAccount(host=DEFAULT_HOST, port=DEFAULT_PORT, monitor=True, listen=True, country_code="49", transport="auto",
                         device_pattern=r"^PJSIP/CPBX-", journal_days=30)
     if request.method == "POST":
         errors = _save(a)

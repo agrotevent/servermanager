@@ -17,8 +17,16 @@ AMI_USER, AMI_SECRET = "cpbx-4711", "geheimes-ami-passwort"
 class MockAmi:
     """Minimal AMI server: MD5 challenge, a few list actions, pushes queued events after login."""
 
-    def __init__(self, md5: bool = True, newline: str = "\r\n", silent: bool = False):
+    def __init__(self, md5: bool = True, newline: str = "\r\n", silent: bool = False, tls: bool = False):
         self.md5, self.nl, self.silent = md5, newline, silent
+        self.server_ctx = None
+        if tls:  # AMI over TLS (Asterisk's port 5039)
+            import ssl
+            import tempfile
+            from tests.mock_apis import make_cert
+            self.cert, key, _fp = make_cert(tempfile.mkdtemp())
+            self.server_ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+            self.server_ctx.load_cert_chain(self.cert, key)
         self.sock = socket.socket()
         self.sock.bind(("127.0.0.1", 0))
         self.sock.listen(5)
@@ -39,7 +47,17 @@ class MockAmi:
                 conn, _ = self.sock.accept()
             except OSError:
                 return
-            threading.Thread(target=self._serve, args=(conn,), daemon=True).start()
+            threading.Thread(target=self._serve_maybe_tls, args=(conn,), daemon=True).start()
+
+    def _serve_maybe_tls(self, conn):
+        if self.server_ctx is not None:
+            try:
+                conn.settimeout(5)
+                conn = self.server_ctx.wrap_socket(conn, server_side=True)
+            except OSError:
+                conn.close()
+                return
+        self._serve(conn)
 
     def _send(self, conn, fields):
         nl = self.nl
@@ -206,6 +224,44 @@ def test_ami_bare_newlines_and_silent_server():
             Ami("127.0.0.1", srv.port, AMI_USER, AMI_SECRET, timeout=1).connect()
     finally:
         srv.close()
+
+
+def client_ctx(srv):
+    import ssl
+    ctx = ssl.create_default_context(cafile=srv.cert)
+    ctx.check_hostname = False  # the test certificate is issued for mock.local
+    return ctx
+
+
+def test_ami_over_tls():
+    srv = MockAmi(tls=True)
+    try:
+        c = Ami("127.0.0.1", srv.port, AMI_USER, AMI_SECRET, ssl_context=client_ctx(srv))
+        with c:
+            assert c.transport_used == "TLS" and c.version() == "20.5.0" and len(c.endpoints()) == 2
+        # untrusted certificate: never fall back to the unencrypted connection
+        with pytest.raises(AmiError, match="TLS-Zertifikat ungültig"):
+            Ami("127.0.0.1", srv.port, AMI_USER, AMI_SECRET, timeout=3).connect()
+        # forced plain against the TLS port: silent server, with the hint about port 5039
+        with pytest.raises(AmiError, match="keine Begrüßung.*Port 5039 ist bei Asterisk der Port für AMI über TLS"):
+            Ami("127.0.0.1", srv.port, AMI_USER, AMI_SECRET, timeout=1, transport="plain").connect()
+    finally:
+        srv.close()
+    plain = MockAmi()
+    try:
+        c = Ami("127.0.0.1", plain.port, AMI_USER, AMI_SECRET)  # auto: TLS refused -> plain
+        with c:
+            assert c.transport_used == "unverschlüsselt" and c.version() == "20.5.0"
+        with pytest.raises(AmiError, match="TLS nicht möglich"):
+            Ami("127.0.0.1", plain.port, AMI_USER, AMI_SECRET, transport="tls").connect()
+    finally:
+        plain.close()
+    silent = MockAmi(silent=True)
+    try:
+        with pytest.raises(AmiError, match="TLS: keine Antwort auf den TLS-Aufbau; unverschlüsselt: keine Begrüßung"):
+            Ami("127.0.0.1", silent.port, AMI_USER, AMI_SECRET, timeout=1).connect()
+    finally:
+        silent.close()
 
 
 def test_status_query_over_the_event_connection():

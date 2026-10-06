@@ -75,6 +75,12 @@ def _v8(conn: Connection) -> None:
         add_column_if_missing(conn, "sso_clients", "secret_enc", "TEXT NOT NULL DEFAULT ''")
 
 
+def _v9(conn: Connection) -> None:
+    # easybell: AMI over TLS (port 5039) or plain
+    if "easybell_accounts" in inspect(conn).get_table_names():
+        add_column_if_missing(conn, "easybell_accounts", "transport", "VARCHAR(8) NOT NULL DEFAULT 'auto'")
+
+
 MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     1: lambda conn: None,  # initial schema
     2: _v2,
@@ -84,6 +90,7 @@ MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     6: _v6,
     7: _v7,
     8: _v8,
+    9: _v9,
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 

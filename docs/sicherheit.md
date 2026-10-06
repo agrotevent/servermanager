@@ -35,7 +35,8 @@
   gepinnte interne Adresse; Administratoren nur nach ausdrücklicher Freigabe; eine lokale
   Zwei-Faktor-Anmeldung gilt weiter; fehlgeschlagene SSO-Anmeldungen zählen zur Login-Drosselung und
   stehen im Audit-Log.
-- easybell (AMI ohne TLS): Anmeldung nur per MD5-Challenge (Klartext-Passwort nur nach ausdrücklicher
+- easybell (AMI): TLS mit Zertifikatsprüfung, wenn der Server es anbietet (kein Rückfall auf
+  unverschlüsselt bei ungültigem Zertifikat); Anmeldung nur per MD5-Challenge (Klartext-Passwort nur nach ausdrücklicher
   Freigabe), Werte mit Zeilenumbrüchen werden abgelehnt (keine eingeschleusten AMI-Befehle), das
   Anrufjournal wird nach der eingestellten Frist gelöscht.
 - Hetzner Robot: Neustarts und Änderungen nur mit dem passenden Recht je Konto oder Server; PTR-Einträge

@@ -583,6 +583,7 @@ class EasybellAccount(IntegrationMixin, Base):
     username: Mapped[str] = mapped_column(String(128), default="")
     secret_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     allow_plain: Mapped[bool] = mapped_column(Boolean, default=False)       # login without MD5 challenge
+    transport: Mapped[str] = mapped_column(String(8), default="auto")       # auto | tls | plain
     country_code: Mapped[str] = mapped_column(String(4), default="49")
     device_pattern: Mapped[str] = mapped_column(String(128), default=r"^PJSIP/CPBX-")
     listen: Mapped[bool] = mapped_column(Boolean, default=True)             # permanent connection for events

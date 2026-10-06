@@ -2,6 +2,17 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.17.4 – 06.10.2026
+
+### Behoben
+
+- easybell: „Verbindung steht, aber keine Begrüßung vom Server“. Port 5039 ist bei Asterisk der Port
+  für AMI über TLS, der Servermanager konnte bisher nur unverschlüsselt.
+  - Neue Einstellung *Verbindung*: *automatisch* (Standard) versucht TLS mit Zertifikatsprüfung und nimmt
+    sonst die unverschlüsselte Verbindung. Daneben gibt es *nur TLS* und *unverschlüsselt*.
+  - Bei einem ungültigen Zertifikat wird nicht auf unverschlüsselt ausgewichen.
+  - Die Detailseite zeigt, welche Verbindung läuft.
+
 ## 1.17.3 – 06.10.2026
 
 ### Neu

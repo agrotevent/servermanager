@@ -163,11 +163,12 @@ def listen(account_id: int, stop: threading.Event, sink_factory: Callable[[int],
             client = integrations.easybell_client(acc)
             country, pattern = acc.country_code or "49", acc.device_pattern
             signature = (acc.host, acc.port, acc.username, acc.secret_enc, acc.zammad_id, acc.cti_token_enc,
-                         country, pattern, acc.allow_plain)
+                         country, pattern, acc.allow_plain, acc.transport)
         try:
             client.connect()
             attempt = 0
-            _state(account_id, connected=True, error="", since=utcnow().isoformat(timespec="seconds"))
+            _state(account_id, connected=True, error="", since=utcnow().isoformat(timespec="seconds"),
+                   transport=client.transport_used)
             tracker = CallTracker(sink_factory(account_id), country=country, device_pattern=pattern)
 
             def changed() -> bool:
@@ -177,7 +178,7 @@ def listen(account_id: int, stop: threading.Event, sink_factory: Callable[[int],
                     acc = db.get(EasybellAccount, account_id)
                     return acc is None or not acc.listen or signature != (
                         acc.host, acc.port, acc.username, acc.secret_enc, acc.zammad_id, acc.cti_token_enc,
-                        acc.country_code or "49", acc.device_pattern, acc.allow_plain)
+                        acc.country_code or "49", acc.device_pattern, acc.allow_plain, acc.transport)
             checker = _Every(30, changed)
             status = StatusQuery(client, lambda snap: _state(account_id, status=snap))
 

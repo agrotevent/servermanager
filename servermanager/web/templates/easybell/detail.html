@@ -7,7 +7,7 @@
 {% block content %}
 <div class="page-head">
   <div class="grow"><h1>{{ a.name }} {{ int_status(a) }}</h1>
-    <p>AMI {{ a.username }}@{{ a.host }}:{{ a.port }}{% if a.data.version %} · Asterisk {{ a.data.version }}{% endif %} · Ereignisse:
+    <p>AMI {{ a.username }}@{{ a.host }}:{{ a.port }}{% set tr = listener.transport or a.data.transport %}{% if tr %} · {% if tr == 'TLS' %}<span class="badge success">TLS</span>{% else %}<span class="badge warning">{{ tr }}</span>{% endif %}{% endif %}{% if a.data.version %} · Asterisk {{ a.data.version }}{% endif %} · Ereignisse:
       {% if not a.listen %}aus{% elif listener.connected %}<span class="badge success">verbunden</span>{% if listener.since %} <small class="muted">seit {{ listener.since|dt }}</small>{% endif %}{% elif listener.error %}<span class="badge danger">getrennt</span> <small class="muted">{{ listener.error }}</small>{% else %}<span class="badge">startet</span>{% endif %}
       {% if zammad %} · Anrufe an <a href="{{ url_for('zammad.detail', zid=zammad.id) }}">{{ zammad.name }}</a>{% endif %}</p></div>
   <div class="actions">

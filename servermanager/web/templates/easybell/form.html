@@ -11,10 +11,13 @@
     {{ field('Name', 'name', a.name, required=True, placeholder='easybell Zentrale') }}
     {{ field('Server', 'host', a.host, required=True, help='Standard: jarvis.easybell.de') }}
     {{ field('Port', 'port', a.port, type='number', help='Standard: 5039') }}
+    <div class="field full"><label for="f-transport">Verbindung</label>
+      <select id="f-transport" name="transport">{% for k, v in transports.items() %}<option value="{{ k }}" {{ 'selected' if (a.transport or 'auto') == k }}>{{ v }}</option>{% endfor %}</select>
+      <span class="help">Port 5039 ist bei Asterisk der Port für AMI über TLS. „Automatisch“ versucht TLS mit Zertifikatsprüfung und nimmt sonst die unverschlüsselte Verbindung. Bei einem ungültigen Zertifikat wird nicht auf unverschlüsselt ausgewichen.</span></div>
     {{ field('Benutzername', 'username', a.username, required=True, attrs='autocomplete="off"') }}
     {{ field('Passwort', 'secret', '', type='password', help=('Hinterlegt – leer lassen, um es zu behalten' if a.secret_enc else 'wird verschlüsselt gespeichert'), attrs='autocomplete="new-password"', cls='full') }}
     <div class="full">
-      {{ checkbox('Anmeldung mit Klartext-Passwort erlauben, falls der Server keine MD5-Anmeldung anbietet', 'allow_plain', a.allow_plain, help='easybell bietet für AMI kein TLS an. Standardmäßig wird nur eine Prüfsumme gesendet, nie das Passwort.') }}
+      {{ checkbox('Anmeldung mit Klartext-Passwort erlauben, falls der Server keine MD5-Anmeldung anbietet', 'allow_plain', a.allow_plain, help='Standardmäßig wird nur eine Prüfsumme gesendet, nie das Passwort. Über TLS ist die Verbindung ohnehin verschlüsselt.') }}
       {{ checkbox('Überwachen (Status regelmäßig abfragen)', 'monitor', a.monitor) }}
       {{ checkbox('Warnen, wenn ein Endgerät nicht erreichbar ist', 'watch_devices', a.watch_devices) }}
     </div>

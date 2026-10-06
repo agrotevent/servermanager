@@ -13,6 +13,7 @@ import hashlib
 import itertools
 import re
 import socket
+import ssl
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Iterator, Optional
@@ -20,6 +21,8 @@ from typing import Callable, Iterator, Optional
 DEFAULT_HOST = "jarvis.easybell.de"
 DEFAULT_PORT = 5039
 DEFAULT_DEVICE_PATTERN = r"^PJSIP/CPBX-"
+# Asterisk: plain AMI usually on 5038, AMI over TLS on 5039
+TRANSPORTS = {"auto": "automatisch (TLS, sonst unverschlüsselt)", "tls": "nur TLS", "plain": "unverschlüsselt"}
 HOST_RE = re.compile(r"^[A-Za-z0-9.-]{1,253}$")
 USER_RE = re.compile(r"^[A-Za-z0-9._@+-]{1,128}$")
 
@@ -40,7 +43,7 @@ def _msg(fields: dict) -> bytes:
 
 class Ami:
     def __init__(self, host: str, port: int, username: str, secret: str, allow_plain: bool = False,
-                 timeout: float = 15.0):
+                 timeout: float = 15.0, transport: str = "auto", ssl_context: Optional[ssl.SSLContext] = None):
         if not HOST_RE.match(host or ""):
             raise AmiError("Ungültiger Server")
         if not USER_RE.match(username or ""):
@@ -50,6 +53,9 @@ class Ami:
         self.host, self.port = host, int(port)
         self.username, self.secret, self.allow_plain = username, secret, allow_plain
         self.timeout = timeout
+        self.transport = transport if transport in TRANSPORTS else "auto"
+        self.ssl_context = ssl_context
+        self.transport_used = ""
         self.sock: Optional[socket.socket] = None
         self.buf = b""
         self.banner = ""
@@ -64,25 +70,61 @@ class Ami:
     def __exit__(self, *exc) -> None:
         self.close()
 
-    def connect(self) -> None:
-        where = f"{self.host}:{self.port}"
+    def _tcp(self, where: str) -> socket.socket:
         try:
-            self.sock = socket.create_connection((self.host, self.port), timeout=self.timeout)
+            return socket.create_connection((self.host, self.port), timeout=self.timeout)
         except socket.timeout:
             raise AmiError(f"AMI {where}: keine Antwort – ist die öffentliche IP des Servermanagers in der "
                            "IP-Freigabeliste der Cloud Telefonanlage eingetragen?") from None
         except OSError as exc:
             raise AmiError(f"AMI {where} nicht erreichbar: {exc}") from exc
+
+    def _open_tls(self, where: str) -> Optional[str]:
+        """TLS connection with certificate check. Returns None when connected, else why TLS did not work
+        (only for answers that show the server speaks plain AMI or nothing – never for a bad certificate)."""
+        raw = self._tcp(where)
+        ctx = self.ssl_context or ssl.create_default_context()
+        try:
+            raw.settimeout(min(self.timeout, 10))
+            self.sock = ctx.wrap_socket(raw, server_hostname=self.host)
+            self.sock.settimeout(self.timeout)
+            return None
+        except ssl.SSLCertVerificationError as exc:
+            raw.close()
+            raise AmiError(f"AMI {where}: TLS-Zertifikat ungültig ({exc.verify_message or exc}) – Verbindung "
+                           "abgebrochen") from exc
+        except socket.timeout:
+            raw.close()
+            return "keine Antwort auf den TLS-Aufbau"
+        except (ssl.SSLError, OSError) as exc:  # plain AMI answers with its greeting instead of TLS
+            raw.close()
+            return f"kein TLS ({exc.__class__.__name__})"
+
+    def connect(self) -> None:
+        where = f"{self.host}:{self.port}"
+        tls_note = ""
+        if self.transport in ("auto", "tls"):
+            tls_note = self._open_tls(where) or ""
+            if not tls_note:
+                self.transport_used = "TLS"
+            elif self.transport == "tls":
+                raise AmiError(f"AMI {where}: TLS nicht möglich ({tls_note}) – Port und Verbindungsart prüfen")
+        if not self.transport_used:
+            self.sock = self._tcp(where)
+            self.transport_used = "unverschlüsselt"
         try:
             self.banner = self._line()
         except AmiError as exc:
             self.close()
             if "Zeitüberschreitung" not in str(exc):
                 raise
-            raise AmiError(f"AMI {where}: Verbindung steht, aber keine Begrüßung vom Server. Mögliche Ursachen: "
+            hint = (" Port 5039 ist bei Asterisk der Port für AMI über TLS – Verbindungsart „automatisch“ oder "
+                    "„nur TLS“ wählen." if self.transport == "plain" else "")
+            tried = f" (TLS: {tls_note}; unverschlüsselt: keine Begrüßung)" if tls_note else ""
+            raise AmiError(f"AMI {where}: Verbindung steht, aber keine Begrüßung vom Server{tried}. Mögliche Ursachen: "
                            "die öffentliche IP des Servermanagers fehlt in der IP-Freigabeliste, die AMI-Schnittstelle "
                            "ist nicht aktiviert, oder der Zugang ist bereits anderweitig verbunden (easybell lässt "
-                           "je Zugang nur eine AMI-Verbindung zu)") from None
+                           "je Zugang nur eine AMI-Verbindung zu)." + hint) from None
         if not self.banner.startswith("Asterisk Call Manager"):
             self.close()
             raise AmiError(f"AMI {where}: unerwartete Begrüßung ({self.banner[:80]!r})")
