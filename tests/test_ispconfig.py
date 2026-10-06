@@ -230,3 +230,64 @@ def test_remote_user_script(tmp_path):
     bad = dict(env, SM_ISPC_FUNCS="x;rm -rf /")
     res = subprocess.run(["bash", "-c", body], capture_output=True, text=True, env=bad)
     assert res.returncode == 1 and "Ungültige Funktionsliste" in res.stdout
+
+
+def test_setup_with_unreachable_address_keeps_credentials(app, db, mock, isp, monkeypatch):
+    """Port 8080 of the system is not reachable: the job fails with a hint, the new login is kept, and only the
+    API address has to be entered afterwards – no second SSH run."""
+    from servermanager.jobs import enqueue, log_path
+    from servermanager.models import IspServer, Job
+    from servermanager.worker import Worker
+    from tests.test_integrations import _run
+    fresh = IspServer(name="fw", system_id=isp["system"].id, monitor=True)
+    db.add(fresh)
+    db.commit()
+    seen = {}
+
+    class FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def run_script(self, body, env=None, root=False, on_output=None, timeout=0, **kw):
+            seen.update(env)
+            mock.state.isp["users"][env["SM_ISPC_USER"]] = env["SM_ISPC_PASS"]
+            on_output("version=3.2.12p1\nport=1\ngroups=6\nSM_OK\n")  # panel port blocked from outside
+            return 0
+    monkeypatch.setattr(Worker, "_connect", lambda self, ctx, system: FakeConn())
+    job = enqueue(db, kind="ispconfig_setup", title="setup", system=isp["system"], payload={"isp_id": fresh.id})
+    db.commit()
+    try:
+        _run(job.id)
+        db.expire_all()
+        log = log_path(job.id).read_text()
+        assert db.get(Job, job.id).status == "failed"
+        assert "Zugangsdaten sind gespeichert" in log and "https://panel.example.com:8080" in log
+        row = db.get(IspServer, fresh.id)
+        assert row.username == "servermanager" and security.decrypt(row.password_enc) == seen["SM_ISPC_PASS"]
+        # enter the reachable address (here: the mock) – the certificate is pinned on saving
+        make_user(db, "isp-fw-admin", "admin")
+        c = login(app, "isp-fw-admin")
+        r = c.post(f"/ispconfig/{fresh.id}/edit", data={"name": "fw", "system_id": isp["system"].id, "mode": "ssh",
+                                                         "api_url_ssh": mock.url, "monitor": "1",
+                                                         "csrf_token": c.csrf}, follow_redirects=True)
+        assert "gepinnt" in r.text, r.text[:2000]
+        db.expire_all()
+        row = db.get(IspServer, fresh.id)
+        assert row.api_url == f"{mock.url}/remote/json.php" and row.fingerprint == mock.fingerprint
+        assert row.status == "online" and row.username == "servermanager"
+        assert "API-Adresse (optional)" in c.get(f"/ispconfig/{fresh.id}/edit").text
+        # Let's Encrypt behind a name: CA check instead of a pinned fingerprint
+        c.post(f"/ispconfig/{fresh.id}/edit", data={"name": "fw", "system_id": isp["system"].id, "mode": "ssh",
+                                                    "api_url_ssh": "https://panel.example.com", "verify_ca_ssh": "1",
+                                                    "csrf_token": c.csrf})
+        db.expire_all()
+        row = db.get(IspServer, fresh.id)
+        assert row.api_url == "https://panel.example.com:8080/remote/json.php"
+        assert row.verify_ca and not row.fingerprint
+    finally:
+        mock.state.isp["users"] = {m.ISP_USER: m.ISP_PASS}
+        db.delete(db.get(IspServer, fresh.id))
+        db.commit()

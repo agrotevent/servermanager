@@ -22,6 +22,20 @@ Abschaltbar unter *Einstellungen → Prüfungen & Jobs* („ISPConfig-Schnittste
 Bereits vorhandene ISPConfig-Systeme erscheinen unter *ISPConfig* als „Erkannte ISPConfig-Systeme ohne
 Schnittstelle“ und werden mit **Schnittstelle einrichten** per Klick angebunden.
 
+### Eigene API-Adresse (Oberfläche nicht unter der Adresse des Systems erreichbar)
+
+Ohne weitere Angabe verbindet sich der Servermanager mit `https://<Adresse des Systems>:8080`. Läuft die
+Oberfläche (noch) nicht über Pangolin und ist dort nicht erreichbar, etwa weil Port 8080 von außen
+gesperrt ist oder die Oberfläche unter einem eigenen Namen läuft, trägst du unter *Bearbeiten* die
+**API-Adresse** ein, z. B. `https://panel.example.com:8080`.
+
+- Ohne Port gilt 8080. Hinter einem Reverse-Proxy auf 443 den Port angeben: `https://panel.example.com:443`.
+- Bei einem Let's-Encrypt-Zertifikat **„Zertifikat über die System-CAs prüfen“** wählen. Sonst wird das
+  Zertifikat der neuen Adresse beim Speichern abgerufen und festgeschrieben.
+- Scheitert die Einrichtung an der Adresse („Zertifikat … nicht abrufbar“, „Remote-API … nicht
+  erreichbar“), sind die Zugangsdaten trotzdem gespeichert. Es reicht, die Adresse einzutragen, ein
+  neuer SSH-Lauf ist nicht nötig.
+
 Alternativ beim Hinzufügen *Vorhandenen Remote-Benutzer eintragen* wählen (API-Adresse
 `https://<server>:8080/remote/json.php`, Benutzer, Passwort, Zertifikat) – z. B. wenn kein SSH-Zugang
 besteht. In einer **Multiserver-Installation** die Schnittstelle am Master (mit der Oberfläche)

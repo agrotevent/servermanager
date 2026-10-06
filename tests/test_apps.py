@@ -630,6 +630,7 @@ def test_mailcow_edit_mailbox_size(app, db, mock, apps):
     c = login(app, "mc-edit-admin")
     page = c.get(f"/mailcow/{mc.id}?tab=mailboxes").text
     assert "Bearbeiten: Größe und Name" in page and 'value="1024"' in page  # current size of info@ in MB
+    assert 'step="256"' not in page  # any whole number of MB is valid in the browser
     r = c.post(f"/mailcow/{mc.id}/do", data={"action": "mb_edit", "address": "info@example.com", "quota": "4096",
                                              "name": "Info-Postfach", "csrf_token": c.csrf}, follow_redirects=True)
     assert "Größe 4096 MB" in r.text

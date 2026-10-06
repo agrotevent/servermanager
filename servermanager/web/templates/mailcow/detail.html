@@ -37,7 +37,7 @@
       <tr class="edit-row"><td colspan="5"><details><summary><small>Bearbeiten: Größe und Name</small></summary>
         <form method="post" action="{{ url_for('mailcow.do', mc_id=m.id) }}" class="inline-form mt-1">{{ csrf() }}<input type="hidden" name="action" value="mb_edit"><input type="hidden" name="address" value="{{ b.username }}">
           <div class="field"><label>Name</label><input type="text" name="name" value="{{ b.name or '' }}" maxlength="100" style="max-width:220px"></div>
-          <div class="field"><label>Größe (MB)</label><input type="number" name="quota" value="{{ (q / 1048576)|round|int }}" min="0" step="256" style="max-width:120px" title="0 = unbegrenzt (wenn die Domain es zulässt)"></div>
+          <div class="field"><label>Größe (MB)</label><input type="number" name="quota" value="{{ (q / 1048576)|round|int }}" min="0" step="1" style="max-width:120px" title="0 = unbegrenzt (wenn die Domain es zulässt)"></div>
           <button class="btn xs">Speichern</button> <small class="muted">belegt {{ u|bytes }}; 0 = unbegrenzt, sofern die Domain es zulässt</small>
         </form></details></td></tr>
       {% endif %}

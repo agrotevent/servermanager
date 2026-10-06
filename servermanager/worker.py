@@ -1427,26 +1427,37 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
         kv = {k: v[-1] for k, v in parse_kv(text).items()}
         port = int(kv.get("port") or 8080)
         url = isp.api_url or f"https://{system.host}:{port}/remote/json.php"
+        # the password exists only now: store the credentials before anything else can fail
+        with session_scope() as db:
+            row = db.get(IspServer, isp.id)
+            row.api_url, row.username = url, "servermanager"
+            row.password_enc = security.encrypt(password)
+            row.setup = {"at": utcnow().isoformat(timespec="minutes"), "allowed": allowed, "via": "ssh",
+                         "groups": kv.get("groups", "")}
+            audit(db, None, "ispconfig.setup", system.name, url)
+        hint = (f" Die Zugangsdaten sind gespeichert. Ist Port {urlsplit(url).port or port} von außen gesperrt oder "
+                "läuft die Oberfläche unter einem eigenen Namen, in der ISPConfig-Verbindung unter „Bearbeiten“ die "
+                "API-Adresse eintragen (z. B. https://panel.example.com:8080) – ein neuer SSH-Lauf ist nicht nötig.")
         fingerprint = isp.fingerprint
         if url.startswith("https://") and not fingerprint and not isp.verify_ca:
             parts = urlsplit(url)
             try:
                 fingerprint = tlspin.fetch_fingerprint(parts.hostname, parts.port or port)
             except tlspin.PinError as exc:
-                raise JobFailed(f"Zertifikat der ISPConfig-Oberfläche nicht abrufbar: {exc}") from exc
+                raise JobFailed(f"Zertifikat der ISPConfig-Oberfläche nicht abrufbar: {exc}.{hint}") from exc
             ctx.say(f"Zertifikat der ISPConfig-Oberfläche gepinnt: {fingerprint}")
         with session_scope() as db:
             row = db.get(IspServer, isp.id)
-            row.api_url, row.fingerprint, row.username = url, fingerprint, "servermanager"
-            row.password_enc = security.encrypt(password)
-            row.setup = {"at": utcnow().isoformat(timespec="minutes"), "allowed": allowed, "via": "ssh",
-                         "groups": kv.get("groups", "")}
-            client = integrations.ispconfig_client(row)
-            with client:
-                version = client.version()
+            row.fingerprint = fingerprint
+            db.flush()
+            try:
+                with integrations.ispconfig_client(row) as client:
+                    version = client.version()
+            except integrations.ApiError as exc:
+                integrations.poll(db, row)
+                raise JobFailed(f"Remote-API unter {url} nicht erreichbar: {exc}.{hint}") from exc
             ctx.say(f"Anmeldung an der Remote-API erfolgreich (ISPConfig {version or kv.get('version', '?')}).")
             integrations.poll(db, row)
-            audit(db, None, "ispconfig.setup", system.name, url)
         return f"ISPConfig-Schnittstelle eingerichtet ({url})"
 
     # ------------------------------------------------------------------ SSO

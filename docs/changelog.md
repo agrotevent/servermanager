@@ -2,6 +2,19 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.17.5 – 06.10.2026
+
+### Behoben
+
+- ISPConfig: Die automatische Einrichtung scheiterte, wenn die Oberfläche unter der Adresse des Systems
+  nicht erreichbar ist (z. B. „176.9.57.106:8080 nicht erreichbar: timed out“).
+  - Im SSH-Modus lässt sich jetzt eine eigene **API-Adresse** mit Port angeben, optional mit CA-Prüfung
+    für Let's-Encrypt-Zertifikate.
+  - Die Zugangsdaten werden vor dem Verbindungstest gespeichert. Nach einem Fehlschlag reicht es, die
+    Adresse einzutragen.
+- Mailcow: Beim Ändern der Postfachgröße meldete der Browser „Gültigen Wert eingeben“, wenn die Zahl kein
+  Vielfaches von 256 war. Jetzt ist jede ganze Zahl in MB gültig.
+
 ## 1.17.4 – 06.10.2026
 
 ### Behoben

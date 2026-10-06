@@ -21,6 +21,9 @@
       <label class="check"><input type="radio" name="mode" value="manual" {% if mode == 'manual' %}checked{% endif %}> Vorhandenen Remote-Benutzer eintragen</label>
     </div>
     <div class="field full" data-show-for="mode=ssh"><label>Erlaubte Adresse (optional)</label><input type="text" name="allowed" placeholder="automatisch: Adresse des Servermanagers"></div>
+    <div class="field full" data-show-for="mode=ssh"><label>API-Adresse (optional)</label><input type="text" name="api_url_ssh" value="{{ i.api_url }}" placeholder="automatisch: https://&lt;Adresse des Systems&gt;:8080">
+      <span class="help">Nötig, wenn die ISPConfig-Oberfläche unter der Adresse des Systems nicht erreichbar ist (Firewall) oder unter einem eigenen Namen läuft, z. B. <code>https://panel.example.com:8080</code>. Ohne Port gilt 8080. Hinter einem Reverse-Proxy auf 443 den Port ausdrücklich angeben: <code>https://panel.example.com:443</code>.</span></div>
+    <div class="full" data-show-for="mode=ssh">{{ checkbox('Zertifikat über die System-CAs prüfen (z. B. Let’s Encrypt) statt den Fingerabdruck festzuschreiben', 'verify_ca_ssh', i.verify_ca) }}</div>
     <div class="field full" data-show-for="mode=manual"><label>API-Adresse</label><input type="text" name="api_url" value="{{ i.api_url }}" placeholder="https://10.20.0.70:8080/remote/json.php"></div>
     <div class="field" data-show-for="mode=manual"><label>Remote-Benutzer</label><input type="text" name="username" value="{{ i.username }}"></div>
     <div class="field" data-show-for="mode=manual"><label>Passwort</label><input type="password" name="password" placeholder="{{ 'hinterlegt – leer lassen' if i.password_enc else '' }}" autocomplete="new-password"></div>

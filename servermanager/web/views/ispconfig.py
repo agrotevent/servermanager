@@ -77,9 +77,33 @@ def _save(isp: IspServer) -> list[str]:
                 errors.append(str(exc))
         elif isp.api_url.startswith("https://") and not isp.verify_ca:
             errors.append("Zertifikats-Fingerabdruck hinterlegen („Abrufen“) oder die CA-Prüfung aktivieren.")
-    elif isp.system_id is None:
-        errors.append("Für die automatische Einrichtung per SSH das System wählen.")
+    else:
+        if isp.system_id is None:
+            errors.append("Für die automatische Einrichtung per SSH das System wählen.")
+        old = (isp.api_url, bool(isp.verify_ca))
+        raw = (f.get("api_url_ssh") or "").strip()
+        try:
+            isp.api_url = normalize_url(raw) if raw else ""
+        except IspError as exc:
+            errors.append(f"API-Adresse: {exc}")
+        isp.verify_ca = bool(f.get("verify_ca_ssh"))
+        if (isp.api_url, isp.verify_ca) != old:
+            isp.fingerprint = ""  # other address: pin its certificate anew
     return errors
+
+
+def _pin_if_needed(isp: IspServer) -> None:
+    """Credentials exist (SSH setup done) and the address changed: pin the new certificate right away."""
+    if not (isp.username and isp.password_enc and isp.api_url.startswith("https://")) or isp.fingerprint \
+            or isp.verify_ca:
+        return
+    from ... import tlspin
+    parts = urlsplit(isp.api_url)
+    try:
+        isp.fingerprint = tlspin.fetch_fingerprint(parts.hostname, parts.port or 8080)
+        flash(f"Zertifikat von {parts.hostname}:{parts.port or 8080} gepinnt: {isp.fingerprint}", "info")
+    except tlspin.PinError as exc:
+        flash(f"Zertifikat nicht abrufbar: {exc}", "danger")
 
 
 def _form(isp: IspServer, is_new: bool):
@@ -152,6 +176,8 @@ def edit(isp_id: int):
             for e in errors:
                 flash(e, "danger")
             return redirect(url_for("ispc.edit", isp_id=isp_id))
+        if request.form.get("mode", "ssh") == "ssh":
+            _pin_if_needed(isp)
         audit(g.db, g.user, "ispconfig.update", isp.name, ip=client_ip())
         integrations.poll(g.db, isp)
         g.db.commit()
