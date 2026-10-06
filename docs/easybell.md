@@ -44,6 +44,10 @@ Ist *Dauerhafte Ereignis-Verbindung* eingeschaltet, hält der Worker je Anlage e
 - Ist die Verbindung getrennt, steht das samt Grund auf der Detailseite und als Warnung im Dashboard.
 - Änderungen an den Einstellungen übernimmt sie innerhalb einer Minute.
 
+Über dieselbe Verbindung fragt der Servermanager alle 5 Minuten Endgeräte und laufende Gespräche ab.
+easybell lässt je Zugang nur eine AMI-Verbindung zu, deshalb meldet er sich dafür nicht ein zweites Mal
+an.
+
 Die Richtung eines Anrufs erkennt der Servermanager am Kanal:
 
 - Kanäle der eigenen Endgeräte heißen bei easybell `PJSIP/CPBX-…`. Ein Anruf, der dort beginnt, ist
@@ -66,6 +70,16 @@ Das Anrufjournal enthält personenbezogene Daten (Rufnummern). Vergeben Sie das 
 und wählen Sie die Aufbewahrung nicht länger als nötig.
 
 ## Fehlerbehebung
+
+- **„Verbindung steht, aber keine Begrüßung vom Server“** (früher „Zeitüberschreitung beim Lesen“):
+  easybell nimmt die Verbindung an, meldet sich aber nicht. Mögliche Ursachen:
+  - Die öffentliche IP des Servermanagers fehlt in der IP-Freigabeliste.
+  - Die AMI-Schnittstelle ist nicht aktiviert.
+  - Der Zugang ist bereits verbunden: easybell erlaubt je Zugang nur eine AMI-Verbindung. Ein anderes
+    Programm mit denselben Zugangsdaten (z. B. eine CTI-Software) blockiert dann den Servermanager.
+
+  Solange die Ereignis-Verbindung des Servermanagers steht, fragt er Endgeräte und Gespräche über
+  genau diese Verbindung ab (alle 5 Minuten) und öffnet keine zweite.
 
 - **„keine Antwort – ist die öffentliche IP … in der IP-Freigabeliste eingetragen?“:** easybell
   verwirft Verbindungen von nicht freigegebenen Adressen kommentarlos. Die Public-IP prüfen, mit der

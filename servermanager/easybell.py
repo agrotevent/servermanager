@@ -14,7 +14,7 @@ from typing import Callable, Optional
 from sqlalchemy import delete, select
 
 from . import integrations, security
-from .ami import AmiError, Call, CallTracker
+from .ami import AmiError, Call, CallTracker, channel_row, endpoint_row
 from .db import session_scope
 from .models import EasybellAccount, EasybellCall, ZammadServer, utcnow
 from .zammad import ZammadError
@@ -79,6 +79,72 @@ class Sink:
                 row.zammad_ok = ok if row.zammad_ok is None else (row.zammad_ok and ok)
 
 
+class StatusQuery:
+    """Devices, channels and version queried over the listener's own connection.
+
+    easybell allows one AMI connection per access: while the listener is connected, the periodic status
+    poll must not open a second one, so the listener asks itself and stores a snapshot.
+    """
+
+    INTERVAL = 300
+    TIMEOUT = 60
+    LISTS = {"endpoints": ("EndpointList", "PeerEntry"), "channels": ("CoreShowChannel",)}
+
+    def __init__(self, client, save: Callable[[dict], None], clock: Callable[[], float] = None):
+        import time
+        self.client, self.save = client, save
+        self.clock = clock or time.monotonic
+        self.last = -1e9
+        self.pending: dict[str, str] = {}      # action id -> kind
+        self.result: dict = {}
+        self.started = 0.0
+
+    def tick(self) -> None:
+        now = self.clock()
+        if self.pending and now - self.started > self.TIMEOUT:
+            for kind in set(self.pending.values()):
+                self.result["errors"][kind] = "keine Antwort vom Server (Abfrage wird vermutlich nicht unterstützt)"
+            self.pending.clear()
+            self._finish()
+        if not self.pending and now - self.last >= self.INTERVAL:
+            self.last, self.started = now, now
+            self.result = {"version": "", "endpoints": [], "channels": [], "errors": {}}
+            self.pending = {self.client.send("CoreSettings"): "version",
+                            self.client.send("PJSIPShowEndpoints"): "endpoints",
+                            self.client.send("CoreShowChannels"): "channels"}
+
+    def feed(self, m: dict) -> bool:
+        """True if the message belonged to a status query (and must not be treated as a call event)."""
+        aid = m.get("ActionID", "")
+        kind = self.pending.get(aid)
+        if kind is None:
+            return False
+        if "Response" in m:
+            if m["Response"].lower() == "error":
+                if kind == "endpoints" and not self.result.get("_peers"):
+                    self.result["_peers"] = True  # chan_sip instead of PJSIP
+                    del self.pending[aid]
+                    self.pending[self.client.send("SIPpeers")] = "endpoints"
+                    return True
+                self.result["errors"][kind] = m.get("Message", "Fehler")
+                del self.pending[aid]
+            elif kind == "version":
+                self.result["version"] = m.get("AsteriskVersion", "")
+                del self.pending[aid]
+        elif m.get("Event") in self.LISTS.get(kind, ()):
+            self.result[kind].append(endpoint_row(m) if kind == "endpoints" else channel_row(m))
+        elif str(m.get("Event", "")).endswith("Complete") or m.get("EventList") == "Complete":
+            del self.pending[aid]
+        if not self.pending:
+            self._finish()
+        return True
+
+    def _finish(self) -> None:
+        self.result.pop("_peers", None)
+        self.result["endpoints"].sort(key=lambda x: x["name"])
+        self.save({**self.result, "at": utcnow().isoformat(timespec="seconds")})
+
+
 def _state(account_id: int, **state) -> None:
     with session_scope() as db:
         acc = db.get(EasybellAccount, account_id)
@@ -113,8 +179,14 @@ def listen(account_id: int, stop: threading.Event, sink_factory: Callable[[int],
                         acc.host, acc.port, acc.username, acc.secret_enc, acc.zammad_id, acc.cti_token_enc,
                         acc.country_code or "49", acc.device_pattern, acc.allow_plain)
             checker = _Every(30, changed)
-            for ev in client.events(stop=lambda: stop.is_set() or checker()):
-                tracker.feed(ev)
+            status = StatusQuery(client, lambda snap: _state(account_id, status=snap))
+
+            def done() -> bool:
+                status.tick()
+                return stop.is_set() or checker()
+            for ev in client.events(stop=done):
+                if not status.feed(ev):
+                    tracker.feed(ev)
             _state(account_id, connected=False, error="")
         except AmiError as exc:
             _state(account_id, connected=False, error=str(exc)[:500])

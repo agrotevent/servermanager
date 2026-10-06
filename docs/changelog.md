@@ -2,6 +2,18 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.17.1 – 06.10.2026
+
+### Behoben
+
+- easybell: „AMI: Zeitüberschreitung beim Lesen“.
+  - Läuft die Ereignis-Verbindung, fragt der Servermanager Endgeräte und Gespräche jetzt über diese
+    Verbindung ab, statt sich ein zweites Mal anzumelden. easybell erlaubt je Zugang nur eine
+    AMI-Verbindung.
+  - Zeilenenden ohne `\r` werden akzeptiert.
+  - Bleibt die Begrüßung aus, nennt die Meldung die möglichen Ursachen: IP-Freigabe, AMI nicht
+    aktiviert oder Zugang bereits verbunden.
+
 ## 1.17.0 – 06.10.2026
 
 ### Behoben

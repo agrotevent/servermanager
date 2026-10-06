@@ -17,8 +17,8 @@ AMI_USER, AMI_SECRET = "cpbx-4711", "geheimes-ami-passwort"
 class MockAmi:
     """Minimal AMI server: MD5 challenge, a few list actions, pushes queued events after login."""
 
-    def __init__(self, md5: bool = True):
-        self.md5 = md5
+    def __init__(self, md5: bool = True, newline: str = "\r\n", silent: bool = False):
+        self.md5, self.nl, self.silent = md5, newline, silent
         self.sock = socket.socket()
         self.sock.bind(("127.0.0.1", 0))
         self.sock.listen(5)
@@ -41,12 +41,16 @@ class MockAmi:
                 return
             threading.Thread(target=self._serve, args=(conn,), daemon=True).start()
 
-    @staticmethod
-    def _send(conn, fields):
-        conn.sendall(("".join(f"{k}: {v}\r\n" for k, v in fields.items()) + "\r\n").encode())
+    def _send(self, conn, fields):
+        nl = self.nl
+        conn.sendall(("".join(f"{k}: {v}{nl}" for k, v in fields.items()) + nl).encode())
 
     def _serve(self, conn):
-        conn.sendall(b"Asterisk Call Manager/7.0.3\r\n")
+        if self.silent:  # accepts the connection but never greets (e.g. second connection, IP not allowed)
+            while not self.stop:
+                time.sleep(0.1)
+            return
+        conn.sendall(f"Asterisk Call Manager/7.0.3{self.nl}".encode())
         buf, challenge, authed = b"", "", False
         conn.settimeout(0.2)
         while not self.stop:
@@ -189,6 +193,49 @@ def test_ami_client_md5_login(ami):
             c.send("Ping", X="a\r\nAction: Originate")
 
 
+def test_ami_bare_newlines_and_silent_server():
+    srv = MockAmi(newline="\n")
+    try:
+        with Ami("127.0.0.1", srv.port, AMI_USER, AMI_SECRET) as c:
+            assert c.version() == "20.5.0" and len(c.endpoints()) == 2
+    finally:
+        srv.close()
+    srv = MockAmi(silent=True)
+    try:
+        with pytest.raises(AmiError, match="keine Begrüßung.*IP-Freigabeliste.*nur eine AMI-Verbindung"):
+            Ami("127.0.0.1", srv.port, AMI_USER, AMI_SECRET, timeout=1).connect()
+    finally:
+        srv.close()
+
+
+def test_status_query_over_the_event_connection():
+    from servermanager.easybell import StatusQuery
+    sent, saved, now = [], [], [0.0]
+
+    class Fake:
+        def send(self, action, **kw):
+            sent.append(action)
+            return f"id{len(sent)}"
+    q = StatusQuery(Fake(), saved.append, clock=lambda: now[0])
+    q.tick()
+    assert sent == ["CoreSettings", "PJSIPShowEndpoints", "CoreShowChannels"]
+    assert q.feed({"Response": "Success", "ActionID": "id1", "AsteriskVersion": "18.0"})
+    assert q.feed({"Response": "Error", "ActionID": "id2", "Message": "Invalid/unknown command"})
+    assert sent[-1] == "SIPpeers"  # chan_sip instead of PJSIP
+    q.feed({"Event": "PeerEntry", "ActionID": "id4", "ObjectName": "101", "Status": "UNREACHABLE"})
+    q.feed({"Event": "PeerlistComplete", "ActionID": "id4", "EventList": "Complete"})
+    assert not q.feed({"Event": "Newchannel", "Uniqueid": "1"})  # call events are not swallowed
+    assert not saved  # channels still open
+    now[0] = 61  # no answer for CoreShowChannels within a minute
+    q.tick()
+    snap = saved[-1]
+    assert snap["version"] == "18.0" and snap["endpoints"] == [{"name": "101", "state": "UNREACHABLE", "contacts": ""}]
+    assert "keine Antwort" in snap["errors"]["channels"]
+    now[0] = 400
+    q.tick()
+    assert sent[-1] == "CoreShowChannels"  # next round after five minutes
+
+
 def test_ami_plain_login_only_when_allowed():
     srv = MockAmi(md5=False)
     try:
@@ -272,6 +319,33 @@ def test_listener_journal_and_zammad_cti(db, ami, https, account):
     answered.started_at = utcnow() - timedelta(days=40)
     db.commit()
     assert easybell.prune(db) == 1
+
+
+def test_poll_uses_the_event_connection(db, ami, account):
+    """easybell allows one AMI connection per access: while listening, the poll must not log in again."""
+    from servermanager import easybell, integrations
+    from servermanager.models import EasybellAccount
+    stop = threading.Event()
+    t = threading.Thread(target=easybell.listen, args=(account.id, stop), daemon=True)
+    t.start()
+    try:
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            db.expire_all()
+            if (db.get(EasybellAccount, account.id).listener or {}).get("status"):
+                break
+            time.sleep(0.2)
+        acc = db.get(EasybellAccount, account.id)
+        assert acc.listener["status"]["version"] == "20.5.0"
+        logins = ami.logins
+        integrations.poll(db, acc)
+        assert ami.logins == logins == 1  # no second connection
+        assert acc.status == "online" and acc.data["via"] == "Ereignis-Verbindung"
+        assert [x["name"] for x in acc.data["endpoints"]] == ["CPBX-100", "CPBX-101"]
+        assert acc.data["offline"] == ["CPBX-101"] and len(acc.data["channels"]) == 1
+    finally:
+        stop.set()
+        t.join(10)
 
 
 def test_listener_stops_when_switched_off(db, account):

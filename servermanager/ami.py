@@ -73,7 +73,16 @@ class Ami:
                            "IP-Freigabeliste der Cloud Telefonanlage eingetragen?") from None
         except OSError as exc:
             raise AmiError(f"AMI {where} nicht erreichbar: {exc}") from exc
-        self.banner = self._line()
+        try:
+            self.banner = self._line()
+        except AmiError as exc:
+            self.close()
+            if "Zeitüberschreitung" not in str(exc):
+                raise
+            raise AmiError(f"AMI {where}: Verbindung steht, aber keine Begrüßung vom Server. Mögliche Ursachen: "
+                           "die öffentliche IP des Servermanagers fehlt in der IP-Freigabeliste, die AMI-Schnittstelle "
+                           "ist nicht aktiviert, oder der Zugang ist bereits anderweitig verbunden (easybell lässt "
+                           "je Zugang nur eine AMI-Verbindung zu)") from None
         if not self.banner.startswith("Asterisk Call Manager"):
             self.close()
             raise AmiError(f"AMI {where}: unerwartete Begrüßung ({self.banner[:80]!r})")
@@ -100,22 +109,23 @@ class Ami:
             raise AmiError(f"AMI: Verbindung unterbrochen ({exc})") from exc
         if not chunk:
             raise AmiError("AMI: Verbindung vom Server beendet")
-        self.buf += chunk
+        # tolerate bare \n line endings (not every AMI implementation sends \r\n)
+        self.buf += chunk.replace(b"\r", b"")
         if len(self.buf) > 4 * 1024 * 1024:
             raise AmiError("AMI: Antwort zu groß")
 
     def _line(self) -> str:
-        while b"\r\n" not in self.buf:
+        while b"\n" not in self.buf:
             self._fill()
-        line, self.buf = self.buf.split(b"\r\n", 1)
+        line, self.buf = self.buf.split(b"\n", 1)
         return line.decode("utf-8", "replace")
 
     def read_message(self) -> dict:
-        while b"\r\n\r\n" not in self.buf:
+        while b"\n\n" not in self.buf:
             self._fill()
-        raw, self.buf = self.buf.split(b"\r\n\r\n", 1)
+        raw, self.buf = self.buf.split(b"\n\n", 1)
         out: dict = {}
-        for line in raw.decode("utf-8", "replace").split("\r\n"):
+        for line in raw.decode("utf-8", "replace").split("\n"):
             k, sep, v = line.partition(":")
             if sep:
                 out.setdefault(k.strip(), v.strip())
@@ -200,26 +210,19 @@ class Ami:
     def endpoints(self) -> list[dict]:
         """Registered phones/devices: PJSIP (Asterisk 13+), falls back to chan_sip."""
         try:
-            rows = self.action_list("PJSIPShowEndpoints", ("EndpointList",))
-            return [{"name": r.get("ObjectName", ""), "state": r.get("DeviceState", ""),
-                     "contacts": r.get("Contacts", "")} for r in rows]
+            return [endpoint_row(r) for r in self.action_list("PJSIPShowEndpoints", ("EndpointList",))]
         except AmiError as first:
             try:
                 rows = self.action_list("SIPpeers", ("PeerEntry",))
             except AmiError:
                 raise first from None
-            return [{"name": r.get("ObjectName", ""), "state": r.get("Status", ""), "contacts": r.get("IPaddress", "")}
-                    for r in rows]
+            return [endpoint_row(r) for r in rows]
 
     def channels(self) -> list[dict]:
-        rows = self.action_list("CoreShowChannels", ("CoreShowChannel",))
-        return [{"channel": r.get("Channel", ""), "caller": r.get("CallerIDNum", ""),
-                 "connected": r.get("ConnectedLineNum", ""), "exten": r.get("Exten", ""),
-                 "state": r.get("ChannelStateDesc", ""), "duration": r.get("Duration", ""),
-                 "linkedid": r.get("Linkedid", "")} for r in rows]
+        return [channel_row(r) for r in self.action_list("CoreShowChannels", ("CoreShowChannel",))]
 
     def events(self, keepalive: float = 30.0, stop: Optional[Callable[[], bool]] = None) -> Iterator[dict]:
-        """Yields events forever (pings the server when idle); stops when ``stop()`` is true."""
+        """Yields events and action responses forever (pings when idle); stops when ``stop()`` is true."""
         while self.pending_events:
             yield self.pending_events.pop(0)
         last = time.monotonic()
@@ -227,7 +230,7 @@ class Ami:
             self.sock.settimeout(min(keepalive, 5.0))
         while not (stop and stop()):
             try:
-                while b"\r\n\r\n" not in self.buf:
+                while b"\n\n" not in self.buf:
                     self._fill()
             except AmiError as exc:
                 if "Zeitüberschreitung" not in str(exc):
@@ -237,8 +240,23 @@ class Ami:
                     last = time.monotonic()
                 continue
             m = self.read_message()
-            if "Event" in m:
+            if "Event" in m or ("Response" in m and m.get("ActionID")):
                 yield m
+
+
+# ----------------------------------------------------------------------------- list rows
+def endpoint_row(r: dict) -> dict:
+    """EndpointList (PJSIP) or PeerEntry (chan_sip) -> {name, state, contacts}."""
+    if r.get("Event") == "PeerEntry":
+        return {"name": r.get("ObjectName", ""), "state": r.get("Status", ""), "contacts": r.get("IPaddress", "")}
+    return {"name": r.get("ObjectName", ""), "state": r.get("DeviceState", ""), "contacts": r.get("Contacts", "")}
+
+
+def channel_row(r: dict) -> dict:
+    return {"channel": r.get("Channel", ""), "caller": r.get("CallerIDNum", ""),
+            "connected": r.get("ConnectedLineNum", ""), "exten": r.get("Exten", ""),
+            "state": r.get("ChannelStateDesc", ""), "duration": r.get("Duration", ""),
+            "linkedid": r.get("Linkedid", "")}
 
 
 # ----------------------------------------------------------------------------- numbers

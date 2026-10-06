@@ -163,8 +163,38 @@ def easybell_client(e: EasybellAccount, timeout: float = 15.0) -> Ami:
 
 
 def easybell_overview(e: EasybellAccount) -> tuple[dict, list[dict]]:
+    from datetime import datetime, timedelta
     alerts: list[dict] = []
     data: dict = {"errors": {}}
+    lst = e.listener or {}
+    snap = lst.get("status") or {}
+    try:
+        fresh = bool(snap) and utcnow() - datetime.fromisoformat(snap["at"]) < timedelta(minutes=15)
+    except (KeyError, ValueError):
+        fresh = False
+    if e.listen and lst.get("connected") and fresh:
+        # easybell allows one AMI connection per access: use what the event connection queried itself
+        data.update({k: snap.get(k) or ([] if k != "version" else "") for k in ("version", "endpoints", "channels")})
+        data["errors"] = dict(snap.get("errors") or {})
+        data["via"] = "Ereignis-Verbindung"
+    elif e.listen and lst.get("connected"):
+        # connected, first snapshot still pending: do not disturb the event connection with a second login
+        data.update({"version": "", "endpoints": [], "channels": [], "via": "Ereignis-Verbindung",
+                     "errors": {"endpoints": "Abfrage über die Ereignis-Verbindung läuft – gleich erneut ansehen"}})
+    else:
+        _easybell_query(e, data)
+    bad = {"unavailable", "unreachable", "unknown", "invalid"}
+    data["offline"] = [x["name"] for x in data["endpoints"] if str(x["state"]).lower().split(" ")[0] in bad]
+    if e.watch_devices:
+        for name in data["offline"]:
+            alerts.append({"key": f"dev:{name}", "severity": "warn", "text": f"Endgerät {name} ist nicht erreichbar"})
+    if e.listen and lst.get("error") and not lst.get("connected"):
+        alerts.append({"key": "listener", "severity": "warn",
+                       "text": f"Ereignis-Verbindung getrennt: {str(lst['error'])[:200]}"})
+    return data, alerts
+
+
+def _easybell_query(e: EasybellAccount, data: dict) -> None:
     with easybell_client(e) as ami:
         data["version"] = ami.version()
         try:
@@ -175,16 +205,6 @@ def easybell_overview(e: EasybellAccount) -> tuple[dict, list[dict]]:
             data["channels"] = ami.channels()
         except AmiError as exc:
             data["channels"], data["errors"]["channels"] = [], str(exc)
-    bad = {"unavailable", "unreachable", "unknown", "invalid"}
-    data["offline"] = [x["name"] for x in data["endpoints"] if str(x["state"]).lower().split(" ")[0] in bad]
-    if e.watch_devices:
-        for name in data["offline"]:
-            alerts.append({"key": f"dev:{name}", "severity": "warn", "text": f"Endgerät {name} ist nicht erreichbar"})
-    lst = e.listener or {}
-    if e.listen and lst.get("error") and not lst.get("connected"):
-        alerts.append({"key": "listener", "severity": "warn",
-                       "text": f"Ereignis-Verbindung getrennt: {str(lst['error'])[:200]}"})
-    return data, alerts
 
 
 def hetzner_client(a: HetznerAccount, timeout: int = 25) -> Robot:
