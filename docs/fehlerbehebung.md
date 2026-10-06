@@ -18,6 +18,15 @@ zwei häufige Fälle selbst und versucht es dann noch einmal:
 
 - **dpkg unterbrochen / Paket ließ sich nicht einrichten** → `dpkg --configure -a`
 - **nicht erfüllte Abhängigkeiten** → `apt-get -f install`
+- **„Packages were downgraded and -y was used without --allow-downgrades“** (ab 1.17.2):
+  - apt würde einzelne Pakete auf eine ältere Version zurückstufen. Das passiert meist durch
+    APT-Pinning mit Priorität ≥ 1000 oder durch eine Paketquelle, die ältere Versionen anbietet.
+  - Der Servermanager stuft nie automatisch herunter. Er hält genau diese Pakete für den Lauf fest,
+    installiert alle übrigen Updates und gibt die Pakete danach wieder frei.
+  - Im Protokoll steht je Paket, von welcher auf welche Version es zurückgestuft würde und warum, etwa
+    die Pin-Datei unter `/etc/apt/preferences.d/` oder Priorität und Quelle der älteren Version.
+  - Dauerhaft lösen: die Pin-Datei anpassen oder entfernen. Ist die ältere Version gewollt, einmal von
+    Hand `apt-get install <paket>=<version>` ausführen.
 
 Bleibt der Fehler, auf dem System als root prüfen:
 

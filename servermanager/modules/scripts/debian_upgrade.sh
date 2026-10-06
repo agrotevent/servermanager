@@ -40,5 +40,8 @@ list_new_conffiles "$stamp"
 rm -f "$stamp"
 remaining="$(apt-get -s dist-upgrade 2>/dev/null | grep -c '^Inst ')"
 log "Fertig. Noch ausstehende Paketupdates: $remaining"
+if [ -n "$APT_SKIPPED" ]; then
+    warn "Übersprungen, weil apt sie herunterstufen würde: $APT_SKIPPED – Ursache siehe oben (meist APT-Pinning in /etc/apt/preferences.d oder eine entfernte Paketquelle)"
+fi
 report_reboot
 exit 0

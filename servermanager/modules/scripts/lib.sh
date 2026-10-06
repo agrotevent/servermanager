@@ -46,6 +46,8 @@ apt_reason() {
         echo "kein freier Speicherplatz ($(df -h / /var /boot 2>/dev/null | awk 'NR>1 {print $6 " " $4 " frei"}' | sort -u | tr '\n' ',' | sed 's/,$//'))"
     elif grep -qE "Could not get lock|Unable to acquire the dpkg frontend lock" "$f"; then
         echo "Paketverwaltung ist durch einen anderen Prozess gesperrt (läuft apt/unattended-upgrades?)"
+    elif grep -q "Packages were downgraded" "$f"; then
+        echo "apt würde Pakete auf ältere Versionen zurückstufen (APT-Pinning oder entfernte Paketquelle prüfen)"
     elif grep -q "dpkg was interrupted" "$f"; then
         echo "dpkg wurde unterbrochen (dpkg --configure -a nötig)"
     elif grep -qE "Unmet dependencies|unmet dependencies|held broken packages" "$f"; then
@@ -58,10 +60,67 @@ apt_reason() {
     fi
 }
 
+# packages the given apt-get command would DOWNGRADE, one "package installed offered" per line
+apt_downgrades() {
+    local p cur new
+    LC_ALL=C apt-get -s "$@" 2>/dev/null \
+        | sed -n 's/^Inst \([^ ]*\) \[\([^]]*\)\] (\([^ ]*\) .*/\1 \2 \3/p' \
+        | while read -r p cur new; do
+            if dpkg --compare-versions "$new" lt "$cur"; then
+                printf '%s %s %s\n' "$p" "$cur" "$new"
+            fi
+        done
+}
+
+# why apt offers an older version: an APT pin naming the package, else priority and source of that version
+apt_downgrade_cause() {
+    local p="$1" new="$2" files src
+    files="$(grep -lsE "^Package:.*(^|[ :*])${p}([ *]|\$)" /etc/apt/preferences /etc/apt/preferences.d/* 2>/dev/null \
+             | tr '\n' ' ' | sed 's/ $//')"
+    if [ -n "$files" ]; then
+        printf 'APT-Pinning in %s' "$files"
+        return
+    fi
+    src="$(LC_ALL=C apt-cache policy "$p" 2>/dev/null | awk -v v="$new" '
+        ($1 == v) || ($1 == "***" && $2 == v) { prio = ($1 == "***") ? $3 : $2; found = 1; next }
+        found && NF { print "Priorität " prio " aus " $2 " " $3; exit }')"
+    printf '%s' "${src:-Quelle unbekannt}"
+}
+
+# apt refuses an upgrade because it would downgrade packages (pinning, removed repository):
+# keep exactly those packages for this run, install everything else and say why they stay
+apt_skip_downgrades() {
+    local downs pkgs held p cur new rc
+    downs="$(apt_downgrades "$@")"
+    [ -n "$downs" ] || return 1
+    held="$(apt-mark showhold 2>/dev/null | tr '\n' ' ')"
+    pkgs=""
+    while read -r p cur new; do
+        warn "Nicht aktualisiert: $p – apt würde von $cur auf die ältere Version $new zurückstufen ($(apt_downgrade_cause "$p" "$new"))"
+        case " $held " in *" $p "*) ;; *) pkgs="$pkgs $p" ;; esac
+    done <<< "$downs"
+    # shellcheck disable=SC2086 # word splitting of the package list is intended
+    [ -z "$pkgs" ] || apt-mark hold $pkgs >/dev/null
+    log "Übrige Updates ohne diese Pakete installieren"
+    apt_try "$@"
+    rc=$?
+    # shellcheck disable=SC2086
+    [ -z "$pkgs" ] || apt-mark unhold $pkgs >/dev/null
+    APT_SKIPPED="$(printf '%s\n' "$downs" | awk '{print $1}' | tr '\n' ' ' | sed 's/ $//')"
+    return "$rc"
+}
+
+# shellcheck disable=SC2034 # read by the scripts that include this library
+APT_SKIPPED=""
 apt_run() {
     apt_try "$@" && return 0
     local reason="$APT_ERR"
-    if printf '%s' "$APT_LAST_OUT" | grep -qE "dpkg was interrupted|Errors were encountered while processing:|Sub-process /usr/bin/dpkg returned an error"; then
+    if printf '%s' "$APT_LAST_OUT" | grep -qE "Packages were downgraded and -y was used without --allow-downgrades"; then
+        warn "apt würde Pakete auf ältere Versionen zurückstufen – diese werden übersprungen"
+        apt_skip_downgrades "$@" && return 0
+        [ -n "$APT_ERR" ] || APT_ERR="$reason"
+        return 1
+    elif printf '%s' "$APT_LAST_OUT" | grep -qE "dpkg was interrupted|Errors were encountered while processing:|Sub-process /usr/bin/dpkg returned an error"; then
         warn "Reparaturversuch: dpkg --configure -a"
         dpkg --configure -a --force-confdef --force-confold || true
     elif printf '%s' "$APT_LAST_OUT" | grep -qE "Unmet dependencies|unmet dependencies|apt --fix-broken install|-f install"; then

@@ -2,6 +2,15 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.17.2 – 06.10.2026
+
+### Behoben
+
+- Updates: „Packages were downgraded and -y was used without --allow-downgrades“ ließ das ganze Update
+  scheitern. Jetzt werden nur die betroffenen Pakete übersprungen, nicht heruntergestuft. Alle anderen
+  Updates werden installiert, und das Protokoll nennt je Paket die Ursache (APT-Pinning oder Quelle der
+  älteren Version).
+
 ## 1.17.1 – 06.10.2026
 
 ### Behoben
