@@ -2,6 +2,19 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.17.3 – 06.10.2026
+
+### Neu
+
+- Mailcow: Bestehende Postfächer lassen sich bearbeiten: **Größe** (MB) und Anzeigename (Vollzugriff).
+  Überschreitet die Größe die Grenzen der Domain, sagt die Meldung das verständlich, mit dem Maximum.
+
+### Behoben
+
+- Hetzner: Der Traffic eines vSwitches zeigte „Hetzner Robot: Not Found“. Für vSwitch-Netze liefert die
+  Robot-API keine Traffic-Werte. Die Seite sagt das jetzt, statt einen Fehler zu zeigen. Die vSwitch-Netze
+  werden getrennt abgefragt, damit der Traffic der Server davon nie betroffen ist.
+
 ## 1.17.2 – 06.10.2026
 
 ### Behoben

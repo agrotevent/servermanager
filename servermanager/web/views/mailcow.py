@@ -204,6 +204,7 @@ def _publish_args(mc: MailcowServer) -> dict:
 
 
 ACTIONS = {"mb_add": LEVEL_FULL, "mb_delete": LEVEL_FULL, "mb_active": LEVEL_OPERATE, "mb_password": LEVEL_FULL,
+           "mb_edit": LEVEL_FULL,
            "alias_add": LEVEL_FULL, "alias_delete": LEVEL_FULL}
 
 
@@ -229,6 +230,11 @@ def do(mc_id: int):
         elif action == "mb_active":
             client.set_mailbox(address, active="1" if f.get("active") == "1" else "0")
             msg = f"{address} {'aktiviert' if f.get('active') == '1' else 'deaktiviert'}."
+        elif action == "mb_edit":
+            quota = int(f.get("quota") or 0)
+            client.edit_mailbox(address, quota, f.get("name", ""))
+            address = f"{address}: {quota} MB, Name „{f.get('name', '').strip()}“"
+            msg = f"Postfach {address.split(':')[0]} geändert: Größe {quota} MB" + (" (unbegrenzt)" if quota == 0 else "") + "."
         elif action == "mb_password":
             pw = security.generate_password()
             client.set_password(address, pw)

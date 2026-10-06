@@ -139,7 +139,7 @@ gelöscht.
 |---|---|---|---|
 | Lesen | Postfächer, Aliase, Domains ansehen | Anwendungen und Benutzer ansehen | Liste ansehen |
 | Bedienen | Postfach aktivieren/deaktivieren | Benutzer aktivieren/deaktivieren (keine Admin-Konten) | sperren/entsperren, Quota |
-| Vollzugriff | Postfächer und Aliase anlegen/löschen, neues Passwort | Benutzer anlegen/löschen, neues Passwort (Admin-Konten nur für Administratoren des Servermanagers), Anwendungen verbinden/trennen (dazu Vollzugriff auf die Anwendung) | anlegen, löschen, neues Passwort |
+| Vollzugriff | Postfächer und Aliase anlegen/löschen, Postfach bearbeiten (Größe, Name), neues Passwort | Benutzer anlegen/löschen, neues Passwort (Admin-Konten nur für Administratoren des Servermanagers), Anwendungen verbinden/trennen (dazu Vollzugriff auf die Anwendung) | anlegen, löschen, neues Passwort |
 
 Ein neues Passwort ist eine Kontoübernahme (wer es setzt, kann sich als dieser Benutzer anmelden) und
 erfordert deshalb überall Vollzugriff.

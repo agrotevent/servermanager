@@ -282,3 +282,28 @@ def test_vswitch(app, db, mock, account):
         st.hz_rdns.pop("2a01:4f8:fff0:53::10", None)
         db.delete(pve)
         db.commit()
+
+
+def test_vswitch_without_traffic_data(app, db, mock, account):
+    """Robot answers 'Not Found' for vSwitch nets: the servers keep their traffic, the vSwitch says why."""
+    from servermanager import integrations
+    from servermanager.models import HetznerServer
+    st = mock.state
+    st.hz_notfound_subnets = {"88.99.200.0", "2a01:4f8:fff0:53::"}
+    try:
+        integrations.poll(db, account)
+        db.commit()
+        assert account.status == "online", account.status_message
+        assert not account.data["traffic_error"]
+        srv = db.query(HetznerServer).filter_by(account_id=account.id, number=321).one()
+        assert srv.info["traffic"]["total"]["sum"] == pytest.approx(3 * (2 * 11.5 + 1.5))
+        v = account.data["vswitches"][0]
+        assert "keine Traffic-Werte" in v["traffic"]["error"] and v["traffic"]["total"]["sum"] == 0
+        make_user(db, "hz-vs-nf", "admin")
+        c = login(app, "hz-vs-nf")
+        page = c.get(f"/hetzner/account/{account.id}/vswitch/50301").text
+        assert "keine Traffic-Werte" in page and "Not Found" not in page
+        page = c.get(f"/hetzner/account/{account.id}/vswitch/50301?m=2026-02").text  # live query, other month
+        assert "keine Traffic-Werte" in page and "Not Found" not in page
+    finally:
+        st.hz_notfound_subnets = set()

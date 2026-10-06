@@ -34,7 +34,9 @@ Der Servermanager steuert und wertet dedizierte Hetzner-Server über den **Robot
   - VLAN und angebundene Server samt Status der Anbindung, mit Warnung bei „fehlgeschlagen“.
   - Öffentliche IP-Netze des vSwitches und gekoppelte Cloud-Netze.
   - PTR-Einträge in diesen Netzen, setzbar mit *Ändern* am Konto.
-  - Traffic der vSwitch-Netze für Monat und Jahr.
+  - Traffic der vSwitch-Netze für Monat und Jahr, soweit Hetzner dafür Werte liefert. Für viele
+    vSwitch-Netze liefert die Robot-API keine. Dann steht das als Hinweis auf der Seite, und der
+    Traffic der Server ist davon nicht betroffen.
   - Proxmox-Server mit demselben VLAN werden verlinkt.
   - Auf der Seite eines Servers stehen seine vSwitches als Übersicht.
 

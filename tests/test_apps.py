@@ -70,10 +70,19 @@ def test_mailcow_client(mock):
     mc = Mailcow(f"https://127.0.0.1:{mock.port}", m.MC_KEY, fingerprint=mock.fingerprint)
     assert mc.version() == "2025-03" and mc.domains()[0]["domain_name"] == "example.com"
     assert mc.add_mailbox("Max.Muster", "example.com", "Max", "Geheim-12345", 2048) == "max.muster@example.com"
-    with pytest.raises(MailcowError, match="object_exists"):
+    with pytest.raises(MailcowError, match="Existiert bereits"):
         mc.add_mailbox("max.muster", "example.com", "Max", "Geheim-12345")
     with pytest.raises(MailcowError):
         mc.add_mailbox("x", "unknown.org", "X", "Geheim-12345")
+    mc.edit_mailbox("max.muster@example.com", 5120, "Max Muster")
+    box = next(b for b in mock.state.mc_mailboxes if b["username"] == "max.muster@example.com")
+    assert box["quota"] == 5120 * 1024 * 1024 and box["name"] == "Max Muster"
+    with pytest.raises(MailcowError, match="Limit je Postfach der Domain \\(max. 10240 MB\\)"):
+        mc.edit_mailbox("max.muster@example.com", 20480, "Max")
+    with pytest.raises(MailcowError, match="Existiert bereits: max.muster@example.com"):
+        mc.add_mailbox("max.muster", "example.com", "Max", "Geheim-12345")
+    with pytest.raises(MailcowError, match="Ungültige Größe"):
+        mc.edit_mailbox("max.muster@example.com", -1, "Max")
     mc.set_mailbox("max.muster@example.com", active="0")
     assert next(b for b in mock.state.mc_mailboxes if b["username"] == "max.muster@example.com")["active"] == 0
     mc.delete_mailbox("max.muster@example.com")
@@ -611,3 +620,29 @@ def test_pangolin_poll_remembers_published_domains(db, mock, apps):
     assert integrations.published_via_pangolin(db, "WEBMAIL.example.com") == "pg-apps"  # DNS ignores case
     assert integrations.published_via_pangolin(db, "webmail.example.com") == "pg-apps"
     assert integrations.published_via_pangolin(db, "mail.example.com") is None
+
+
+def test_mailcow_edit_mailbox_size(app, db, mock, apps):
+    from servermanager.models import LEVEL_OPERATE, IntegrationAccess
+    from tests.test_web import login, make_user
+    mc = apps["mc"]
+    make_user(db, "mc-edit-admin", "admin")
+    c = login(app, "mc-edit-admin")
+    page = c.get(f"/mailcow/{mc.id}?tab=mailboxes").text
+    assert "Bearbeiten: Größe und Name" in page and 'value="1024"' in page  # current size of info@ in MB
+    r = c.post(f"/mailcow/{mc.id}/do", data={"action": "mb_edit", "address": "info@example.com", "quota": "4096",
+                                             "name": "Info-Postfach", "csrf_token": c.csrf}, follow_redirects=True)
+    assert "Größe 4096 MB" in r.text
+    box = next(b for b in mock.state.mc_mailboxes if b["username"] == "info@example.com")
+    assert box["quota"] == 4096 * 1024 * 1024 and box["name"] == "Info-Postfach"
+    r = c.post(f"/mailcow/{mc.id}/do", data={"action": "mb_edit", "address": "info@example.com", "quota": "50000",
+                                             "name": "Info", "csrf_token": c.csrf}, follow_redirects=True)
+    assert "Limit je Postfach der Domain (max. 10240 MB)" in r.text
+    u = make_user(db, "mc-edit-op")
+    db.add(IntegrationAccess(user_id=u.id, kind="mailcow", obj_id=mc.id, level=LEVEL_OPERATE))
+    db.commit()
+    op = login(app, "mc-edit-op")
+    assert "Bearbeiten: Größe und Name" not in op.get(f"/mailcow/{mc.id}?tab=mailboxes").text
+    assert op.post(f"/mailcow/{mc.id}/do", data={"action": "mb_edit", "address": "info@example.com", "quota": "1",
+                                                 "csrf_token": op.csrf}).status_code == 403
+    box["quota"], box["name"] = 1073741824, "Info"

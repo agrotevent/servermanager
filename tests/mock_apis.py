@@ -156,6 +156,7 @@ class State:
         self.hz_rdns = {"88.99.10.1": "pve-fsn.example.com", "2a01:4f8:10:1::2": "mail.example.com"}
         self.hz_resets: list[tuple[int, str]] = []
         self.hz_reject_subnets: set[str] = set()      # subnets the traffic query refuses
+        self.hz_notfound_subnets: set[str] = set()    # subnets without traffic data (404 NOT_FOUND)
         self.hz_vswitches = [{"id": 50301, "name": "pve-lan", "vlan": 4001, "cancelled": False,
                               "server": [{"server_number": 321, "server_ip": "88.99.10.1",
                                           "server_ipv6_net": "2a01:4f8:10:1::", "status": "ready"},
@@ -922,6 +923,12 @@ class MockApp:
                         m["active"] = int(attr["active"])
                     if "password" in attr:
                         m["_password"] = attr["password"]
+                    if "quota" in attr:
+                        if int(attr["quota"]) > 10240:
+                            return danger(["mailbox_quota_exceeded", "10240"])
+                        m["quota"] = int(attr["quota"]) * 1024 * 1024
+                    if "name" in attr:
+                        m["name"] = attr["name"]
             return ok(["mailbox_modified"])
         if path == "delete/mailbox":
             s.mc_mailboxes = [m for m in s.mc_mailboxes if m["username"] not in body]
@@ -1153,6 +1160,8 @@ class MockApp:
             q = {"type": f.get("type"), "from": f.get("from"), "to": f.get("to"), "ip": f.getlist("ip[]"),
                  "subnet": f.getlist("subnet[]"), "single_values": f.get("single_values")}
             s.hz_traffic_queries.append(q)
+            if any(n in s.hz_notfound_subnets for n in q["subnet"]):
+                return err(404, "NOT_FOUND", "Not Found")
             bad = [n for n in q["subnet"] if "/" in n or n in s.hz_reject_subnets]
             if bad:  # Robot wants the bare network address and refuses some subnets
                 return _json({"error": {"status": 400, "code": "INVALID_INPUT", "message": "invalid input",

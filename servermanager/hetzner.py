@@ -223,10 +223,14 @@ class Robot:
             return {}
         # Robot expects the network address of a subnet without the prefix length ("2a01:4f8:1:2::")
         nets = sorted({s.split("/")[0] for s in subnets})
+        def refused(exc: RobotError) -> bool:
+            # Robot rejects subnets it has no traffic for (e.g. vSwitch nets) as invalid input or "not found"
+            return (exc.code == "INVALID_INPUT" and "subnet" in str(exc)) or exc.code.endswith("NOT_FOUND") \
+                or exc.status == 404
         try:
             return self._traffic(kind, start, end, ips, nets)
         except RobotError as exc:
-            if exc.code != "INVALID_INPUT" or "subnet" not in str(exc) or not nets:
+            if not nets or not refused(exc):
                 raise
         # a subnet is not accepted (e.g. not queryable for this product): keep the IPs, add the
         # subnets one by one and skip those Hetzner rejects
@@ -235,7 +239,7 @@ class Robot:
             try:
                 data.update(self._traffic(kind, start, end, [], [net]))
             except RobotError as exc:
-                if exc.code != "INVALID_INPUT":
+                if not refused(exc):
                     raise
                 self.skipped_subnets.append(net)
         return data

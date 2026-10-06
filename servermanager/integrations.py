@@ -213,6 +213,10 @@ def hetzner_client(a: HetznerAccount, timeout: int = 25) -> Robot:
                  base=a.api_url or hetzner.API_URL, fingerprint=a.fingerprint or "", timeout=timeout)
 
 
+VSWITCH_NO_TRAFFIC = ("Hetzner liefert für die Netze dieses vSwitches keine Traffic-Werte über die Robot-API "
+                      "(nur für Server-IPs und deren Subnetze)")
+
+
 def hetzner_sync(db: Session, a: HetznerAccount, today=None) -> tuple[dict, list[dict]]:
     """Servers, IPs, subnets, reverse DNS, reset options and the traffic of the current month."""
     from datetime import date
@@ -249,8 +253,6 @@ def hetzner_sync(db: Session, a: HetznerAccount, today=None) -> tuple[dict, list
         i, n = hetzner.addresses_of(s)
         all_ips += i
         all_nets += n
-    for v in vswitches:
-        all_nets += [f"{n['ip']}/{n['mask']}" for n in v["subnets"]]
     try:
         traffic = robot.traffic("month", start, end, all_ips, all_nets)
         traffic_error = ""
@@ -311,9 +313,21 @@ def hetzner_sync(db: Session, a: HetznerAccount, today=None) -> tuple[dict, list
     # vSwitches: networks with their PTR entries and traffic, connection state of the servers
     names = {int(s["server_number"]): s.get("server_name") or f"#{s['server_number']}" for s in servers}
     for v in vswitches:
+        # queried separately: Hetzner may have no traffic data for vSwitch nets, which must not cost the
+        # servers their traffic figures
         keys = [f"{n['ip']}/{n['mask']}" for n in v["subnets"]]
-        days, total = hetzner.sum_series(traffic, keys)
-        v["traffic"] = {"month": start[:7], "days": days, "total": total}
+        v_error, v_data = "", {}
+        if keys:
+            try:
+                v_data = robot.traffic("month", start, end, [], keys)
+                if robot.skipped_subnets and len(robot.skipped_subnets) == len(keys):
+                    v_error = VSWITCH_NO_TRAFFIC
+                elif robot.skipped_subnets:
+                    v_error = "Ohne " + ", ".join(robot.skipped_subnets) + " – " + VSWITCH_NO_TRAFFIC
+            except RobotError as exc:
+                v_error = str(exc)
+        days, total = hetzner.sum_series(v_data, keys)
+        v["traffic"] = {"month": start[:7], "days": days, "total": total, "error": v_error}
         v["rdns"] = sorted(({"ip": ip, "ptr": ptr} for ip, ptr in rdns.items() if hetzner.in_nets(ip, v["subnets"])),
                            key=lambda r: (":" in r["ip"], r["ip"]))
         for x in v["servers"]:

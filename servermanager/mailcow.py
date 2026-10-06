@@ -101,6 +101,12 @@ class Mailcow:
     def set_mailbox(self, address: str, **attr) -> None:
         self.request("POST", "edit/mailbox", {"items": [address], "attr": {k: str(v) for k, v in attr.items()}})
 
+    def edit_mailbox(self, address: str, quota_mb: int, name: str) -> None:
+        """Size (MB, 0 = unlimited if the domain allows it) and display name of an existing mailbox."""
+        if not 0 <= int(quota_mb) <= 10_000_000:
+            raise MailcowError("Ungültige Größe")
+        self.set_mailbox(address, quota=int(quota_mb), name=(name or "").strip()[:100])
+
     def set_password(self, address: str, password: str) -> None:
         self.set_mailbox(address, password=password, password2=password)
 
@@ -136,10 +142,26 @@ def _list(data: Any) -> list[dict]:
     return []
 
 
+# Mailcow answers with language keys plus arguments: readable text and how to show the first argument
+MESSAGES = {
+    "mailbox_quota_exceeded": ("Die Größe übersteigt das Limit je Postfach der Domain", " (max. {} MB)"),
+    "mailbox_quota_left_exceeded": ("Nicht genug freies Kontingent in der Domain", " (noch {} MB frei)"),
+    "mailbox_quota_exceeds_domain_quota": ("Die Größe übersteigt das Gesamtkontingent der Domain", ""),
+    "quota_not_0_not_numeric": ("Die Größe muss eine Zahl sein", ""),
+    "object_exists": ("Existiert bereits", ": {}"),
+    "domain_not_found": ("Domain nicht gefunden", ": {}"),
+    "access_denied": ("Zugriff verweigert", ""),
+}
+
+
 def _msg(item: Any) -> str:
-    if isinstance(item, dict):
-        m = item.get("msg")
-        if isinstance(m, list):
-            return " ".join(str(x) for x in m)
-        return str(m or item.get("message") or item)
-    return str(item)[:300]
+    if not isinstance(item, dict):
+        return str(item)[:300]
+    m = item.get("msg")
+    parts = [str(x) for x in m] if isinstance(m, list) else [str(m)] if m else []
+    if parts and parts[0] in MESSAGES:
+        text, extra = MESSAGES[parts[0]]
+        return text + (extra.format(parts[1]) if extra and len(parts) > 1 else "")
+    if parts:
+        return " ".join(parts)
+    return str(item.get("message") or item)

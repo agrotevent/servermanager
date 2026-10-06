@@ -174,7 +174,8 @@ def _traffic_chart(series: dict, period: str, year: int, month: int):
                       fmt_bytes, timeframe="year" if period == "year" else "month", tz=timezone.utc)
 
 
-def _period_traffic(acc: HetznerAccount, ips: list[str], nets: list[str], cached: dict) -> dict:
+def _period_traffic(acc: HetznerAccount, ips: list[str], nets: list[str], cached: dict,
+                    no_data: str = "Hetzner liefert für dieses Subnetz keine Werte") -> dict:
     """Traffic for the period chosen in the request: the current month from the cache, others live."""
     today = date.today()
     period = request.args.get("period", "month")
@@ -198,9 +199,11 @@ def _period_traffic(acc: HetznerAccount, ips: list[str], nets: list[str], cached
                 else:
                     data = robot.traffic("month", *hetzner.month_range(year, month, today), ips, nets)
                 days, total = hetzner.sum_series(data, ips + nets)
+                skipped = robot.skipped_subnets
+                all_skipped = bool(skipped) and not ips and len(skipped) == len(set(n.split("/")[0] for n in nets))
                 traffic = {"days": days, "total": total, "limit_gb": traffic.get("limit_gb"),
-                           "error": ("Ohne " + ", ".join(robot.skipped_subnets) + " – Hetzner liefert für dieses "
-                                     "Subnetz keine Werte") if robot.skipped_subnets else ""}
+                           "error": no_data if all_skipped else
+                           ("Ohne " + ", ".join(skipped) + " – " + no_data) if skipped else ""}
             except RobotError as exc:
                 error, traffic = str(exc), {}
     months = [f"{y:04d}-{m:02d}" for y, m in
@@ -242,7 +245,7 @@ def vswitch(aid: int, vid: int):
     from ...models import KIND_PVE, PveServer
     acc, v = _vswitch(aid, vid, LEVEL_VIEW)
     nets = [f"{n['ip']}/{n['mask']}" for n in v.get("subnets") or []]
-    ctx = _period_traffic(acc, [], nets, v.get("traffic") or {})
+    ctx = _period_traffic(acc, [], nets, v.get("traffic") or {}, no_data=integrations.VSWITCH_NO_TRAFFIC)
     rows = {r.number: r for r in g.db.execute(select(HetznerServer).where(HetznerServer.account_id == acc.id)).scalars()}
     pves = [p for p in g.db.execute(select(PveServer).where(PveServer.vswitch_vlan == v.get("vlan"))).scalars()
             if common.can(KIND_PVE, p.id, LEVEL_VIEW)]
