@@ -43,7 +43,8 @@ def settings_page():
     values = {k: settings.get(g.db, k) for keys in SECTIONS.values() for k in keys}
     tzs = sorted(t for t in available_timezones() if "/" in t and not t.startswith(("Etc/", "SystemV/")))
     from ... import branding
-    brand_v = {k: settings.get(g.db, f"brand.{k}") for k in ("primary", "sidebar", "accent", "font", "logo_only")}
+    brand_v = {k: settings.get(g.db, f"brand.{k}") for k in ("primary", "sidebar", "accent", "font", "logo_only",
+                                                            "default_logo")}
     brand_v["has_logo"] = bool(settings.get(g.db, "brand.logo_data"))
     brand_v["has_logo_light"] = bool(settings.get(g.db, "brand.logo_light_data"))
     brand_v["has_font"] = bool(settings.get(g.db, "brand.font_data"))
@@ -86,7 +87,8 @@ def appearance_save():
     if f.get("reset"):
         for key in ("brand.primary", "brand.sidebar", "brand.accent"):
             settings.set(g.db, key, "")
-        settings.set(g.db, "brand.font", "system")
+        settings.set(g.db, "brand.font", "setnetz")
+        settings.set(g.db, "brand.default_logo", True)
         settings.set(g.db, "brand.logo_only", False)
         for kind in branding.KINDS:
             branding.remove(g.db, kind)
@@ -105,7 +107,7 @@ def appearance_save():
             values[key] = branding.check_hex(raw, label)
         except branding.BrandError as exc:
             errors.append(str(exc))
-    font = f.get("brand_font") if f.get("brand_font") in branding.FONT_LABELS else "system"
+    font = f.get("brand_font") if f.get("brand_font") in branding.FONT_LABELS else "setnetz"
     labels = {"logo": "Logo", "logo_light": "Logo für helle Hintergründe", "font": "Schrift"}
     for kind in branding.KINDS:
         upload = request.files.get(f"brand_{kind}_file")
@@ -127,6 +129,7 @@ def appearance_save():
         settings.set(g.db, f"brand.{key}", value)
     settings.set(g.db, "brand.font", font)
     settings.set(g.db, "brand.logo_only", bool(f.get("brand_logo_only")))
+    settings.set(g.db, "brand.default_logo", bool(f.get("brand_default_logo")))
     warn = []
     if values.get("primary") and branding.contrast(values["primary"], "#ffffff") < 3:
         warn.append("Die Hauptfarbe ist sehr hell – Links und Rahmen sind auf weißem Grund schlecht lesbar.")

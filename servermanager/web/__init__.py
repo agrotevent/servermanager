@@ -6,7 +6,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from flask import Flask, abort, g, render_template, request
+from flask import Flask, abort, g, render_template, request, url_for
 from markupsafe import Markup, escape
 from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -95,8 +95,11 @@ def create_app(testing: bool = False) -> Flask:
             if settings.get(db, "brand.logo_data"):
                 brand["logo"] = f"/branding/logo?v={branding.asset_version(db, 'logo')}"
                 brand["logo_only"] = bool(settings.get(db, "brand.logo_only"))
-            if settings.get(db, "brand.logo_light_data"):
-                brand["logo_light"] = f"/branding/logo_light?v={branding.asset_version(db, 'logo_light')}"
+                if settings.get(db, "brand.logo_light_data"):
+                    brand["logo_light"] = f"/branding/logo_light?v={branding.asset_version(db, 'logo_light')}"
+            elif settings.get(db, "brand.default_logo"):
+                brand["logo"] = url_for("static", filename="img/setnetz-logo-negativ.svg")
+                brand["logo_light"] = url_for("static", filename="img/setnetz-logo.svg")
         return {
             "brand": brand,
             "csrf_token": csrf_token, "can": can, "user": g.get("user"), "site_name": site,

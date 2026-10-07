@@ -112,3 +112,29 @@ def test_light_logo_on_the_login_card(app, db):
         for k in ("logo", "logo_light"):
             branding.remove(db, k)
         db.commit()
+
+
+def test_setnetz_default_design(app, db):
+    """Without own settings the Setnetz CI applies: bundled logos and fonts, no external sources."""
+    make_user(db, "ci-admin", "admin")
+    c = login(app, "ci-admin")
+    page = c.get("/").text
+    assert "/static/img/setnetz-logo-negativ.svg" in page
+    login_page = app.test_client().get("/login").text
+    assert "/static/img/setnetz-logo.svg" in login_page
+    for path in ("/static/img/setnetz-logo.svg", "/static/img/setnetz-logo-negativ.svg",
+                 "/static/fonts/ibm-plex-sans-latin-400-normal.woff2",
+                 "/static/fonts/barlow-condensed-latin-700-normal.woff2"):
+        assert app.test_client().get(path).status_code == 200, path
+    css = app.test_client().get("/static/css/app.css").text
+    assert "#1f6f94" in css and "#0e3a52" in css and "https://" not in css and "gradient(135deg" not in css
+    try:
+        settings.set(db, "brand.default_logo", False)
+        db.commit()
+        assert "setnetz-logo" not in c.get("/").text
+        settings.set(db, "brand.font", "arial")
+        assert "--font-head: var(--font)" in branding.css(db)
+    finally:
+        settings.set(db, "brand.default_logo", True)
+        settings.set(db, "brand.font", settings.DEFAULTS["brand.font"])
+        db.commit()

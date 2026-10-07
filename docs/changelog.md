@@ -2,6 +2,21 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.19.0 – 07.10.2026
+
+### Geändert
+
+- **Setnetz-CI als Standard-Design:**
+  - Farben aus dem Setnetz-Designsystem: brand-blue als Aktionsfarbe, brand-navy für Seitenleiste und
+    Anmeldeseite, brand-sky als Akzent auf Navy.
+  - Schriften: IBM Plex Sans, Überschriften in Barlow Condensed (Großbuchstaben), Beschriftungen in
+    IBM Plex Mono. Die Schriften werden mitgeliefert, es gibt keine externen Quellen.
+  - Flache Flächen ohne Verläufe und Schatten, Radien 4/6 px.
+  - Setnetz-Logo in der Seitenleiste (negativ) und auf der Anmeldekarte (positiv).
+  - Dunkelmodus in Navy-Tönen.
+- Unter *Einstellungen → Erscheinungsbild* lassen sich Farben, Schrift und Logo weiterhin überschreiben.
+  Das Setnetz-Logo lässt sich abschalten.
+
 ## 1.18.0 – 07.10.2026
 
 ### Neu

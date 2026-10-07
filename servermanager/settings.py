@@ -19,7 +19,8 @@ DEFAULTS: dict[str, Any] = {
     "brand.primary": "",
     "brand.sidebar": "",
     "brand.accent": "",
-    "brand.font": "system",
+    "brand.font": "setnetz",
+    "brand.default_logo": True,        # Setnetz logos as long as no own logo is uploaded
     "brand.logo_only": False,
     "brand.logo_data": "",
     "brand.logo_type": "",

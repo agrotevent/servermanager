@@ -61,18 +61,28 @@ Die Änderungen je Version stehen im [Änderungsprotokoll](changelog.md).
 
 ## Erscheinungsbild (Corporate Design)
 
-Unter *Einstellungen → Erscheinungsbild* passen Administratoren die Oberfläche an das Corporate Design
-an:
+Standardmäßig erscheint die Oberfläche im Setnetz-Corporate-Design:
+
+- **Farben:** brand-blue `#1f6f94` für Buttons und Links, brand-navy `#0e3a52` für Seitenleiste und
+  Anmeldeseite, brand-sky `#8fcbe6` als Akzent auf Navy.
+- **Schriften:** IBM Plex Sans für Text, Barlow Condensed in Großbuchstaben für Überschriften, IBM Plex
+  Mono für Beschriftungen. Sie werden mitgeliefert (SIL Open Font License).
+- **Logo:** das Setnetz-Logo, negativ in der Seitenleiste und positiv auf der Anmeldekarte.
+
+Statusfarben (Fehler, Warnung, OK) bleiben erhalten, damit Störungen auffallen.
+
+Unter *Einstellungen → Erscheinungsbild* passen Administratoren das Design an:
 
 - **Hauptfarbe:** Buttons, Links, aktiver Menüpunkt. Hover-, Hell- und Dunkel-Varianten werden
   automatisch abgeleitet. Die Schriftfarbe auf Buttons wird nach Kontrast gewählt.
 - **Seitenleiste:** Hintergrund von Menü und Anmeldeseite. Die Textfarben passen sich an, helle und
   dunkle Seitenleisten funktionieren beide.
-- **Akzentfarbe** (optional): zweite Farbe im Standard-Logo.
+- **Akzentfarbe** (optional): Symbol ohne Logo und Linie über der Anmeldekarte.
 - **Logo:** SVG, PNG, WebP oder JPEG. Es erscheint in der Seitenleiste, auf der Anmeldeseite und als
   Browser-Symbol, wahlweise ohne den Namen daneben. Für die weiße Anmeldekarte gibt es optional ein
-  zweites Logo für helle Hintergründe, falls das Hauptlogo für eine dunkle Seitenleiste weiß ist.
-- **Schrift:** Systemschrift, Arial/Helvetica, Verdana, Georgia oder eine eigene Schriftdatei (WOFF2,
+  zweites Logo für helle Hintergründe, falls das Hauptlogo für eine dunkle Seitenleiste weiß ist. Ohne
+  eigenes Logo wird das Setnetz-Logo gezeigt. Das lässt sich abschalten.
+- **Schrift:** Setnetz (Standard), Systemschrift, Arial/Helvetica, Verdana, Georgia oder eine eigene Schriftdatei (WOFF2,
   WOFF, TTF, OTF).
 
 Farben gibst du als `#RRGGBB` ein oder wählst sie mit dem Farbwähler. Logo und Schrift liegen in der

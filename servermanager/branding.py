@@ -21,12 +21,14 @@ FONT_TYPES = {"font/woff2": "woff2", "font/woff": "woff", "font/ttf": "ttf", "fo
 MAX_LOGO = 512 * 1024
 MAX_FONT = 2 * 1024 * 1024
 FONT_STACKS = {
+    "setnetz": '"IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif',
     "system": 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
     "arial": 'Arial, "Helvetica Neue", Helvetica, sans-serif',
     "verdana": "Verdana, Geneva, sans-serif",
     "georgia": "Georgia, \"Times New Roman\", serif",
 }
-FONT_LABELS = {"system": "Systemschrift (Standard)", "arial": "Arial / Helvetica", "verdana": "Verdana",
+FONT_LABELS = {"setnetz": "Setnetz: IBM Plex Sans, Überschriften Barlow Condensed (Standard)",
+               "system": "Systemschrift", "arial": "Arial / Helvetica", "verdana": "Verdana",
                "georgia": "Georgia (Serifen)", "custom": "Eigene Schriftdatei"}
 
 
@@ -82,7 +84,7 @@ def css(db: Session) -> str:
     primary = settings.get(db, "brand.primary") or ""
     sidebar = settings.get(db, "brand.sidebar") or ""
     accent = settings.get(db, "brand.accent") or ""
-    font = settings.get(db, "brand.font") or "system"
+    font = settings.get(db, "brand.font") or "setnetz"
     light, dark, extra = [], [], []
     if HEX_RE.match(primary):
         on = on_color(primary)
@@ -108,9 +110,9 @@ def css(db: Session) -> str:
     if font == "custom" and settings.get(db, "brand.font_data"):
         extra.append("@font-face { font-family: \"SM Brand\"; src: url(\"/branding/font?v=%s\"); "
                      "font-display: swap; }" % asset_version(db, "font"))
-        light.append(f"--font: \"SM Brand\", {FONT_STACKS['system']}")
-    elif font in FONT_STACKS and font != "system":
-        light.append(f"--font: {FONT_STACKS[font]}")
+        light += [f"--font: \"SM Brand\", {FONT_STACKS['system']}", "--font-head: var(--font)"]
+    elif font in FONT_STACKS and font != "setnetz":
+        light += [f"--font: {FONT_STACKS[font]}", "--font-head: var(--font)"]
     if not light:
         return ""
     out = extra + [":root { " + "; ".join(light) + "; }"]

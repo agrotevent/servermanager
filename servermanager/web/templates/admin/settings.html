@@ -25,17 +25,18 @@
       <div class="card-head"><h2>Erscheinungsbild (Corporate Design)</h2></div>
       <form method="post" action="{{ url_for('admin.appearance_save') }}" class="card-body" enctype="multipart/form-data">{{ csrf() }}
         <div class="form-grid">
-          {% for key, label, help in [('primary', 'Hauptfarbe', 'Buttons, Links, aktiver Menüpunkt'), ('sidebar', 'Seitenleiste', 'Hintergrund des Menüs und der Anmeldeseite'), ('accent', 'Akzentfarbe', 'Verlauf im Standard-Logo (optional)')] %}
+          {% for key, label, help in [('primary', 'Hauptfarbe', 'Buttons, Links, aktiver Menüpunkt – Standard: Setnetz brand-blue #1f6f94'), ('sidebar', 'Seitenleiste', 'Menü und Anmeldeseite – Standard: Setnetz brand-navy #0e3a52'), ('accent', 'Akzentfarbe', 'Symbol ohne Logo, Linie über der Anmeldekarte – Standard: logo-blue #2a87b1')] %}
           <div class="field"><label for="f-brand-{{ key }}">{{ label }}</label>
-            <div class="flex" style="gap:6px"><input type="color" value="{{ bv[key] or '#2563eb' }}" data-color-for="f-brand-{{ key }}" style="width:44px;padding:2px">
+            <div class="flex" style="gap:6px"><input type="color" value="{{ bv[key] or {'primary': '#1f6f94', 'sidebar': '#0e3a52', 'accent': '#2a87b1'}[key] }}" data-color-for="f-brand-{{ key }}" style="width:44px;padding:2px">
               <input type="text" id="f-brand-{{ key }}" name="brand_{{ key }}" value="{{ bv[key] or '' }}" placeholder="Standard" class="mono" pattern="#?[0-9a-fA-F]{6}" style="max-width:120px"></div>
             <span class="help">{{ help }}</span></div>
           {% endfor %}
           <div class="field"><label for="f-brand-font">Schrift</label>
-            <select id="f-brand-font" name="brand_font">{% for k, l in font_labels.items() %}<option value="{{ k }}" {{ 'selected' if (bv.font or 'system') == k }}>{{ l }}</option>{% endfor %}</select></div>
+            <select id="f-brand-font" name="brand_font">{% for k, l in font_labels.items() %}<option value="{{ k }}" {{ 'selected' if (bv.font or 'setnetz') == k }}>{{ l }}</option>{% endfor %}</select></div>
           <div class="field full"><label>Logo</label>
             <input type="file" name="brand_logo_file" accept=".svg,.png,.webp,.jpg,.jpeg,image/svg+xml,image/png,image/webp,image/jpeg">
             <span class="help">SVG, PNG, WebP oder JPEG, höchstens 512 KB. Erscheint in der Seitenleiste (passend zu deren Farbe), auf der Anmeldeseite und als Browser-Symbol.{% if bv.has_logo %} Ein Logo ist hinterlegt.{% endif %}</span>
+            <div class="mt-1">{{ checkbox('Setnetz-Logo verwenden, solange kein eigenes Logo hinterlegt ist', 'brand_default_logo', bv.default_logo) }}</div>
             {% if bv.has_logo %}<div class="flex mt-1" style="gap:12px;flex-wrap:wrap">{{ checkbox('Logo entfernen', 'brand_logo_remove', False) }}{{ checkbox('Nur das Logo zeigen (ohne Namen daneben)', 'brand_logo_only', bv.logo_only) }}</div>{% endif %}</div>
           <div class="field full"><label>Logo für helle Hintergründe (optional)</label>
             <input type="file" name="brand_logo_light_file" accept=".svg,.png,.webp,.jpg,.jpeg,image/svg+xml,image/png,image/webp,image/jpeg">
