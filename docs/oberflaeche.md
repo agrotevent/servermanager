@@ -58,3 +58,25 @@ in einem unvollständigen Zustand hinterlassen – danach die Aktion *dpkg/apt r
 
 Diese Hilfe wird mit dem Programm ausgeliefert und bei jedem Update des Servermanagers aktualisiert.
 Die Änderungen je Version stehen im [Änderungsprotokoll](changelog.md).
+
+## Erscheinungsbild (Corporate Design)
+
+Unter *Einstellungen → Erscheinungsbild* passen Administratoren die Oberfläche an das Corporate Design
+an:
+
+- **Hauptfarbe:** Buttons, Links, aktiver Menüpunkt. Hover-, Hell- und Dunkel-Varianten werden
+  automatisch abgeleitet. Die Schriftfarbe auf Buttons wird nach Kontrast gewählt.
+- **Seitenleiste:** Hintergrund von Menü und Anmeldeseite. Die Textfarben passen sich an, helle und
+  dunkle Seitenleisten funktionieren beide.
+- **Akzentfarbe** (optional): zweite Farbe im Standard-Logo.
+- **Logo:** SVG, PNG, WebP oder JPEG. Es erscheint in der Seitenleiste, auf der Anmeldeseite und als
+  Browser-Symbol, wahlweise ohne den Namen daneben. Für die weiße Anmeldekarte gibt es optional ein
+  zweites Logo für helle Hintergründe, falls das Hauptlogo für eine dunkle Seitenleiste weiß ist.
+- **Schrift:** Systemschrift, Arial/Helvetica, Verdana, Georgia oder eine eigene Schriftdatei (WOFF2,
+  WOFF, TTF, OTF).
+
+Farben gibst du als `#RRGGBB` ein oder wählst sie mit dem Farbwähler. Logo und Schrift liegen in der
+Datenbank, sind also im Servermanager-Backup enthalten, und werden vom Servermanager selbst
+ausgeliefert, ohne externe Quellen. SVG-Logos mit Skripten oder eingebetteten Inhalten werden
+abgelehnt. Mit *Auf Standard zurücksetzen* gilt wieder das Standard-Design. Den Namen in der
+Seitenleiste legst du unter *Allgemein → Name* fest.

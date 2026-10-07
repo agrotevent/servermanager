@@ -2,6 +2,20 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.18.0 – 07.10.2026
+
+### Neu
+
+- **Erscheinungsbild (Corporate Design)** unter *Einstellungen*:
+  - Hauptfarbe, Farbe der Seitenleiste und Akzentfarbe; Varianten und Kontraste werden automatisch
+    abgeleitet.
+  - Logo (dazu optional eine Variante für helle Hintergründe) für Seitenleiste, Anmeldeseite und
+    Browser-Symbol.
+  - Schrift, auch als eigene Schriftdatei.
+
+  Alles wird vom Servermanager selbst ausgeliefert und ist im Backup enthalten. Details unter
+  [Oberfläche](oberflaeche.md#erscheinungsbild-corporate-design).
+
 ## 1.17.5 – 06.10.2026
 
 ### Behoben

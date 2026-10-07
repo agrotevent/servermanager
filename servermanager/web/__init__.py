@@ -88,7 +88,17 @@ def create_app(testing: bool = False) -> Flask:
     def _ctx():
         db = g.get("db")
         site = settings.get(db, "general.site_name") if db is not None else "Servermanager"
+        brand = {"css": "", "logo": "", "logo_light": "", "logo_only": False}
+        if db is not None:
+            from .. import branding
+            brand["css"] = branding.css(db)
+            if settings.get(db, "brand.logo_data"):
+                brand["logo"] = f"/branding/logo?v={branding.asset_version(db, 'logo')}"
+                brand["logo_only"] = bool(settings.get(db, "brand.logo_only"))
+            if settings.get(db, "brand.logo_light_data"):
+                brand["logo_light"] = f"/branding/logo_light?v={branding.asset_version(db, 'logo_light')}"
         return {
+            "brand": brand,
             "csrf_token": csrf_token, "can": can, "user": g.get("user"), "site_name": site,
             "version": __version__, "MODULES": MODULES, "TYPE_LABELS": TYPE_LABELS, "LEVELS": LEVELS, "KIND_LEVEL_LABELS": KIND_LEVEL_LABELS,
             "ROLES": ROLES, "STATUSES": STATUSES, "JOB_STATUSES": JOB_STATUSES, "CONNECTIONS": CONNECTIONS,
@@ -214,6 +224,25 @@ def create_app(testing: bool = False) -> Flask:
                wg.bp, users.bp, admin.bp, help.bp, pve.bp, routers.bp, pangolin.bp, optimize.bp, mailcow.bp, sso.bp,
                nextcloud_users.bp, pbx.bp, zabbix.bp, tickets.bp, ispconfig.bp, zammad.bp, easybell.bp, hetzner.bp, hcloud.bp):
         app.register_blueprint(bp)
+
+    @app.get("/branding/<kind>")
+    def branding_file(kind: str):
+        """Logo and font of the corporate design (public: also needed on the login page)."""
+        from flask import Response, abort as _abort
+        from .. import branding
+        if kind not in branding.KINDS:
+            _abort(404)
+        found = branding.load(g.db, kind)
+        if found is None:
+            _abort(404)
+        data, mime = found
+        resp = Response(data, mimetype=mime)
+        resp.headers["Cache-Control"] = "public, max-age=31536000, immutable" if request.args.get("v") \
+            else "no-cache"
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+        if mime == "image/svg+xml":  # never run anything inside an uploaded SVG
+            resp.headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+        return resp
 
     @app.get("/healthz")
     def healthz():

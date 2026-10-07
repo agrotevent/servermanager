@@ -15,6 +15,18 @@ DEFAULTS: dict[str, Any] = {
     "general.timezone": "Europe/Berlin",
     "general.session_hours": 12,
     "general.require_2fa_admin": False,
+    # appearance (corporate design)
+    "brand.primary": "",
+    "brand.sidebar": "",
+    "brand.accent": "",
+    "brand.font": "system",
+    "brand.logo_only": False,
+    "brand.logo_data": "",
+    "brand.logo_type": "",
+    "brand.logo_light_data": "",       # optional logo for light backgrounds (login card)
+    "brand.logo_light_type": "",
+    "brand.font_data": "",
+    "brand.font_type": "",
     # login through the SSO (authentik)
     "login.sso_auto_create": False,      # unknown SSO users are created (role user, no rights)
     "login.sso_group": "",               # only members of this authentik group may log in

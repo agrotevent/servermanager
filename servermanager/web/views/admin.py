@@ -42,8 +42,14 @@ SECTIONS = {
 def settings_page():
     values = {k: settings.get(g.db, k) for keys in SECTIONS.values() for k in keys}
     tzs = sorted(t for t in available_timezones() if "/" in t and not t.startswith(("Etc/", "SystemV/")))
+    from ... import branding
+    brand_v = {k: settings.get(g.db, f"brand.{k}") for k in ("primary", "sidebar", "accent", "font", "logo_only")}
+    brand_v["has_logo"] = bool(settings.get(g.db, "brand.logo_data"))
+    brand_v["has_logo_light"] = bool(settings.get(g.db, "brand.logo_light_data"))
+    brand_v["has_font"] = bool(settings.get(g.db, "brand.font_data"))
     return render_template("admin/settings.html", v=values, sm_pubkey=sshkeys.public_key(), timezones=tzs,
-                           mail_ok=notify.mail_configured(g.db), cfg=get_config())
+                           mail_ok=notify.mail_configured(g.db), cfg=get_config(), bv=brand_v,
+                           font_labels=branding.FONT_LABELS)
 
 
 @bp.post("/settings/<section>")
@@ -69,6 +75,66 @@ def settings_save(section: str):
     g.db.commit()
     flash("Einstellungen gespeichert.", "success")
     return redirect(url_for("admin.settings_page") + f"#{section}")
+
+
+@bp.post("/settings/appearance")
+@admin_required
+def appearance_save():
+    """Corporate design: colours, font, logo (multipart form)."""
+    from ... import branding
+    f = request.form
+    if f.get("reset"):
+        for key in ("brand.primary", "brand.sidebar", "brand.accent"):
+            settings.set(g.db, key, "")
+        settings.set(g.db, "brand.font", "system")
+        settings.set(g.db, "brand.logo_only", False)
+        for kind in branding.KINDS:
+            branding.remove(g.db, kind)
+        audit(g.db, g.user, "settings.appearance", "zurückgesetzt", ip=client_ip())
+        g.db.commit()
+        flash("Erscheinungsbild auf den Standard zurückgesetzt.", "success")
+        return redirect(url_for("admin.settings_page") + "#appearance")
+    errors = []
+    values = {}
+    for key, label in (("primary", "Hauptfarbe"), ("sidebar", "Seitenleiste"), ("accent", "Akzentfarbe")):
+        raw = (f.get(f"brand_{key}") or "").strip()
+        if not raw:
+            values[key] = ""
+            continue
+        try:
+            values[key] = branding.check_hex(raw, label)
+        except branding.BrandError as exc:
+            errors.append(str(exc))
+    font = f.get("brand_font") if f.get("brand_font") in branding.FONT_LABELS else "system"
+    labels = {"logo": "Logo", "logo_light": "Logo für helle Hintergründe", "font": "Schrift"}
+    for kind in branding.KINDS:
+        upload = request.files.get(f"brand_{kind}_file")
+        if upload and upload.filename:
+            try:
+                branding.store(g.db, kind, upload.read(branding.MAX_FONT + 1))
+            except branding.BrandError as exc:
+                errors.append(f"{labels[kind]}: {exc}")
+        elif f.get(f"brand_{kind}_remove"):
+            branding.remove(g.db, kind)
+    if font == "custom" and not settings.get(g.db, "brand.font_data"):
+        errors.append("Für „Eigene Schriftdatei“ eine Schriftdatei (WOFF2, WOFF, TTF oder OTF) hochladen.")
+    if errors:
+        g.db.rollback()
+        for e in errors:
+            flash(e, "danger")
+        return redirect(url_for("admin.settings_page") + "#appearance")
+    for key, value in values.items():
+        settings.set(g.db, f"brand.{key}", value)
+    settings.set(g.db, "brand.font", font)
+    settings.set(g.db, "brand.logo_only", bool(f.get("brand_logo_only")))
+    warn = []
+    if values.get("primary") and branding.contrast(values["primary"], "#ffffff") < 3:
+        warn.append("Die Hauptfarbe ist sehr hell – Links und Rahmen sind auf weißem Grund schlecht lesbar.")
+    audit(g.db, g.user, "settings.appearance", " ".join(f"{k}={v or '-'}" for k, v in values.items()) + f" font={font}",
+          ip=client_ip())
+    g.db.commit()
+    flash("Erscheinungsbild gespeichert." + (" " + " ".join(warn) if warn else ""), "warning" if warn else "success")
+    return redirect(url_for("admin.settings_page") + "#appearance")
 
 
 @bp.post("/settings/mail/test")

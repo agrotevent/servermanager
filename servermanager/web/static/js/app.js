@@ -18,6 +18,18 @@
     }
   });
 
+  // ---------------------------------------------------------------- colour pickers next to #RRGGBB fields
+  document.querySelectorAll("input[type=color][data-color-for]").forEach((picker) => {
+    const text = document.getElementById(picker.dataset.colorFor);
+    if (!text) return;
+    picker.addEventListener("input", () => { text.value = picker.value; });
+    text.addEventListener("input", () => {
+      const v = text.value.trim();
+      const hex = v.startsWith("#") ? v : "#" + v;
+      if (/^#[0-9a-fA-F]{6}$/.test(hex)) picker.value = hex.toLowerCase();
+    });
+  });
+
   // ---------------------------------------------------------------- copy to clipboard
   function copyText(text, btn) {
     const done = () => {

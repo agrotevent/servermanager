@@ -3,7 +3,7 @@
 {% block public %}
 <div class="login-wrap">
   <div class="login-card">
-    <div class="brand"><span class="logo"><svg class="icon"><use href="#i-server"/></svg></span>{{ site_name }}</div>
+    {% set light = True %}{% include "_brand.html" %}
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% for cat, msg in messages %}<div class="alert {{ cat }}">{{ msg }}</div>{% endfor %}
     {% endwith %}

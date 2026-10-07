@@ -1,0 +1,3 @@
+{# light: on a light background (login card) – prefers the logo for light backgrounds #}
+{% set logo = (brand.logo_light or brand.logo) if light else brand.logo %}
+<div class="brand{{ ' has-logo' if logo }}{{ ' logo-only' if logo and brand.logo_only }}">{% if logo %}<img class="brand-logo" src="{{ logo }}" alt="{{ site_name }}">{% else %}<span class="logo"><svg class="icon"><use href="#i-server"/></svg></span>{% endif %}<span class="brand-name">{{ site_name }}</span></div>

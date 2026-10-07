@@ -21,6 +21,36 @@
       </form>
     </div>
 
+    <div class="card" id="appearance">
+      <div class="card-head"><h2>Erscheinungsbild (Corporate Design)</h2></div>
+      <form method="post" action="{{ url_for('admin.appearance_save') }}" class="card-body" enctype="multipart/form-data">{{ csrf() }}
+        <div class="form-grid">
+          {% for key, label, help in [('primary', 'Hauptfarbe', 'Buttons, Links, aktiver Menüpunkt'), ('sidebar', 'Seitenleiste', 'Hintergrund des Menüs und der Anmeldeseite'), ('accent', 'Akzentfarbe', 'Verlauf im Standard-Logo (optional)')] %}
+          <div class="field"><label for="f-brand-{{ key }}">{{ label }}</label>
+            <div class="flex" style="gap:6px"><input type="color" value="{{ bv[key] or '#2563eb' }}" data-color-for="f-brand-{{ key }}" style="width:44px;padding:2px">
+              <input type="text" id="f-brand-{{ key }}" name="brand_{{ key }}" value="{{ bv[key] or '' }}" placeholder="Standard" class="mono" pattern="#?[0-9a-fA-F]{6}" style="max-width:120px"></div>
+            <span class="help">{{ help }}</span></div>
+          {% endfor %}
+          <div class="field"><label for="f-brand-font">Schrift</label>
+            <select id="f-brand-font" name="brand_font">{% for k, l in font_labels.items() %}<option value="{{ k }}" {{ 'selected' if (bv.font or 'system') == k }}>{{ l }}</option>{% endfor %}</select></div>
+          <div class="field full"><label>Logo</label>
+            <input type="file" name="brand_logo_file" accept=".svg,.png,.webp,.jpg,.jpeg,image/svg+xml,image/png,image/webp,image/jpeg">
+            <span class="help">SVG, PNG, WebP oder JPEG, höchstens 512 KB. Erscheint in der Seitenleiste (passend zu deren Farbe), auf der Anmeldeseite und als Browser-Symbol.{% if bv.has_logo %} Ein Logo ist hinterlegt.{% endif %}</span>
+            {% if bv.has_logo %}<div class="flex mt-1" style="gap:12px;flex-wrap:wrap">{{ checkbox('Logo entfernen', 'brand_logo_remove', False) }}{{ checkbox('Nur das Logo zeigen (ohne Namen daneben)', 'brand_logo_only', bv.logo_only) }}</div>{% endif %}</div>
+          <div class="field full"><label>Logo für helle Hintergründe (optional)</label>
+            <input type="file" name="brand_logo_light_file" accept=".svg,.png,.webp,.jpg,.jpeg,image/svg+xml,image/png,image/webp,image/jpeg">
+            <span class="help">Für die weiße Anmeldekarte, z. B. die dunkle Variante, wenn das Hauptlogo für die dunkle Seitenleiste weiß ist. Ohne diese Datei wird das Hauptlogo verwendet.{% if bv.has_logo_light %} Ein Logo ist hinterlegt.{% endif %}</span>
+            {% if bv.has_logo_light %}<div class="mt-1">{{ checkbox('Logo für helle Hintergründe entfernen', 'brand_logo_light_remove', False) }}</div>{% endif %}</div>
+          <div class="field full"><label>Schriftdatei (für „Eigene Schriftdatei“)</label>
+            <input type="file" name="brand_font_file" accept=".woff2,.woff,.ttf,.otf">
+            <span class="help">WOFF2, WOFF, TTF oder OTF, höchstens 2 MB – die Schrift wird vom Servermanager selbst ausgeliefert (keine externen Quellen).{% if bv.has_font %} Eine Schrift ist hinterlegt.{% endif %}</span>
+            {% if bv.has_font %}<div class="mt-1">{{ checkbox('Schrift entfernen', 'brand_font_remove', False) }}</div>{% endif %}</div>
+        </div>
+        <div class="flex mt-1" style="gap:8px"><button class="btn primary">Speichern</button>
+          <button class="btn ghost" name="reset" value="1" formnovalidate data-confirm="Farben, Logo und Schrift auf den Standard zurücksetzen?">Auf Standard zurücksetzen</button></div>
+      </form>
+    </div>
+
     <div class="card" id="checks">
       <div class="card-head"><h2>Prüfungen &amp; Jobs</h2></div>
       <form method="post" action="{{ url_for('admin.settings_save', section='checks') }}" class="card-body">{{ csrf() }}

@@ -5,8 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="csrf-token" content="{{ csrf_token() }}">
   <title>{% block title %}{% endblock %} · {{ site_name }}</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='2' y='3' width='20' height='8' rx='2' fill='%232563eb'/%3E%3Crect x='2' y='13' width='20' height='8' rx='2' fill='%2306b6d4'/%3E%3C/svg%3E">
+  {% if brand.logo %}<link rel="icon" href="{{ brand.logo }}">{% else %}<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='2' y='3' width='20' height='8' rx='2' fill='%232563eb'/%3E%3Crect x='2' y='13' width='20' height='8' rx='2' fill='%2306b6d4'/%3E%3C/svg%3E">{% endif %}
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}?v={{ version }}">
+  {% if brand.css %}<style>{{ brand.css|safe }}</style>{% endif %}
 </head>
 <body {% block body_attrs %}{% endblock %}>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -45,7 +46,7 @@
 <label for="menu-toggle" class="menu-overlay" aria-hidden="true"></label>
 <div class="layout">
   <aside class="sidebar">
-    <div class="brand"><span class="logo"><svg class="icon"><use href="#i-server"/></svg></span>{{ site_name }}</div>
+    {% include "_brand.html" %}
     {% set bp = request.blueprint %}
     <nav class="nav">
       <a href="{{ url_for('main.dashboard') }}" class="{{ 'active' if request.endpoint == 'main.dashboard' }}"><svg class="icon"><use href="#i-home"/></svg>Dashboard</a>
