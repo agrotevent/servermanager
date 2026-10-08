@@ -30,6 +30,7 @@ PAGES: list[tuple[str, str, str]] = [
     ("proxmox", "Proxmox VE über die API", "Infrastruktur"),
     ("routeros", "RouterOS (CHR) über die API", "Infrastruktur"),
     ("pangolin", "Pangolin: Dienste veröffentlichen", "Infrastruktur"),
+    ("dns", "DNS & Domains", "Infrastruktur"),
     ("apps", "Nextcloud, Mailcow & SSO", "Infrastruktur"),
     ("telefonie", "Telefonie: Asterisk & FreePBX", "Infrastruktur"),
     ("easybell", "easybell Cloud Telefonanlage", "Infrastruktur"),

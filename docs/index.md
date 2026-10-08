@@ -17,6 +17,8 @@ einem MikroTik (RouterOS 7)** oder direkt per SSH für bestehende Systeme ohne T
   Konfigurationsanalyse für bestehende Router (NAT/Mangle/Policy-Routing, Firewall, Dienste)
 - **Pangolin**: Dienste aus dem internen Netz per Domain und Ziel-IP:Port veröffentlichen, Newt-Sites
   überwachen – mit zweitem Pangolin-Server als Backup-Weg und Tunnel-Containern auf verschiedenen Hosts
+- **DNS & Domains**: Domains und Zonen bei hosting.de/FRESH Internet und INWX, Einträge für Pangolin
+  und Mail automatisch
 - **Nextcloud, Mailcow & SSO**: Benutzer, Gruppen und Postfächer verwalten (Nextcloud per SSH oder über
   die Schnittstelle), Nextcloud-Konten nach authentik übernehmen, Anwendungen per Klick an authentik
   anbinden; Mailcow mit eigener Public-IP für IMAP/SMTP

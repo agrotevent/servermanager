@@ -76,6 +76,17 @@ keine halbfertigen Einträge zurück.
 machen** (Reiter *DHCP*) – beim Anlegen eines Containers über [Proxmox](proxmox.md) geht das
 automatisch, ebenso die Veröffentlichung.
 
+### DNS-Eintrag
+
+Damit ein veröffentlichter Name erreichbar ist, braucht er einen DNS-Eintrag auf Pangolin. Ist ein
+[DNS-Anbieter](dns.md) angebunden, legt der Servermanager diesen Eintrag beim Veröffentlichen
+automatisch an:
+
+- Ein CNAME auf das **DNS-Ziel veröffentlichter Namen** aus der Pangolin-Verbindung bzw. ein A/AAAA bei
+  einer IP.
+- Ist das Feld leer, zeigt der Eintrag auf die Adresse des Dashboards.
+- Ein passender Platzhalter (`*.zone`) genügt, dann legt er nichts an.
+
 ## Verwalten
 
 Die Detailseite zeigt die Sites (online/offline) und alle veröffentlichten Dienste mit Adresse,

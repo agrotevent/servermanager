@@ -2,6 +2,24 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.22.0 – 08.10.2026
+
+### Neu
+
+- **DNS & Domains** unter Infrastruktur, für die **hosting.de-Plattform** (FRESH Internet unter
+  `secure.fresh-internet.de`, hosting.de, http.net) und **INWX**, auch mit Zwei-Faktor:
+  - Domains mit Status, Laufzeit und Nameservern; Warnung, wenn eine Domain bald ausläuft und nicht
+    verlängert wird.
+  - Zonen und Einträge ansehen, anlegen, bearbeiten (Fenster) und löschen.
+  - Rechte Lesen, Bedienen und Vollzugriff.
+- **DNS für Pangolin:** Beim Veröffentlichen legt der Servermanager den Eintrag in der passenden Zone
+  automatisch an (CNAME bzw. A/AAAA auf das neue *DNS-Ziel* der Pangolin-Verbindung). Eine Prüfung zeigt
+  den Stand aller veröffentlichten Namen, fehlende und abweichende Einträge lassen sich per Klick
+  korrigieren.
+- **Mail-DNS für Mailcow:** Der neue Reiter *DNS* prüft für jede Mail-Domain A des Mail-Hostnamens, MX,
+  SPF, DKIM (Schlüssel aus Mailcow), DMARC sowie Autodiscover/Autoconfig. Fehlende Einträge legst du per
+  Klick an.
+
 ## 1.21.0 – 08.10.2026
 
 ### Neu

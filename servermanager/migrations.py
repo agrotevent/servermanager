@@ -87,6 +87,12 @@ def _v10(conn: Connection) -> None:
     add_column_if_missing(conn, "users", "sso_groups_at", "DATETIME")
 
 
+def _v11(conn: Connection) -> None:
+    # DNS for Pangolin publications: target of the records (host name or IP)
+    if "pangolin_servers" in inspect(conn).get_table_names():
+        add_column_if_missing(conn, "pangolin_servers", "dns_target", "VARCHAR(255) NOT NULL DEFAULT ''")
+
+
 MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     1: lambda conn: None,  # initial schema
     2: _v2,
@@ -98,6 +104,7 @@ MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     8: _v8,
     9: _v9,
     10: _v10,
+    11: _v11,
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 

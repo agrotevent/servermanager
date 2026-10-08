@@ -40,6 +40,8 @@ PG_ORG = "acme"
 HZ_USER, HZ_PASS = "#ws+test", "robot-secret"
 HC_TOKEN, HC_RO_TOKEN = "hc-rw-token", "hc-ro-token"
 NC_USER, NC_PASS = "ncadmin", "Nc-App-Pass-12345"
+HD_KEY = "hd-api-key-123"
+INWX_USER, INWX_PASS, INWX_TOTP = "inwx-api", "Inwx-Pass-123", "JBSWY3DPEHPK3PXP"
 
 EXPORT = (Path(__file__).parent / "data" / "chr_export.rsc").read_text()
 
@@ -210,6 +212,39 @@ class State:
                          "groups": ["Mitarbeiter"], "quota": {"used": 0, "quota": "none"}, "lastLogin": 0,
                          "backend": "Database"}}
         self.nc_passwords: dict[str, str] = {}
+        # ---------------- hosting.de platform (FRESH Internet)
+        self.hd_seq = 100
+        self.hd_zones = {
+            "example.com": {"zoneConfig": {"id": "zc-example", "name": "example.com", "nameUnicode": "example.com",
+                                           "status": "active", "type": "NATIVE", "soaValues": {"ttl": 3600}},
+                            "records": [
+                                {"id": "r1", "name": "example.com", "type": "NS", "content": "ns1.hosting.de", "ttl": 86400},
+                                {"id": "r2", "name": "example.com", "type": "A", "content": "203.0.113.5", "ttl": 3600},
+                                {"id": "r3", "name": "example.com", "type": "TXT", "content": '"v=spf1 mx -all"', "ttl": 3600},
+                                {"id": "r4", "name": "www.example.com", "type": "CNAME", "content": "example.com", "ttl": 3600},
+                                {"id": "r5", "name": "example.com", "type": "MX", "content": "mx.other.net", "priority": 10, "ttl": 3600}]},
+            "setnetz.de": {"zoneConfig": {"id": "zc-setnetz", "name": "setnetz.de", "nameUnicode": "setnetz.de",
+                                          "status": "active", "type": "NATIVE"},
+                           "records": [{"id": "r9", "name": "*.setnetz.de", "type": "CNAME", "content": "pangolin.setnetz.de", "ttl": 3600}]}}
+        self.hd_domains = [
+            {"name": "example.com", "nameUnicode": "example.com", "status": "active", "transferLockEnabled": True,
+             "currentContractPeriodEnd": "2027-03-01T00:00:00Z", "nameservers": [{"name": "ns1.hosting.de"}]},
+            {"name": "alt-domain.de", "nameUnicode": "alt-domain.de", "status": "active", "transferLockEnabled": False,
+             "currentContractPeriodEnd": "2026-10-20T00:00:00Z", "deletionDate": "2026-10-20T00:00:00Z",
+             "nameservers": [{"name": "ns1.hosting.de"}]}]
+        self.hd_updates: list[dict] = []
+        # ---------------- INWX
+        self.inwx_tfa = False
+        self.inwx_sessions: dict[str, bool] = {}    # session id -> unlocked
+        self.inwx_seq = 500
+        self.inwx_zones = {"inwx-kunde.de": [
+            {"id": 401, "name": "inwx-kunde.de", "type": "SOA", "content": "ns.inwx.de hostmaster.inwx.de 2026", "TTL": 86400, "prio": 0},
+            {"id": 402, "name": "inwx-kunde.de", "type": "A", "content": "198.51.100.7", "TTL": 3600, "prio": 0}]}
+        self.inwx_domains = [{"domain": "inwx-kunde.de", "status": "OK", "exDate": "2026-10-30 00:00:00",
+                              "renewalMode": "AUTORENEW", "ns": ["ns.inwx.de", "ns2.inwx.de"], "transferLock": 1}]
+        self.inwx_logins = 0
+        self.mc_dkim = {"example.com": {"dkim_selector": "dkim", "length": "2048",
+                                        "dkim_txt": "v=DKIM1;k=rsa;t=s;s=email;p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtest"}}
         self.ak_codes: dict[str, dict] = {}     # code -> {"user", "challenge", "nonce", "client_id", "redirect"}
         self.ak_tokens: dict[str, dict] = {}    # access token -> user info
 
@@ -290,6 +325,10 @@ class MockApp:
                 resp = self.robot(req, req.path[len("/robot/"):])
             elif req.path.startswith("/application/o/"):
                 resp = self.authentik_oauth(req, req.path[len("/application/o/"):])
+            elif req.path.startswith("/api/dns/v1/json/") or req.path.startswith("/api/domain/v1/json/"):
+                resp = self.hostingde(req, req.path.split("/")[2], req.path.rsplit("/", 1)[-1])
+            elif req.path == "/jsonrpc/":
+                resp = self.inwx(req)
             elif req.path.startswith("/ocs/v2.php/"):
                 resp = self.nextcloud(req, req.path[len("/ocs/v2.php/"):])
             elif req.path == "/zabbix/api_jsonrpc.php":
@@ -299,6 +338,120 @@ class MockApp:
             else:
                 resp = Response("not found", 404)
         return resp(environ, start_response)
+
+    # ------------------------------------------------------------------ hosting.de platform
+    def hostingde(self, req: Request, service: str, method: str) -> Response:
+        s = self.s
+        body = req.get_json(silent=True) or {}
+
+        def ok(resp: Any) -> Response:
+            return _json({"errors": [], "metadata": {}, "warnings": [], "status": "success", "response": resp})
+
+        def err(code: int, text: str, value: str = "") -> Response:
+            return _json({"errors": [{"code": code, "text": text, "value": value}], "status": "error",
+                          "response": None})
+
+        def page(rows: list) -> Response:
+            lim, pg = int(body.get("limit") or 25), int(body.get("page") or 1)
+            total = max(1, -(-len(rows) // lim))
+            return ok({"data": rows[(pg - 1) * lim: pg * lim], "limit": lim, "page": pg, "totalEntries": len(rows),
+                       "totalPages": total, "type": "FindResult"})
+        if body.get("authToken") != HD_KEY:
+            return err(10109, "Authentication failed", "authToken")
+        flt = body.get("filter") or {}
+        if service == "dns" and method == "zoneConfigsFind":
+            return page([z["zoneConfig"] for z in s.hd_zones.values()])
+        if service == "dns" and method == "zonesFind":
+            name = str(flt.get("value") or "").lower()
+            return page([z for n, z in s.hd_zones.items() if not name or n == name])
+        if service == "dns" and method == "zoneUpdate":
+            name = (body.get("zoneConfig") or {}).get("name")
+            z = s.hd_zones.get(name)
+            if z is None:
+                return err(10300, "Zone not found", name or "")
+            s.hd_updates.append(body)
+            recs = z["records"]
+            for d in body.get("recordsToDelete") or []:
+                before = len(recs)
+                recs[:] = [r for r in recs if not (r["id"] == d.get("id") or (
+                    r["name"] == d["name"] and r["type"] == d["type"] and r["content"] == d["content"]))]
+                if len(recs) == before:
+                    return err(10310, "Record not found", d.get("name", ""))
+            for m in body.get("recordsToModify") or []:
+                r = next((x for x in recs if x["id"] == m.get("id")), None)
+                if r is None:
+                    return err(10310, "Record not found", m.get("id", ""))
+                r.update({k: v for k, v in m.items() if k != "id"})
+            for a in body.get("recordsToAdd") or []:
+                if a["type"] == "TXT" and not a["content"].startswith('"'):
+                    return err(10320, "TXT record content must be quoted", a["content"])
+                s.hd_seq += 1
+                recs.append({**a, "id": f"r{s.hd_seq}"})
+            return ok({"zoneConfig": z["zoneConfig"], "records": recs})
+        if service == "domain" and method == "domainsFind":
+            return page(list(s.hd_domains))
+        return err(10000, "Unknown method", method)
+
+    # ------------------------------------------------------------------ INWX (JSON-RPC)
+    def inwx(self, req: Request) -> Response:
+        import pyotp
+        s = self.s
+        body = req.get_json(silent=True) or {}
+        method, params = body.get("method", ""), body.get("params") or {}
+
+        def res(code: int = 1000, msg: str = "Command completed successfully", data: Any = None, cookie: str = ""):
+            r = _json({"code": code, "msg": msg, **({"resData": data} if data is not None else {})})
+            if cookie:
+                r.set_cookie("domrobot", cookie)
+            return r
+        if method == "account.login":
+            if params.get("user") != INWX_USER or params.get("pass") != INWX_PASS:
+                return res(2200, "Authentication error")
+            s.inwx_logins += 1
+            sid = f"sess{s.inwx_logins}"
+            s.inwx_sessions[sid] = not s.inwx_tfa
+            return res(data={"customerId": 1, "accountId": 2, "tfa": "GOOGLE-AUTH" if s.inwx_tfa else "0"}, cookie=sid)
+        sid = req.cookies.get("domrobot", "")
+        if sid not in s.inwx_sessions:
+            return res(2200, "Authentication error")
+        if method == "account.unlock":
+            if not pyotp.TOTP(INWX_TOTP).verify(str(params.get("tan")), valid_window=1):
+                return res(2200, "Authentication error", data={})
+            s.inwx_sessions[sid] = True
+            return res()
+        if not s.inwx_sessions[sid]:
+            return res(2200, "Authentication error")
+        if method == "nameserver.list":
+            return res(data={"count": len(s.inwx_zones), "domains": [{"domain": d, "roId": i + 1, "type": "MASTER"}
+                                                                    for i, d in enumerate(sorted(s.inwx_zones))]})
+        if method == "nameserver.info":
+            recs = s.inwx_zones.get(params.get("domain"))
+            if recs is None:
+                return res(2303, "Object does not exist")
+            return res(data={"domain": params["domain"], "count": len(recs), "record": recs})
+        if method == "nameserver.createRecord":
+            recs = s.inwx_zones.get(params.get("domain"))
+            if recs is None:
+                return res(2303, "Object does not exist")
+            s.inwx_seq += 1
+            recs.append({"id": s.inwx_seq, "name": params["name"], "type": params["type"], "content": params["content"],
+                         "TTL": params.get("ttl", 3600), "prio": params.get("prio", 0)})
+            return res(data={"id": s.inwx_seq})
+        if method in ("nameserver.updateRecord", "nameserver.deleteRecord"):
+            for recs in s.inwx_zones.values():
+                r = next((x for x in recs if x["id"] == params.get("id")), None)
+                if r is not None:
+                    if method == "nameserver.deleteRecord":
+                        recs.remove(r)
+                    else:
+                        r.update({"name": params.get("name", r["name"]), "type": params.get("type", r["type"]),
+                                  "content": params.get("content", r["content"]), "TTL": params.get("ttl", r["TTL"]),
+                                  "prio": params.get("prio", r["prio"])})
+                    return res()
+            return res(2303, "Object does not exist")
+        if method == "domain.list":
+            return res(data={"count": len(s.inwx_domains), "domain": s.inwx_domains})
+        return res(2000, "Unknown command")
 
     # ------------------------------------------------------------------ nextcloud (OCS v2)
     def nextcloud(self, req: Request, path: str) -> Response:
@@ -1027,6 +1180,8 @@ class MockApp:
             return _json({"version": "2025-03"})
         if path == "get/domain/all":
             return _json(s.mc_domains)
+        if path.startswith("get/dkim/"):
+            return _json(s.mc_dkim.get(path.split("/", 2)[2], {}))
         if path == "get/mailbox/all":
             return _json(s.mc_mailboxes)
         if path == "get/alias/all":

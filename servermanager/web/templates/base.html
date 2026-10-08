@@ -70,6 +70,7 @@
       {% if 'pbx' in ni %}<a href="{{ url_for('pbx.index') }}" class="{{ 'active' if bp == 'pbx' }}"><svg class="icon"><use href="#i-phone"/></svg>Telefonie</a>{% endif %}
       {% if ['hetzner', 'hetzner_srv', 'hcloud', 'hcloud_srv']|select('in', ni)|list %}<a href="{{ url_for('hetzner.index') }}" class="{{ 'active' if bp in ('hetzner', 'hcloud') }}"><svg class="icon"><use href="#i-server"/></svg>Hetzner</a>{% endif %}
       {% if 'easybell' in ni %}<a href="{{ url_for('easybell.index') }}" class="{{ 'active' if bp == 'easybell' }}"><svg class="icon"><use href="#i-phone"/></svg>easybell</a>{% endif %}
+      {% if 'dns' in ni %}<a href="{{ url_for('dns.index') }}" class="{{ 'active' if bp == 'dns' }}"><svg class="icon"><use href="#i-globe"/></svg>DNS & Domains</a>{% endif %}
       {% if 'sso' in ni %}<a href="{{ url_for('sso.index') }}" class="{{ 'active' if bp == 'sso' }}"><svg class="icon"><use href="#i-user"/></svg>SSO</a>{% endif %}
       {% if user.is_admin %}<a href="{{ url_for('optimize.index') }}" class="{{ 'active' if bp == 'optimize' }}"><svg class="icon"><use href="#i-check"/></svg>Optimierungen</a>{% endif %}
       {% endif %}

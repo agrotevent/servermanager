@@ -87,6 +87,8 @@ Reiter:
 - **Aliase:** anlegen, löschen.
 - **Domains:** Übersicht.
 - **Mail-IP & Veröffentlichung:** Konfiguration, Veröffentlichung über Pangolin, SSO-Status.
+- **DNS:** MX, SPF, DKIM, DMARC und Autodiscover jeder Mail-Domain im Vergleich mit der Zone beim
+  [DNS-Anbieter](dns.md#mail-eintrage-mailcow). Fehlende Einträge legst du per Klick an.
 
 Die Überwachung warnt bei nicht erreichbarer API und bei Postfächern über der Belegungsschwelle.
 

@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% set help_page = "dns" %}
+{% from "_macros.html" import empty with context %}
+{% from "integrations/_macros.html" import int_status with context %}
+{% block title %}DNS & Domains{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>DNS & Domains</h1><p>Domains und DNS-Zonen beim Anbieter: Einträge pflegen, Ablauf überwachen, Einträge für Pangolin und Mail prüfen und anlegen.</p></div>
+  {% if user.is_admin %}<div class="actions"><a class="btn primary" href="{{ url_for('dns.new') }}"><svg class="icon"><use href="#i-plus"/></svg>Anbieter anbinden</a></div>{% endif %}
+</div>
+{% if items %}
+<div class="card"><div class="table-wrap"><table class="table">
+  <thead><tr><th>Verbindung</th><th>Anbieter</th><th>Status</th><th>Zonen</th><th>Domains</th><th>Läuft bald ab</th></tr></thead>
+  <tbody>{% for a in items %}
+    <tr><td><a href="{{ url_for('dns.detail', did=a.id) }}"><strong>{{ a.name }}</strong></a><span class="sub">{{ a.api_url }}</span></td>
+      <td>{{ providers[a.provider].split(' (')[0] }}</td>
+      <td>{{ int_status(a) }}<span class="sub">{{ a.last_poll|ago }}</span></td>
+      <td>{{ (a.data.zones or [])|length }}</td><td>{{ (a.data.domains or [])|length }}</td>
+      <td>{% if a.data.expiring %}<span class="badge warning">{{ a.data.expiring|length }}</span>{% else %}–{% endif %}</td></tr>
+  {% endfor %}</tbody></table></div></div>
+{% else %}<div class="card"><div class="card-body">{{ empty('Noch kein DNS-Anbieter angebunden.', 'i-globe') }}</div></div>{% endif %}
+{% endblock %}

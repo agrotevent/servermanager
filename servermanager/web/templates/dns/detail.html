@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% set help_page = "dns" %}
+{% from "_macros.html" import csrf, empty with context %}
+{% from "integrations/_macros.html" import int_status, alerts_box with context %}
+{% block title %}{{ a.name }} · DNS{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>{{ a.name }} {{ int_status(a) }}</h1>
+    <p>{{ providers[a.provider].split(' (')[0] }} · {{ a.api_url }}{% if a.auto_pangolin %} · DNS für Pangolin automatisch{% endif %}</p></div>
+  <div class="actions">
+    {% if int_can('dns', a.id, 'operate') %}<form method="post" action="{{ url_for('dns.sync', did=a.id) }}" class="inline">{{ csrf() }}<input type="hidden" name="next" value="{{ request.full_path }}"><button class="btn ghost"><svg class="icon"><use href="#i-refresh"/></svg>Aktualisieren</button></form>{% endif %}
+    {% if user.is_admin %}<a class="btn ghost" href="{{ url_for('dns.edit', did=a.id) }}"><svg class="icon"><use href="#i-edit"/></svg>Bearbeiten</a>{% endif %}
+  </div>
+</div>
+{{ alerts_box(a) }}
+<nav class="tabs">{% for k, v in tabs.items() %}<a href="?tab={{ k }}" class="{{ 'active' if tab == k }}">{{ v }}</a>{% endfor %}</nav>
+{% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+
+{% if tab == 'domains' %}
+{% if a.data.domain_error %}<div class="alert warning"><div>Domains nicht abrufbar: {{ a.data.domain_error }}</div></div>{% endif %}
+<div class="card"><div class="card-head"><h2>Domains</h2><input type="search" placeholder="Suchen …" data-filter-list="#dom tbody tr" style="max-width:220px"></div>
+  <div class="table-wrap"><table class="table compact" id="dom"><thead><tr><th>Domain</th><th>Status</th><th>Läuft bis</th><th>Verlängerung</th><th>Nameserver</th><th>DNS</th></tr></thead><tbody>
+  {% for d in domains %}
+    <tr><td><strong>{{ d.name }}</strong>{% if d.transfer_lock %} <span class="badge outline" title="Transfersperre aktiv">gesperrt</span>{% endif %}</td>
+      <td>{% if d.status|lower in ('active', 'ok') %}<span class="badge success">aktiv</span>{% else %}<span class="badge warning">{{ d.status or '?' }}</span>{% endif %}</td>
+      <td class="nowrap">{{ d.expires or '–' }}{% if d.days is not none and d.days <= (a.expiry_days or 30) %} <span class="badge {{ 'danger' if d.deletion else 'warning' }}">{{ d.days }} Tage</span>{% endif %}</td>
+      <td>{% if d.deletion %}<span class="badge danger">endet {{ d.deletion }}</span>{% else %}{{ d.renew or '–' }}{% endif %}</td>
+      <td><small class="mono">{{ d.nameservers|join(', ') }}</small></td>
+      <td>{% if d.managed %}<a href="{{ url_for('dns.zone', did=a.id, zone=d.name) }}">Zone</a>{% else %}<span class="muted">extern</span>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="6" class="muted">Keine Domains.</td></tr>{% endfor %}</tbody></table></div></div>
+
+{% elif tab == 'zones' %}
+<div class="card"><div class="card-head"><h2>Zonen</h2><input type="search" placeholder="Suchen …" data-filter-list="#zon tbody tr" style="max-width:220px"></div>
+  <div class="table-wrap"><table class="table compact" id="zon"><thead><tr><th>Zone</th><th></th></tr></thead><tbody>
+  {% for z in a.data.zones or [] %}<tr><td><a href="{{ url_for('dns.zone', did=a.id, zone=z) }}"><strong>{{ z }}</strong></a></td><td class="text-right"><a class="btn xs" href="{{ url_for('dns.zone', did=a.id, zone=z) }}">Einträge</a></td></tr>
+  {% else %}<tr><td colspan="2" class="muted">Keine Zonen.</td></tr>{% endfor %}</tbody></table></div></div>
+
+{% elif tab == 'check' and not error %}
+<div class="card"><div class="card-head"><h2>Über Pangolin veröffentlichte Namen</h2></div>
+  <div class="card-body"><small class="muted">Jeder über Pangolin veröffentlichte Name in einer Zone dieser Verbindung braucht einen Eintrag, der auf Pangolin zeigt (CNAME auf das DNS-Ziel der Pangolin-Verbindung bzw. A/AAAA auf dessen IP) – oder einen passenden Platzhalter (*.zone).{% if a.auto_pangolin %} Neue Veröffentlichungen bekommen den Eintrag automatisch.{% endif %}</small></div>
+  <div class="table-wrap"><table class="table compact"><thead><tr><th>Name</th><th>Pangolin</th><th>Erwartet</th><th>Vorhanden</th><th>Status</th><th></th></tr></thead><tbody>
+  {% for r in rows %}
+    <tr><td class="mono">{{ r.host }}</td><td>{{ r.pangolin }}</td><td class="mono"><small>{{ r.expected or '–' }}</small></td>
+      <td class="mono"><small>{{ r.found|join(', ') or '–' }}</small></td>
+      <td>{% set cls = {'ok': 'success', 'wildcard': 'success', 'missing': 'warning', 'wrong': 'danger'}.get(r.state, '') %}<span class="badge {{ cls }}">{{ r.state_label }}</span>{% if r.note %}<span class="sub">{{ r.note }}</span>{% endif %}</td>
+      <td class="text-right">{% if r.state in ('missing', 'wrong') and int_can('dns', a.id, 'operate' if r.state == 'missing' else 'full') %}
+        <form method="post" action="{{ url_for('dns.fix', did=a.id) }}" class="inline" {% if r.state == 'wrong' %}data-confirm="Vorhandene Einträge für {{ r.host }} ersetzen?"{% endif %}>{{ csrf() }}<input type="hidden" name="key" value="{{ r.key }}"><button class="btn xs {{ 'primary' if r.state == 'missing' else '' }}">{{ 'Anlegen' if r.state == 'missing' else 'Ersetzen' }}</button></form>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="6" class="muted">Keine über Pangolin veröffentlichten Namen in diesen Zonen.</td></tr>{% endfor %}</tbody></table></div></div>
+<p><small class="muted">Die Mail-Einträge (MX, SPF, DKIM, DMARC, Autodiscover) prüfst du auf der Seite der jeweiligen Mailcow im Reiter „DNS“.</small></p>
+{% endif %}
+{% endblock %}

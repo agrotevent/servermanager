@@ -980,6 +980,11 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
         ctx.say(f"In Pangolin veröffentlicht: {domain} → {ip}:{pub['port']} (Resource {res.get('resourceId')})")
         with session_scope() as db:
             audit(db, None, "pangolin.publish", pg.name, f"{domain} -> {ip}:{pub['port']}")
+            if res.get("fullDomain"):
+                from . import dnscheck
+                note = dnscheck.ensure_published(db, res["fullDomain"], pg, ctx.say)
+                if note:
+                    audit(db, None, "dns.pangolin", pg.name, note[:300])
         return f"veröffentlicht als {domain}"
 
     # ------------------------------------------------------------------ import of existing guests

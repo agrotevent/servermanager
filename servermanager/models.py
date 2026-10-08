@@ -377,12 +377,14 @@ KIND_HETZNER_SRV = "hetzner_srv"    # a single root server
 KIND_HCLOUD = "hcloud"              # Hetzner Cloud project: all its servers
 KIND_HCLOUD_SRV = "hcloud_srv"      # a single cloud server
 KIND_NEXTCLOUD = "nextcloud"        # Nextcloud via its OCS API (systems of type nextcloud use SSH/occ)
+KIND_DNS = "dns"                    # registrar / DNS provider account (hosting.de platform, INWX)
 INTEGRATION_KINDS = {KIND_PVE: "Proxmox VE", KIND_ROUTER: "RouterOS", KIND_PANGOLIN: "Pangolin",
                      KIND_MAILCOW: "Mailcow", KIND_SSO: "SSO (authentik)", KIND_PBX: "Telefonie (Asterisk/FreePBX)",
                      KIND_ZABBIX: "Zabbix & Tickets", KIND_ISPC: "ISPConfig", KIND_ZAMMAD: "Zammad",
                      KIND_EASYBELL: "easybell Cloud Telefonanlage", KIND_HETZNER: "Hetzner (alle Server des Kontos)",
                      KIND_HETZNER_SRV: "Hetzner Root-Server", KIND_HCLOUD: "Hetzner Cloud (alle Server des Projekts)",
-                     KIND_HCLOUD_SRV: "Hetzner Cloud-Server", KIND_NEXTCLOUD: "Nextcloud (API)"}
+                     KIND_HCLOUD_SRV: "Hetzner Cloud-Server", KIND_NEXTCLOUD: "Nextcloud (API)",
+                     KIND_DNS: "DNS & Domains"}
 # access levels named after what they allow, where the general names would be misleading
 # (each level includes the ones before: Ändern may also restart and evaluate)
 KIND_LEVEL_LABELS = {k: {"view": "Auswerten", "operate": "Neustarten", "full": "Ändern"}
@@ -471,6 +473,7 @@ class PangolinServer(IntegrationMixin, Base):
     tunnel_system_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # system running Newt
     # backup role: primary base domain -> {"domain_id": backup domain, "template": "{sub}"}
     domain_map: Mapped[Optional[dict]] = mapped_column(JSONText, default=dict)
+    dns_target: Mapped[str] = mapped_column(String(255), default="")   # DNS target of published hosts (host or IP)
 
     @property
     def role_label(self) -> str:
@@ -540,6 +543,22 @@ class IspServer(IntegrationMixin, Base):
         from urllib.parse import urlsplit
         p = urlsplit(self.api_url or "")
         return f"{p.scheme}://{p.netloc}/" if p.netloc else ""
+
+
+class DnsAccount(IntegrationMixin, Base):
+    """Account at a registrar / DNS provider: domains, zones and records (hosting.de platform or INWX)."""
+
+    __tablename__ = "dns_accounts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider: Mapped[str] = mapped_column(String(16), default="hostingde")   # hostingde | inwx
+    api_url: Mapped[str] = mapped_column(String(255), default="")
+    username: Mapped[str] = mapped_column(String(128), default="")            # INWX
+    secret_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)    # API key (hosting.de) / password
+    totp_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)      # INWX two-factor shared secret
+    default_ttl: Mapped[int] = mapped_column(Integer, default=3600)
+    auto_pangolin: Mapped[bool] = mapped_column(Boolean, default=True)        # records for Pangolin publications
+    expiry_days: Mapped[int] = mapped_column(Integer, default=30)             # warn before a domain runs out
 
 
 class NextcloudServer(IntegrationMixin, Base):

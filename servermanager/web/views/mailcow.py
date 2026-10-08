@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from ... import access, integrations, security
 from ...core import audit
+from ...dnsapi import DnsError
 from ...mailcow import MailcowError
 from ...models import (KIND_MAILCOW, LEVEL_FULL, LEVEL_OPERATE, LEVEL_VIEW, MAIL_PORTS_DEFAULT, MailcowServer,
                        RouterDevice, SsoClient, System)
@@ -17,7 +18,8 @@ from ..auth import admin_required, client_ip, login_required
 from . import _integration as common
 
 bp = Blueprint("mailcow", __name__, url_prefix="/mailcow")
-TABS = {"mailboxes": "Postfächer", "aliases": "Aliase", "domains": "Domains", "mail": "Mail-IP & Veröffentlichung"}
+TABS = {"mailboxes": "Postfächer", "aliases": "Aliase", "domains": "Domains", "mail": "Mail-IP & Veröffentlichung",
+        "dns": "DNS"}
 
 
 def _get(mc_id: int, level: str) -> MailcowServer:
@@ -177,7 +179,9 @@ def detail(mc_id: int):
             ctx["mailboxes"] = sorted(client.mailboxes(), key=lambda b: b.get("username", ""))
         elif tab == "aliases":
             ctx["aliases"] = sorted(client.aliases(), key=lambda a: a.get("address", ""))
-    except MailcowError as exc:
+        elif tab == "dns":
+            ctx["dns_rows"], ctx["dns_accounts"] = _mail_dns(mc, client, ctx["domains"])
+    except (MailcowError, DnsError) as exc:
         ctx["error"] = str(exc)
     ctx["sso"] = g.db.execute(select(SsoClient).where(SsoClient.target_kind == "mailcow",
                                                       SsoClient.target_id == mc.id)).scalars().first()
@@ -185,6 +189,66 @@ def detail(mc_id: int):
     ctx["publish"] = _publish_args(mc)
     ctx["pangolin"] = primary_pangolin()
     return render_template("mailcow/detail.html", **ctx)
+
+
+def _dns_accounts(level: str = LEVEL_VIEW) -> list:
+    from ...models import KIND_DNS, DnsAccount
+    return [a for a in g.db.execute(select(DnsAccount).order_by(DnsAccount.name)).scalars()
+            if common.can(KIND_DNS, a.id, level)]
+
+
+def _mail_dns(mc: MailcowServer, client, domains: list[dict]) -> tuple[list[dict], list]:
+    """Expected mail records of all active Mailcow domains compared with the managed zones."""
+    from ... import dnscheck
+    accounts = _dns_accounts()
+    if not accounts:
+        return [], []
+    names = [str(d.get("domain_name") or "") for d in domains if str(d.get("active", 1)) not in ("0", "False", "false")]
+    dkim = {}
+    for n in names:
+        try:
+            dkim[n.lower()] = client.dkim(n)
+        except MailcowError:
+            dkim[n.lower()] = {}
+    zones = dnscheck.Zones(g.db, accounts)
+    try:
+        return dnscheck.mail_rows(zones, mc, names, dkim), accounts
+    finally:
+        zones.close()
+
+
+@bp.post("/<int:mc_id>/dns-fix")
+@login_required
+def dns_fix(mc_id: int):
+    """Write one proposed mail record – the row is computed again from its key, nothing is taken from the form."""
+    from ... import dnscheck
+    from ...models import KIND_DNS
+    mc = _get(mc_id, LEVEL_VIEW)
+    key = request.form.get("key", "")
+    try:
+        client = _client(mc)
+        domains = client.domains()
+        rows, accounts = _mail_dns(mc, client, domains)
+        row = next((r for r in rows if r["key"] == key), None)
+        if row is None or row["state"] not in ("missing", "wrong") or not row["account_id"]:
+            raise DnsError("Für diesen Eintrag gibt es nichts zu tun – Seite neu laden")
+        need = LEVEL_OPERATE if row["state"] == "missing" else LEVEL_FULL
+        if not common.can(KIND_DNS, row["account_id"], need):
+            raise DnsError("Dafür fehlt das Recht auf die DNS-Verbindung ("
+                           + ("Bedienen" if need == LEVEL_OPERATE else "Vollzugriff") + ")")
+        account = next(a for a in accounts if a.id == row["account_id"])
+        zones = dnscheck.Zones(g.db, accounts)
+        try:
+            rec, replaces = dnscheck.mail_fix_record(row, account.default_ttl or 3600)
+            msg = dnscheck.fix(zones, row, rec, replaces)
+        finally:
+            zones.close()
+        audit(g.db, g.user, "dns.mail_fix", mc.name, msg[:300], ip=client_ip())
+        g.db.commit()
+        flash(msg, "success")
+    except (MailcowError, DnsError) as exc:
+        flash(f"Fehlgeschlagen: {exc}", "danger")
+    return redirect(url_for("mailcow.detail", mc_id=mc_id, tab="dns"))
 
 
 def primary_pangolin():

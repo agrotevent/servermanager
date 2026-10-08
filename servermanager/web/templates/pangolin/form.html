@@ -24,6 +24,7 @@
     <div class="field"><label>Standard-Domain</label>
       {% if domains %}<select name="default_domain_id"><option value="">–</option>{% for d in domains %}<option value="{{ d.domainId }}" {% if p.default_domain_id == d.domainId %}selected{% endif %}>{{ d.baseDomain }}</option>{% endfor %}</select>
       {% else %}<input type="text" name="default_domain_id" value="{{ p.default_domain_id or '' }}" placeholder="nach dem Speichern wählbar">{% endif %}</div>
+    {{ field('DNS-Ziel veröffentlichter Namen', 'dns_target', p.dns_target, placeholder='pangolin.example.com oder 203.0.113.10', help='Worauf DNS-Einträge für hier veröffentlichte Namen zeigen (CNAME auf einen Namen, A/AAAA auf eine IP). Leer = Adresse des Pangolin-Dashboards.', cls='full') }}
   </div></div></div>
 </div>
 {% if p.role == 'backup' and not is_new %}

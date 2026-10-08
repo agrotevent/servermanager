@@ -82,6 +82,23 @@
     <td>{% if d.active|string in ('1', 'True', 'true') %}<span class="badge success">aktiv</span>{% else %}<span class="badge">inaktiv</span>{% endif %}</td></tr>
   {% else %}<tr><td colspan="4" class="muted">Keine Domains.</td></tr>{% endfor %}</tbody></table></div></div>
 
+{% elif tab == 'dns' and not error %}
+<div class="card"><div class="card-head"><h2>DNS-Einträge für Mail</h2></div>
+  <div class="card-body"><small class="muted">Erwartete Einträge für jede aktive Mailcow-Domain, verglichen mit den Zonen der angebundenen DNS-Anbieter: MX auf {{ m.mail_hostname or 'den Mail-Hostnamen' }}, SPF, DKIM (Schlüssel aus Mailcow), DMARC sowie Autodiscover/Autoconfig für Mail-Programme.{% if m.mail_public_ip %} Der Mail-Hostname muss auf die eigene Mail-IP {{ m.mail_public_ip }} zeigen.{% endif %} Fehlende Einträge legt „Anlegen“ an (Recht Bedienen auf die DNS-Verbindung), abweichende ersetzt „Ersetzen“ (Vollzugriff).</small></div>
+  {% if not dns_accounts %}<div class="card-body"><div class="alert info"><div>Noch kein DNS-Anbieter angebunden (Infrastruktur → DNS & Domains) – oder kein Recht darauf.</div></div></div>
+  {% else %}
+  <div class="table-wrap"><table class="table compact"><thead><tr><th>Name</th><th>Typ</th><th>Erwartet</th><th>Vorhanden</th><th>Status</th><th></th></tr></thead><tbody>
+  {% for r in dns_rows %}
+    <tr><td class="mono"><small>{{ r.host or '–' }}</small></td><td><small>{{ r.type }}</small></td>
+      <td class="mono break"><small>{{ (r.expected[:70] ~ ('…' if r.expected|length > 70 else '')) or '–' }}</small></td>
+      <td class="mono break"><small>{{ r.found|join(', ') or '–' }}</small></td>
+      <td>{% set cls = {'ok': 'success', 'missing': 'warning', 'wrong': 'danger', 'unmanaged': ''}.get(r.state, 'info') %}<span class="badge {{ cls }}">{{ r.state_label }}</span>{% if r.note %}<span class="sub">{{ r.note }}</span>{% endif %}{% if r.account %}<span class="sub">{{ r.account }}</span>{% endif %}</td>
+      <td class="text-right">{% if r.state in ('missing', 'wrong') and r.account_id and int_can('dns', r.account_id, 'operate' if r.state == 'missing' else 'full') %}
+        <form method="post" action="{{ url_for('mailcow.dns_fix', mc_id=m.id) }}" class="inline" {% if r.state == 'wrong' %}data-confirm="Vorhandenen Eintrag für {{ r.host }} ersetzen?"{% endif %}>{{ csrf() }}<input type="hidden" name="key" value="{{ r.key }}"><button class="btn xs {{ 'primary' if r.state == 'missing' else '' }}">{{ 'Anlegen' if r.state == 'missing' else 'Ersetzen' }}</button></form>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="6" class="muted">Keine aktiven Domains in Mailcow.</td></tr>{% endfor %}</tbody></table></div>
+  {% endif %}
+</div>
+
 {% elif tab == 'mail' %}
 <div class="grid grid-2">
   <div class="card"><div class="card-head"><h2>IMAP/SMTP über eigene Public-IP</h2></div><div class="card-body">

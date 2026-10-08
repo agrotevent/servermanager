@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% set help_page = "dns" %}
+{% from "_macros.html" import csrf, field, checkbox with context %}
+{% from "integrations/_macros.html" import conn_fields with context %}
+{% block title %}{{ 'Anbieter anbinden' if is_new else a.name ~ ' bearbeiten' }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>{{ 'DNS-Anbieter anbinden' if is_new else a.name ~ ' bearbeiten' }}</h1>
+  <p>{% if a.provider == 'inwx' %}INWX: mit Benutzername und Passwort (am besten ein eigener API-Benutzer unter <em>Konto → Benutzer</em>). Ist die Zwei-Faktor-Anmeldung aktiv, den geheimen Schlüssel aus dem QR-Code hinterlegen.{% else %}hosting.de-Plattform (auch FRESH Internet unter <code>secure.fresh-internet.de</code>): mit einem API-Schlüssel aus dem Kundenportal, mit Rechten für DNS und Domains.{% endif %}</p></div></div>
+{% if is_new %}<nav class="tabs">{% for k, v in providers.items() %}<a href="?provider={{ k }}" class="{{ 'active' if a.provider == k }}">{{ v.split(' (')[0] }}</a>{% endfor %}</nav>{% endif %}
+<form method="post" autocomplete="off">{{ csrf() }}<input type="hidden" name="provider" value="{{ a.provider }}">
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>Schnittstelle</h2></div><div class="card-body"><div class="form-grid">
+    {{ conn_fields(a, 'Adresse', default_urls[a.provider], 'Vorgabe: ' ~ default_urls[a.provider], 'Bei Zertifikaten öffentlicher Zertifizierungsstellen die CA-Prüfung verwenden.') }}
+  </div></div></div>
+  <div class="card"><div class="card-head"><h2>Zugang</h2></div><div class="card-body"><div class="form-grid">
+    {% if a.provider == 'inwx' %}
+      {{ field('Benutzername', 'username', a.username, required=True) }}
+      {{ field('Passwort', 'secret', '', type='password', help=('Hinterlegt – leer lassen, um es zu behalten' if a.secret_enc else ''), attrs='autocomplete="new-password"') }}
+      {{ field('Zwei-Faktor: geheimer Schlüssel', 'totp', '', type='password', help=('Hinterlegt – leer lassen, um ihn zu behalten' if a.totp_enc else 'nur bei aktiver Zwei-Faktor-Anmeldung; die Codes berechnet der Servermanager'), attrs='autocomplete="off"', cls='full') }}
+      {% if a.totp_enc %}<div class="full">{{ checkbox('Zwei-Faktor-Schlüssel entfernen', 'totp_remove', False) }}</div>{% endif %}
+    {% else %}
+      {{ field('API-Schlüssel', 'secret', '', type='password', help=('Hinterlegt – leer lassen, um ihn zu behalten' if a.secret_enc else 'aus dem Kundenportal, mit Rechten für DNS und Domains'), attrs='autocomplete="new-password"', cls='full') }}
+    {% endif %}
+    {{ field('TTL neuer Einträge (Sekunden)', 'default_ttl', a.default_ttl or 3600, type='number') }}
+    {{ field('Vor Ablauf warnen (Tage)', 'expiry_days', a.expiry_days or 30, type='number') }}
+    <div class="full">{{ checkbox('Beim Veröffentlichen über Pangolin den DNS-Eintrag automatisch anlegen (Zonen dieser Verbindung)', 'auto_pangolin', a.auto_pangolin) }}</div>
+  </div></div></div>
+</div>
+<div class="actions mt-1"><button class="btn primary">Speichern</button><a class="btn" href="{{ url_for('dns.index') if is_new else url_for('dns.detail', did=a.id) }}">Abbrechen</a></div>
+</form>
+{% if not is_new %}
+<div class="card danger-zone mt-2"><div class="card-head"><h2>Verbindung entfernen</h2></div><div class="card-body">
+  <form method="post" action="{{ url_for('dns.delete', did=a.id) }}" data-confirm="Verbindung {{ a.name }} entfernen? Beim Anbieter ändert sich nichts.">{{ csrf() }}<button class="btn danger">Entfernen</button></form>
+</div></div>
+{% endif %}
+{% endblock %}

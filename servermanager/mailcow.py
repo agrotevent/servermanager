@@ -121,6 +121,13 @@ class Mailcow:
         self.request("POST", "delete/alias", [str(alias_id)])
 
     # ------------------------------------------------------------------ SSO (Mailcow >= 2025-03)
+    def dkim(self, domain: str) -> dict:
+        """DKIM key of a domain: {"dkim_selector", "dkim_txt", "length", ...} ({} if there is none)."""
+        if not re.match(r"^[A-Za-z0-9.-]{1,253}$", domain or ""):
+            raise MailcowError("Ungültige Domain")
+        res = self.request("GET", f"get/dkim/{domain}")
+        return res if isinstance(res, dict) and res.get("dkim_txt") else {}
+
     def identity_provider(self) -> Optional[dict]:
         try:
             data = self.request("GET", "get/identity-provider")

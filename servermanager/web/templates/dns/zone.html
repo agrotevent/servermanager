@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% set help_page = "dns" %}
+{% from "_macros.html" import csrf, field with context %}
+{% block title %}{{ zone }} · DNS{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>{{ zone }}</h1><p><a href="{{ url_for('dns.detail', did=a.id, tab='zones') }}">{{ a.name }}</a> · {{ records|length }} Einträge</p></div></div>
+{% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+<div class="card"><div class="card-head"><h2>Einträge</h2><input type="search" placeholder="Suchen …" data-filter-list="#rec tbody tr" style="max-width:220px"></div>
+  <div class="table-wrap"><table class="table compact" id="rec"><thead><tr><th>Name</th><th>Typ</th><th>Inhalt</th><th>TTL</th><th></th></tr></thead><tbody>
+  {% for r in records %}{% set locked = r.type == 'NS' and r.name == zone %}
+    <tr><td class="mono">{{ r.short }}</td><td><span class="badge outline">{{ r.type }}</span></td>
+      <td class="mono break"><small>{% if r.type in ('MX', 'SRV') %}{{ r.prio }} {% endif %}{{ r.content }}</small></td><td><small>{{ r.ttl }}</small></td>
+      <td class="nowrap text-right">{% if int_can('dns', a.id, 'full') and not locked %}
+        <button type="button" class="btn xs" data-dialog-open="#rec-edit" data-dialog-values='{{ {"id": r.id, "name": r.short, "type": r.type, "content": r.content, "ttl": r.ttl, "prio": r.prio, "title": r.type ~ " " ~ r.name}|tojson }}'>Bearbeiten</button>
+        <form method="post" action="{{ url_for('dns.record_action', did=a.id, zone=zone) }}" class="inline" data-confirm="{{ r.type }} {{ r.name }} löschen?">{{ csrf() }}<input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="{{ r.id }}"><button class="btn xs danger-outline">Löschen</button></form>
+      {% endif %}</td></tr>
+  {% else %}<tr><td colspan="5" class="muted">Keine Einträge.</td></tr>{% endfor %}</tbody></table></div>
+  {% if int_can('dns', a.id, 'full') %}
+  <div class="card-body"><h4>Eintrag anlegen</h4>
+    <form method="post" action="{{ url_for('dns.record_action', did=a.id, zone=zone) }}" class="inline-form">{{ csrf() }}<input type="hidden" name="action" value="add">
+      <div class="field"><label for="f-name">Name</label><input type="text" id="f-name" name="name" placeholder="www (@ = {{ zone }})" style="max-width:200px"></div>
+      <div class="field"><label for="f-type">Typ</label><select id="f-type" name="type">{% for t in types %}<option>{{ t }}</option>{% endfor %}</select></div>
+      <div class="field"><label for="f-content">Inhalt</label><input type="text" id="f-content" name="content" required style="min-width:260px"></div>
+      <div class="field"><label for="f-prio">Priorität</label><input type="number" id="f-prio" name="prio" min="0" max="65535" placeholder="MX/SRV" style="max-width:100px"></div>
+      <div class="field"><label for="f-ttl">TTL</label><input type="number" id="f-ttl" name="ttl" value="{{ a.default_ttl or 3600 }}" min="60" style="max-width:110px"></div>
+      <button class="btn primary">Anlegen</button></form>
+    <p class="mt-1"><small class="muted">TXT ohne Anführungszeichen eingeben. SRV: Inhalt „Gewicht Port Ziel“ (z. B. <code>1 443 mail.example.com</code>), Priorität separat.</small></p>
+  </div>
+  <dialog class="modal" id="rec-edit" aria-labelledby="rec-edit-title">
+    <form method="post" action="{{ url_for('dns.record_action', did=a.id, zone=zone) }}">{{ csrf() }}<input type="hidden" name="action" value="edit"><input type="hidden" name="id" value="">
+      <div class="modal-head"><h3 id="rec-edit-title">Eintrag bearbeiten</h3><button type="button" class="btn ghost xs" data-dialog-close aria-label="Schließen">✕</button></div>
+      <div class="modal-body">
+        <p class="mono" data-dialog-text="title"></p>
+        <div class="field"><label for="e-name">Name</label><input type="text" id="e-name" name="name"><span class="help">relativ zu {{ zone }}, @ = die Zone selbst</span></div>
+        <div class="field"><label for="e-type">Typ</label><select id="e-type" name="type">{% for t in types %}<option>{{ t }}</option>{% endfor %}</select></div>
+        <div class="field"><label for="e-content">Inhalt</label><textarea id="e-content" name="content" rows="3" required autofocus></textarea></div>
+        <div class="flex" style="gap:12px"><div class="field"><label for="e-prio">Priorität</label><input type="number" id="e-prio" name="prio" min="0" max="65535"></div>
+          <div class="field"><label for="e-ttl">TTL</label><input type="number" id="e-ttl" name="ttl" min="60"></div></div>
+      </div>
+      <div class="modal-foot"><button type="button" class="btn" data-dialog-close>Abbrechen</button><button class="btn primary">Speichern</button></div>
+    </form>
+  </dialog>
+  {% endif %}
+</div>
+{% endblock %}

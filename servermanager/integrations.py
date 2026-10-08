@@ -11,12 +11,12 @@ from .mikrotik import MikroTik, MikroTikError
 from .authentik import Authentik, AuthentikError
 from .mailcow import Mailcow, MailcowError
 from .ispconfig_api import IspConfig, IspError
-from .models import (KIND_EASYBELL, KIND_HCLOUD, KIND_HCLOUD_SRV, KIND_HETZNER, KIND_HETZNER_SRV, KIND_ISPC, KIND_MAILCOW,
+from .models import (KIND_DNS, KIND_EASYBELL, KIND_HCLOUD, KIND_HCLOUD_SRV, KIND_HETZNER, KIND_HETZNER_SRV, KIND_ISPC, KIND_MAILCOW,
                      KIND_NEXTCLOUD, KIND_PANGOLIN, KIND_PBX, KIND_PVE, KIND_ROUTER,
                      KIND_SSO, KIND_ZABBIX, KIND_ZAMMAD, STATUS_ERROR, STATUS_ONLINE, EasybellAccount, HcloudProject, HcloudServer,
                      HetznerAccount,
                      HetznerServer, IspServer,
-                     MailcowServer, NextcloudServer, PangolinServer, PbxServer, PveServer, RouterDevice, SsoServer, System, ZabbixHost,
+                     DnsAccount, MailcowServer, NextcloudServer, PangolinServer, PbxServer, PveServer, RouterDevice, SsoServer, System, ZabbixHost,
                      ZabbixServer, ZammadServer, utcnow)
 from .pangolin import Pangolin, PangolinError
 from .pbx import PbxError
@@ -28,23 +28,26 @@ from .ami import Ami, AmiError
 from .hetzner import Robot, RobotError
 from .hcloud import Cloud, CloudError
 from .nextcloud_api import Nextcloud, NextcloudError
+from .dnsapi import DnsError
 
 log = logging.getLogger(__name__)
 
 MODELS = {KIND_PVE: PveServer, KIND_ROUTER: RouterDevice, KIND_PANGOLIN: PangolinServer,
           KIND_MAILCOW: MailcowServer, KIND_SSO: SsoServer, KIND_PBX: PbxServer, KIND_ZABBIX: ZabbixServer,
           KIND_ISPC: IspServer, KIND_ZAMMAD: ZammadServer, KIND_EASYBELL: EasybellAccount,
-          KIND_HETZNER: HetznerAccount, KIND_HCLOUD: HcloudProject, KIND_NEXTCLOUD: NextcloudServer}
+          KIND_HETZNER: HetznerAccount, KIND_HCLOUD: HcloudProject, KIND_NEXTCLOUD: NextcloudServer,
+          KIND_DNS: DnsAccount}
 # objects permissions can be granted on (single Hetzner servers are not polled on their own)
 ACCESS_MODELS = {**MODELS, KIND_HETZNER_SRV: HetznerServer, KIND_HCLOUD_SRV: HcloudServer}
 LABELS = {KIND_PVE: "Proxmox", KIND_ROUTER: "RouterOS", KIND_PANGOLIN: "Pangolin", KIND_MAILCOW: "Mailcow",
           KIND_SSO: "SSO", KIND_PBX: "Telefonie", KIND_ZABBIX: "Zabbix", KIND_ISPC: "ISPConfig",
           KIND_ZAMMAD: "Zammad", KIND_EASYBELL: "easybell", KIND_HETZNER: "Hetzner",
-          KIND_HCLOUD: "Hetzner Cloud", KIND_NEXTCLOUD: "Nextcloud"}
+          KIND_HCLOUD: "Hetzner Cloud", KIND_NEXTCLOUD: "Nextcloud", KIND_DNS: "DNS"}
 Integration = Union[PveServer, RouterDevice, PangolinServer, MailcowServer, SsoServer, PbxServer, ZabbixServer,
-                    IspServer, ZammadServer, EasybellAccount, HetznerAccount, HcloudProject, NextcloudServer]
+                    IspServer, ZammadServer, EasybellAccount, HetznerAccount, HcloudProject, NextcloudServer,
+                    DnsAccount]
 ApiError = (PveError, MikroTikError, PangolinError, MailcowError, AuthentikError, PbxError, ZabbixError, IspError,
-            ZammadError, AmiError, RobotError, CloudError, NextcloudError, SSHError, ValueError)
+            ZammadError, AmiError, RobotError, CloudError, NextcloudError, DnsError, SSHError, ValueError)
 
 
 def kind_of(obj: Integration) -> str:
@@ -157,6 +160,46 @@ def ispconfig_auto(db: Session, system: System) -> Optional[int]:
 def zammad_client(z: ZammadServer, timeout: int = 20) -> Zammad:
     return Zammad(z.api_url, security.decrypt(z.token_enc), fingerprint=z.fingerprint or "",
                   verify_ca=bool(z.verify_ca) or not z.fingerprint, timeout=timeout)
+
+
+def dns_client(a: DnsAccount, timeout: int = 25):
+    from . import dnsapi
+    secret = security.decrypt(a.secret_enc) if a.secret_enc else ""
+    kw = {"fingerprint": a.fingerprint or "", "verify_ca": bool(a.verify_ca) or not a.fingerprint, "timeout": timeout}
+    if a.provider == "inwx":
+        return dnsapi.Inwx(a.api_url, a.username, secret,
+                           security.decrypt(a.totp_enc) if a.totp_enc else "", **kw)
+    if a.provider == "hostingde":
+        return dnsapi.HostingDe(a.api_url, secret, **kw)
+    raise DnsError("Unbekannter Anbieter")
+
+
+def dns_overview(a: DnsAccount) -> tuple[dict, list[dict]]:
+    """Zones and domains of the account; warnings for domains running out or not active."""
+    from .dnsapi import days_left
+    client = dns_client(a)
+    try:
+        zones = client.zones()
+        data: dict = {"zones": [z["name"] for z in zones], "domains": [], "domain_error": ""}
+        try:
+            data["domains"] = client.domains()
+        except DnsError as exc:   # e.g. an API key with DNS rights only
+            data["domain_error"] = str(exc)[:300]
+    finally:
+        client.close()
+    alerts = []
+    for d in data["domains"]:
+        left = days_left(d.get("deletion") or "")
+        if d.get("deletion") and left is not None and left <= max(a.expiry_days or 30, 1):
+            alerts.append({"key": f"del:{d['name']}", "severity": "crit" if left <= 7 else "warn",
+                           "text": f"Domain {d['name']} läuft am {d['deletion']} aus (wird nicht verlängert)"})
+        elif d.get("status") and d["status"].lower() not in ("active", "ok", "ordered", "transfer", "createpending",
+                                                               "updatepending", "pending", "renewpending"):
+            alerts.append({"key": f"status:{d['name']}", "severity": "warn",
+                           "text": f"Domain {d['name']}: Status {d['status']}"})
+    data["expiring"] = [d["name"] for d in data["domains"]
+                        if (days_left(d.get("expires") or "") or 9999) <= max(a.expiry_days or 30, 1)]
+    return data, alerts
 
 
 def nextcloud_client(n: NextcloudServer, timeout: int = 20) -> Nextcloud:
@@ -548,6 +591,8 @@ def poll(db: Session, obj: Integration) -> list[dict]:
             data = ispconfig_overview(ispconfig_client(obj))
         elif kind == KIND_NEXTCLOUD:
             data, alerts = nextcloud_overview(nextcloud_client(obj), disk_pct)
+        elif kind == KIND_DNS:
+            data, alerts = dns_overview(obj)
         elif kind == KIND_SSO:
             au = sso_client(obj)
             data = {"version": au.version(), "applications": len(au.applications())}

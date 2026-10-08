@@ -52,6 +52,11 @@ def _save(pg: PangolinServer) -> list[str]:
     pg.default_site_id = int(site) if site.isdigit() else None
     dom = (f.get("default_domain_id") or "").strip()
     pg.default_domain_id = dom if re.match(r"^[A-Za-z0-9_-]{0,64}$", dom) else ""
+    target = (f.get("dns_target") or "").strip().rstrip(".").lower()
+    if re.match(r"^[a-z0-9.:-]{0,255}$", target):
+        pg.dns_target = target
+    else:
+        errors.append("DNS-Ziel: Hostnamen oder IP-Adresse angeben.")
     pg.role = f.get("role") if f.get("role") in PANGOLIN_ROLES else "primary"
     tsys = (f.get("tunnel_system_id") or "").strip()
     pg.tunnel_system_id = int(tsys) if tsys.isdigit() and g.db.get(System, int(tsys)) else None
@@ -293,6 +298,13 @@ def publish(pg_id: int):
                   ip=client_ip())
             g.db.commit()
             flash(f"Veröffentlicht: {label}", "success")
+            if res.get("fullDomain"):
+                from ... import dnscheck
+                note = dnscheck.ensure_published(g.db, res["fullDomain"], pg)
+                if note:
+                    audit(g.db, g.user, "dns.pangolin", pg.name, note[:300], ip=client_ip())
+                    g.db.commit()
+                    flash(note, "warning" if "nicht" in note or "prüfen" in note else "info")
             if res.get("resourceId"):
                 return redirect(url_for("pangolin.resource", pg_id=pg_id, rid=res["resourceId"]))
             return redirect(url_for("pangolin.detail", pg_id=pg_id))
