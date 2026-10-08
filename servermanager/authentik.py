@@ -167,6 +167,15 @@ class Authentik:
         u = self.user(pk)
         return bool(u.get("is_superuser")) or any(g.get("is_superuser") for g in (u.get("groups_obj") or []))
 
+    def update_user(self, pk: int, name: str, email: str) -> None:
+        self.request("PATCH", f"core/users/{int(pk)}/", {"name": name, "email": email})
+
+    def add_to_group(self, group_pk: str, user_pk: int) -> None:
+        self.request("POST", f"core/groups/{quote(str(group_pk), safe='')}/add_user/", {"pk": int(user_pk)})
+
+    def remove_from_group(self, group_pk: str, user_pk: int) -> None:
+        self.request("POST", f"core/groups/{quote(str(group_pk), safe='')}/remove_user/", {"pk": int(user_pk)})
+
     def set_active(self, pk: int, active: bool) -> None:
         self.request("PATCH", f"core/users/{int(pk)}/", {"is_active": bool(active)})
 

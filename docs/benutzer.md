@@ -14,6 +14,33 @@ Zuweisung je System (unter *Benutzer* oder im System unter *Zugriff*):
 | Bedienen | zusätzlich Updates installieren, Dienste/Container/VMs steuern, Neustart, Wartung planen, Konfig-Backups erstellen |
 | Vollzugriff | zusätzlich beliebige Befehle, Release-Upgrade, Nextcloud-Core-Update, Zugangsdaten ändern, Backups herunterladen/wiederherstellen, System entfernen (Adresse, Hostkey und geroutete Netze bleiben Administratoren vorbehalten) |
 
+## Gruppen
+
+Unter *Benutzer → Gruppen* bündeln Administratoren Rechte. Eine Gruppe hat Rechte auf:
+
+- **Systeme:** einzelne oder **alle Systeme**.
+- **jedes Modul:** Proxmox, RouterOS, Pangolin, Nextcloud, Mailcow, SSO, Telefonie, Zabbix, ISPConfig,
+  Zammad, easybell, Hetzner, DNS & Domains. Jeweils einzelne Verbindungen oder **alle** dieser Art.
+
+„Alle“ gilt auch für Systeme und Verbindungen, die später hinzukommen.
+
+**Mitglieder** kommen auf zwei Wegen in eine Gruppe:
+
+- **Von Hand:** in der Gruppe oder im Benutzer unter *Gruppen* angehakt.
+- **Über authentik:** Ist der Gruppe eine **authentik-Gruppe** zugeordnet, gehört jeder dazu, der sich
+  über authentik anmeldet und Mitglied dieser authentik-Gruppe ist.
+  - Die Gruppen kommen bei jeder Anmeldung frisch aus authentik.
+  - Bei einer Anmeldung mit Passwort zählen sie nicht.
+  - *Aus authentik anlegen* listet die authentik-Gruppen, die noch keiner Gruppe zugeordnet sind. Ein
+    Klick legt die passende Gruppe an, danach legst du nur noch die Rechte fest.
+
+**Welches Recht gilt?** Immer das höchste aus den eigenen Rechten des Benutzers und allen seinen Gruppen.
+Gruppen machen niemanden zum Administrator. Die Rolle (Administrator, Manager, Benutzer) wird weiter
+je Benutzer vergeben.
+
+Die Benutzerliste zeigt zu jedem Benutzer seine Gruppen. Gruppen mit Hetzner-Rechten lassen sich auch
+direkt auf der [Hetzner-Seite](hetzner.md#zugriff-uber-authentik) anlegen.
+
 ## Anmeldung über authentik (SSO)
 
 Unter *Infrastruktur → SSO → (authentik) → Anwendungen → Anmeldung am Servermanager* richten
@@ -39,7 +66,7 @@ erscheint danach „Mit *authentik* anmelden“.
 
 Rechte gibt es für ein ganzes Robot-Konto bzw. Cloud-Projekt oder für einzelne Root- und Cloud-Server, mit den Stufen *Auswerten*,
 *Neustarten* und *Ändern*. Details stehen unter [Hetzner](hetzner.md#rechte). Statt je Benutzer lassen sich
-diese Rechte auch **authentik-Gruppen** geben. Sie gelten dann für Anmeldungen über authentik, siehe
+diese Rechte auch über [Gruppen](#gruppen) vergeben, auch für authentik-Gruppen, siehe
 [Zugriff über authentik](hetzner.md#zugriff-uber-authentik).
 
 ## Infrastruktur (Proxmox, RouterOS, Pangolin)

@@ -2,6 +2,22 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.23.0 – 08.10.2026
+
+### Neu
+
+- **Gruppen in der Benutzerverwaltung** mit Rechten auf Systeme und auf jedes Modul (einzeln oder
+  „alle“, auch künftige). Mitglieder kommen von Hand oder über eine **authentik-Gruppe** bei der
+  Anmeldung über authentik. *Aus authentik anlegen* übernimmt authentik-Gruppen per Klick. Es gilt das
+  höchste Recht aus eigenen Rechten und Gruppen.
+- **SSO → Benutzer → Bearbeiten**: Name, E-Mail und Gruppen eines authentik-Benutzers im Fenster
+  ändern. Administrator-Gruppen vergeben nur Administratoren.
+
+### Geändert
+
+- Die Hetzner-Rechte über authentik-Gruppen (1.21) gehen in den Gruppen auf und werden beim Update
+  übernommen. Auf der Hetzner-Seite gibt es zusätzlich das Ziel „alle Robot-Konten bzw. Cloud-Projekte“.
+
 ## 1.22.0 – 08.10.2026
 
 ### Neu

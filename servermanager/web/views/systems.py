@@ -278,6 +278,8 @@ def delete(system_id: int):
     for (job_id,) in g.db.execute(select(Job.id).where(Job.system_id == system.id)).all():
         job_log_path(job_id).unlink(missing_ok=True)
     name = system.name
+    from ...models import KIND_SYSTEM
+    access.remove_rights(g.db, KIND_SYSTEM, system.id)
     g.db.delete(system)
     audit(g.db, g.user, "system.delete", name, ip=client_ip())
     g.db.commit()

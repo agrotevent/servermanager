@@ -831,22 +831,44 @@ class SsoClient(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
-# rights that can be granted to authentik groups (applied to users logged in through the SSO)
-GROUP_ACCESS_KINDS = (KIND_HETZNER, KIND_HETZNER_SRV, KIND_HCLOUD, KIND_HCLOUD_SRV)
+HETZNER_KINDS = (KIND_HETZNER, KIND_HETZNER_SRV, KIND_HCLOUD, KIND_HCLOUD_SRV)
+KIND_SYSTEM = "system"      # group rights on systems (obj_id = system id)
+ALL_OBJECTS = 0             # obj_id of a group right on all objects of a kind (also future ones)
 
 
-class GroupAccess(Base):
-    """Access level of an authentik group on an integration object (e.g. a Hetzner account or server)."""
+class UserGroup(Base):
+    """Group of users with rights on systems and modules. Members are added by hand and/or come from an
+    authentik group (the groups of a user's last login through the SSO)."""
 
-    __tablename__ = "group_access"
-    __table_args__ = (UniqueConstraint("group_name", "kind", "obj_id"),)
+    __tablename__ = "user_groups"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    group_name: Mapped[str] = mapped_column(String(150), index=True)
-    kind: Mapped[str] = mapped_column(String(16))
-    obj_id: Mapped[int] = mapped_column(Integer, index=True)
-    level: Mapped[str] = mapped_column(String(16), default=LEVEL_VIEW)
+    name: Mapped[str] = mapped_column(String(128), unique=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    sso_group: Mapped[str] = mapped_column(String(150), default="", index=True)   # authentik group name
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class UserGroupMember(Base):
+    __tablename__ = "user_group_members"
+    __table_args__ = (UniqueConstraint("user_id", "group_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("user_groups.id", ondelete="CASCADE"), index=True)
+
+
+class GroupRight(Base):
+    """Access level of a group on a system (kind "system") or an integration object; obj_id 0 = all of them."""
+
+    __tablename__ = "group_rights"
+    __table_args__ = (UniqueConstraint("group_id", "kind", "obj_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("user_groups.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    obj_id: Mapped[int] = mapped_column(Integer, default=0)
+    level: Mapped[str] = mapped_column(String(16), default=LEVEL_VIEW)
 
 
 class IntegrationAccess(Base):

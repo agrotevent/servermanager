@@ -175,10 +175,18 @@ Im Reiter *Anwendungen*:
 
 ### Benutzer
 
-Im Reiter *Benutzer*: Liste, **Anlegen** (Benutzername, Name, E-Mail, Gruppen, Passwort bzw.
-Zufallspasswort) – optional mit **Postfach auf einer Mailcow** unter der E-Mail-Adresse. Außerdem
-aktivieren/deaktivieren, neues Passwort, löschen. Administratorkonten von authentik werden nicht
-gelöscht.
+Im Reiter *Benutzer*:
+
+- Liste der Benutzer.
+- **Anlegen** mit Benutzername, Name, E-Mail, Gruppen und Passwort bzw. Zufallspasswort, optional mit
+  **Postfach auf einer Mailcow** unter der E-Mail-Adresse.
+- **Bearbeiten** öffnet ein Fenster für Name, E-Mail und die **Gruppen in authentik**. Die Gruppen
+  steuern auch die Rechte im Servermanager ([Gruppen](benutzer.md#gruppen)) und in angebundenen
+  Anwendungen.
+- Außerdem aktivieren/deaktivieren, neues Passwort und löschen.
+
+Administratorkonten von authentik werden nicht gelöscht. Sie und die Administrator-Gruppen von
+authentik ändern nur Administratoren des Servermanagers.
 
 ### Nextcloud-Benutzer und -Gruppen übernehmen
 

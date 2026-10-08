@@ -78,7 +78,7 @@
 <div class="grid grid-2">
   <div class="card"><div class="card-head"><h2>Rechte über authentik-Gruppen</h2></div>
     <div class="table-wrap"><table class="table compact"><thead><tr><th>authentik-Gruppe</th><th>Ziel</th><th>Recht</th><th></th></tr></thead><tbody>
-      {% for r in group_rows %}<tr><td><strong>{{ r.group }}</strong></td><td>{{ r.target }}<span class="sub">{{ r.section }}</span></td>
+      {% for r in group_rows %}<tr><td><a href="{{ url_for('users.group_edit', group_id=r.group_id) }}"><strong>{{ r.group }}</strong></a>{% if r.sso_group and r.sso_group != r.group %}<span class="sub">authentik: {{ r.sso_group }}</span>{% elif not r.sso_group %}<span class="sub">ohne authentik-Gruppe</span>{% endif %}</td><td>{{ r.target }}<span class="sub">{{ r.section }}</span></td>
         <td>{{ KIND_LEVEL_LABELS[r.kind][r.level] }}</td>
         <td class="text-right"><form method="post" action="{{ url_for('hetzner.group_delete', gid=r.id) }}" class="inline" data-confirm="Recht der Gruppe {{ r.group }} entfernen?">{{ csrf() }}<button class="btn xs danger-outline">Entfernen</button></form></td></tr>
       {% else %}<tr><td colspan="4" class="muted">Noch keine Gruppe zugeordnet.</td></tr>{% endfor %}</tbody></table></div>
@@ -88,10 +88,10 @@
           <datalist id="ak-groups">{% for n in ak_groups %}<option value="{{ n }}">{% endfor %}</datalist></div>
         <div class="field"><label for="f-ak-level">Recht</label><select id="f-ak-level" name="level">{% for lv, label in KIND_LEVEL_LABELS['hetzner'].items() %}<option value="{{ lv }}">{{ label }}</option>{% endfor %}</select></div>
         <div class="field full"><label for="f-ak-target">Ziel</label><select id="f-ak-target" name="target" required>
-          {% for section, kind, items in group_targets %}{% if items %}<optgroup label="{{ section }}">{% for v, label in items %}<option value="{{ v }}">{{ label }}</option>{% endfor %}</optgroup>{% endif %}{% endfor %}</select></div>
+          {% for section, kind, items in group_targets %}{% if items %}<optgroup label="{{ section }}">{% if kind in ('hetzner', 'hcloud') %}<option value="{{ kind }}:0">alle {{ 'Robot-Konten' if kind == 'hetzner' else 'Cloud-Projekte' }} (auch künftige)</option>{% endif %}{% for v, label in items %}<option value="{{ v }}">{{ label }}</option>{% endfor %}</optgroup>{% endif %}{% endfor %}</select></div>
         <div class="full"><button class="btn primary">Zuordnen</button></div>
       </form>
-      <p class="mt-1"><small class="muted">Gilt für Benutzer, die sich über authentik am Servermanager anmelden: Die Gruppen kommen bei jeder Anmeldung frisch aus authentik, bei einer Anmeldung mit Passwort entfallen sie. Zusammen mit eigenen Rechten des Benutzers gilt das höhere Recht. Neue Benutzer legt die SSO-Anmeldung automatisch an, wenn das unter SSO erlaubt ist.</small></p>
+      <p class="mt-1"><small class="muted">Kurzweg für Gruppen mit Hetzner-Rechten – alle Gruppen und ihre Rechte auf andere Module verwaltest du unter <a href="{{ url_for('users.index') }}#groups">Benutzer → Gruppen</a>. Gilt für Benutzer, die sich über authentik am Servermanager anmelden: Die Gruppen kommen bei jeder Anmeldung frisch aus authentik, bei einer Anmeldung mit Passwort entfallen sie. Zusammen mit eigenen Rechten des Benutzers gilt das höhere Recht. Neue Benutzer legt die SSO-Anmeldung automatisch an, wenn das unter SSO erlaubt ist.</small></p>
     </div></div>
   <div class="card"><div class="card-head"><h2>Kachel im authentik-Portal</h2></div><div class="card-body">
     {% if tile.slug %}

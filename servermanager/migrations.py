@@ -93,6 +93,30 @@ def _v11(conn: Connection) -> None:
         add_column_if_missing(conn, "pangolin_servers", "dns_target", "VARCHAR(255) NOT NULL DEFAULT ''")
 
 
+def _v12(conn: Connection) -> None:
+    # user groups: the rights of authentik groups from 1.21 (table group_access) become groups
+    if "group_access" not in inspect(conn).get_table_names():
+        return
+    rows = conn.execute(text("SELECT group_name, kind, obj_id, level FROM group_access")).fetchall()
+    ids: dict[str, int] = {}
+    for name, kind, obj_id, level in rows:
+        key = str(name).lower()
+        if key not in ids:
+            found = conn.execute(text("SELECT id FROM user_groups WHERE lower(name) = :n"), {"n": key}).fetchone()
+            if found is None:
+                conn.execute(text("INSERT INTO user_groups (name, description, sso_group, created_at) "
+                                  "VALUES (:n, :d, :s, CURRENT_TIMESTAMP)"),
+                             {"n": str(name)[:128], "d": "aus den Hetzner-Rechten übernommen", "s": str(name)[:150]})
+                found = conn.execute(text("SELECT id FROM user_groups WHERE name = :n"), {"n": str(name)[:128]}).fetchone()
+            ids[key] = found[0]
+        exists = conn.execute(text("SELECT 1 FROM group_rights WHERE group_id = :g AND kind = :k AND obj_id = :o"),
+                              {"g": ids[key], "k": kind, "o": obj_id}).fetchone()
+        if exists is None:
+            conn.execute(text("INSERT INTO group_rights (group_id, kind, obj_id, level) VALUES (:g, :k, :o, :l)"),
+                         {"g": ids[key], "k": kind, "o": obj_id, "l": level})
+    conn.execute(text("DELETE FROM group_access"))
+
+
 MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     1: lambda conn: None,  # initial schema
     2: _v2,
@@ -105,6 +129,7 @@ MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     9: _v9,
     10: _v10,
     11: _v11,
+    12: _v12,
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 

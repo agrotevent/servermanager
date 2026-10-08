@@ -710,7 +710,7 @@ def test_sso_connect_zammad(app, db, mock, apps):
 
 def test_hetzner_rights_via_authentik_groups_and_tile(app, db, mock, apps):
     from servermanager import access, settings
-    from servermanager.models import GroupAccess, HetznerAccount, HetznerServer, SsoClient, User
+    from servermanager.models import GroupRight, HetznerAccount, HetznerServer, SsoClient, User, UserGroup, UserGroupMember
     from tests.test_integrations import _run as run_job
     from tests.test_web import login, make_user
     st = mock.state
@@ -777,7 +777,7 @@ def test_hetzner_rights_via_authentik_groups_and_tile(app, db, mock, apps):
         db.expire_all()
         assert db.get(User, u.id).sso_groups == [] and c3.get("/hetzner/").status_code == 403
         # removing the mapping also updates the tile
-        gid = db.query(GroupAccess).filter_by(kind="hetzner_srv", obj_id=srv.id).one().id
+        gid = db.query(GroupRight).filter_by(kind="hetzner_srv", obj_id=srv.id).one().id
         admin.post(f"/hetzner/groups/{gid}/delete", data={"csrf_token": admin.csrf})
         assert not [b for b in st.ak_bindings if b["target"] == tile["pbm_uuid"]]
         assert c.get("/hetzner/").status_code == 403
@@ -790,7 +790,8 @@ def test_hetzner_rights_via_authentik_groups_and_tile(app, db, mock, apps):
         from servermanager.web import auth as web_auth
         web_auth._failures.clear()
         db.rollback()
-        db.query(GroupAccess).delete()
+        for model in (GroupRight, UserGroupMember, UserGroup):
+            db.query(model).delete()
         db.query(SsoClient).filter_by(target_kind="servermanager").delete()
         for name in ("sso-tech", "sso-sales", "grp-pw"):
             u = db.query(User).filter_by(username=name).first()
@@ -804,3 +805,48 @@ def test_hetzner_rights_via_authentik_groups_and_tile(app, db, mock, apps):
             st.ak_apps.pop(slug, None)
         st.ak_bindings.clear()
         st.ak_groups[:] = groups_before
+
+
+def test_sso_user_edit_and_groups(app, db, mock, apps):
+    from servermanager.models import KIND_SSO, LEVEL_FULL, IntegrationAccess
+    from tests.test_web import login, make_user
+    st = mock.state
+    groups_before = [dict(x, users=list(x["users"])) for x in st.ak_groups]
+    st.ak_groups.append({"pk": "44444444-aaaa-bbbb-cccc-000000000001", "name": "authentik Admins",
+                         "is_superuser": True, "users": [1]})
+    st.ak_users.append({"pk": 77, "username": "maria", "name": "Maria", "email": "m@x.de", "is_active": True,
+                        "is_superuser": False, "type": "internal", "groups_obj": []})
+    try:
+        make_user(db, "sso-edit-admin", "admin")
+        c = login(app, "sso-edit-admin")
+        page = c.get(f"/sso/{apps['ak'].id}?tab=users").text
+        assert 'data-dialog-open="#su-edit"' in page and '"username": "maria"' in page
+        mit = "11111111-aaaa-bbbb-cccc-000000000001"
+        r = c.post(f"/sso/{apps['ak'].id}/users", data={"action": "edit", "pk": "77", "username": "maria",
+                                                        "name": "Maria Muster", "email": "maria@example.com",
+                                                        "groups": [mit], "csrf_token": c.csrf}, follow_redirects=True)
+        assert "maria gespeichert. Gruppen: +mitarbeiter" in r.text
+        maria = next(u for u in st.ak_users if u["pk"] == 77)
+        assert maria["name"] == "Maria Muster" and maria["email"] == "maria@example.com"
+        assert 77 in next(x for x in st.ak_groups if x["pk"] == mit)["users"]
+        assert f'"groups": ["{mit}"]' in c.get(f"/sso/{apps['ak'].id}?tab=users").text
+        c.post(f"/sso/{apps['ak'].id}/users", data={"action": "edit", "pk": "77", "username": "maria", "name": "Maria",
+                                                    "email": "", "csrf_token": c.csrf})
+        assert 77 not in next(x for x in st.ak_groups if x["pk"] == mit)["users"]
+        # full access, but not administrator of the servermanager: no administrator groups
+        u = make_user(db, "sso-editor")
+        db.add(IntegrationAccess(user_id=u.id, kind=KIND_SSO, obj_id=apps["ak"].id, level=LEVEL_FULL))
+        db.commit()
+        e = login(app, "sso-editor")
+        r = e.post(f"/sso/{apps['ak'].id}/users", data={"action": "edit", "pk": "77", "username": "maria", "name": "M",
+                                                        "groups": ["44444444-aaaa-bbbb-cccc-000000000001"],
+                                                        "csrf_token": e.csrf}, follow_redirects=True)
+        assert "Administrator-Gruppe" in r.text and 77 not in st.ak_groups[-1]["users"]
+        r = e.post(f"/sso/{apps['ak'].id}/users", data={"action": "edit", "pk": "1", "username": "akadmin", "name": "x",
+                                                        "csrf_token": e.csrf}, follow_redirects=True)
+        assert "Administrator-Konten" in r.text
+        db.query(IntegrationAccess).filter_by(user_id=u.id).delete()
+        db.commit()
+    finally:
+        st.ak_groups[:] = groups_before
+        st.ak_users[:] = [x for x in st.ak_users if x["pk"] != 77]

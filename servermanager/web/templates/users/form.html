@@ -40,6 +40,17 @@
         </div>
       </div>
     </div>
+    <div class="card">
+      <div class="card-head"><h2>Gruppen</h2></div>
+      <div class="card-body"><input type="hidden" name="groups_shown" value="1">
+        {% if all_groups %}
+        <div class="check-list">{% for grp in all_groups %}
+          <label class="check"><input type="checkbox" name="groups" value="{{ grp.id }}" {{ 'checked' if grp.id in member_of }}> {{ grp.name }}{% if grp.id in sso_member_of %} <small class="muted">– auch über authentik ({{ grp.sso_group }})</small>{% endif %}</label>
+        {% endfor %}</div>
+        <p class="mt-1"><small class="muted">Rechte der Gruppen gelten zusätzlich zu den hier vergebenen; es zählt das höhere Recht. Mitgliedschaften über authentik ergeben sich aus der letzten Anmeldung über authentik.</small></p>
+        {% else %}<p class="muted">Noch keine Gruppen – anlegen unter <a href="{{ url_for('users.index') }}#groups">Benutzer → Gruppen</a>.</p>{% endif %}
+      </div>
+    </div>
     {% if integrations|selectattr(2)|list %}
     <div class="card">
       <div class="card-head"><h2>Infrastruktur (API-Verbindungen)</h2></div>

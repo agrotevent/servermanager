@@ -7,11 +7,12 @@
   <div class="actions"><a class="btn primary" href="{{ url_for('users.new') }}"><svg class="icon"><use href="#i-user"/></svg>Neuer Benutzer</a></div></div>
 <div class="card"><div class="card-body flush">
   <table class="table">
-    <thead><tr><th>Benutzer</th><th>Rolle</th><th>Systeme</th><th>2FA</th><th>Letzte Anmeldung</th><th>Status</th><th></th></tr></thead>
+    <thead><tr><th>Benutzer</th><th>Rolle</th><th>Systeme</th><th>Gruppen</th><th>2FA</th><th>Letzte Anmeldung</th><th>Status</th><th></th></tr></thead>
     <tbody>{% for u in users %}
       <tr><td><a href="{{ url_for('users.edit', user_id=u.id) }}"><strong>{{ u.label }}</strong></a><span class="sub">{{ u.username }}{% if u.email %} · {{ u.email }}{% endif %}</span></td>
         <td><span class="badge {{ 'danger' if u.role == 'admin' else ('primary' if u.role == 'manager' else '') }}">{{ ROLES[u.role] }}</span></td>
         <td>{{ 'alle' if u.is_admin else counts.get(u.id, 0) }}</td>
+        <td><small>{{ (by_user.get(u.id) or [])|join(', ') or '–' }}</small></td>
         <td>{% if u.totp_enabled %}<span class="badge success">aktiv</span>{% else %}<span class="badge">–</span>{% endif %}</td>
         <td class="nowrap">{{ u.last_login|dt }}</td>
         <td>{% if not u.active %}<span class="badge">deaktiviert</span>{% elif u.locked_until and u.locked_until > now %}<span class="badge danger">gesperrt</span>{% else %}<span class="badge success">aktiv</span>{% endif %}</td>
@@ -19,6 +20,21 @@
     {% endfor %}</tbody>
   </table>
 </div></div>
+<div class="card" id="groups"><div class="card-head"><h2>Gruppen</h2><div class="actions"><a class="btn sm primary" href="{{ url_for('users.group_new') }}"><svg class="icon"><use href="#i-users"/></svg>Neue Gruppe</a></div></div>
+  <div class="card-body"><small class="muted">Gruppen bündeln Rechte auf Systeme und Module (Proxmox, Mailcow, Hetzner, DNS …), auch „alle“ einer Art. Mitglieder trägst du von Hand ein oder sie kommen über eine <strong>authentik-Gruppe</strong>: Wer sich über authentik anmeldet und Mitglied dieser Gruppe ist, bekommt die Rechte der Gruppe. Es gilt jeweils das höchste Recht aus eigenen Rechten und allen Gruppen.</small></div>
+  {% if groups %}
+  <div class="table-wrap"><table class="table compact"><thead><tr><th>Gruppe</th><th>authentik-Gruppe</th><th>Mitglieder</th><th>Rechte</th><th></th></tr></thead><tbody>
+  {% for grp in groups %}
+    <tr><td><a href="{{ url_for('users.group_edit', group_id=grp.id) }}"><strong>{{ grp.name }}</strong></a>{% if grp.description %}<span class="sub">{{ grp.description }}</span>{% endif %}</td>
+      <td>{{ grp.sso_group or '–' }}</td><td>{{ members.get(grp.id, 0) }}{% if grp.sso_group %} <small class="muted">+ über authentik</small>{% endif %}</td>
+      <td>{{ rights.get(grp.id, 0) }}</td>
+      <td class="text-right"><form method="post" action="{{ url_for('users.group_delete', group_id=grp.id) }}" class="inline" data-confirm="Gruppe {{ grp.name }} löschen? Ihre Mitglieder verlieren die Rechte der Gruppe.">{{ csrf() }}<button class="btn xs ghost" title="Löschen"><svg class="icon"><use href="#i-trash"/></svg></button></form></td></tr>
+  {% endfor %}</tbody></table></div>
+  {% endif %}
+  {% if ak_groups %}<div class="card-body"><h4>Aus authentik anlegen</h4><div class="flex" style="gap:6px;flex-wrap:wrap">
+    {% for n in ak_groups %}{% if n|lower not in mapped %}<a class="btn xs" href="{{ url_for('users.group_new', sso_group=n) }}">+ {{ n }}</a>{% endif %}{% endfor %}</div>
+    <p class="mt-1"><small class="muted">Legt eine Gruppe an, deren Mitglieder aus der gleichnamigen authentik-Gruppe kommen – danach nur noch die Rechte festlegen.</small></p></div>{% endif %}
+</div>
 <div class="card"><div class="card-head"><h2>Rollen &amp; Berechtigungen</h2></div><div class="card-body">
   <dl class="kv">
     <dt>Administrator</dt><dd>Vollzugriff auf alle Systeme, Benutzer, Einstellungen, WireGuard, Backups und Updates.</dd>

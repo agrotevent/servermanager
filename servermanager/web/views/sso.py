@@ -137,12 +137,18 @@ def detail(sso_id: int):
     tab = request.args.get("tab", "apps")
     if tab not in TABS:
         tab = "apps"
-    ctx: dict = {"s": s, "tab": tab, "tabs": TABS, "error": None, "users": [], "groups": [], "apps": []}
+    ctx: dict = {"s": s, "tab": tab, "tabs": TABS, "error": None, "users": [], "groups": [], "apps": [],
+                 "member_of": {}}
     try:
         au = _client(s)
         if tab == "users":
             ctx["users"] = sorted(au.users(), key=lambda u: u.get("username", ""))
             ctx["groups"] = au.groups()
+            member_of: dict = {}
+            for grp in ctx["groups"]:
+                for upk in grp.get("users") or []:
+                    member_of.setdefault(upk, []).append(str(grp.get("pk")))
+            ctx["member_of"] = member_of
         else:
             ctx["apps"] = au.applications()
     except AuthentikError as exc:
@@ -290,8 +296,35 @@ def disconnect(sso_id: int, client_id: int):
     return redirect(url_for("jobs.detail", job_id=job.id))
 
 
+def _edit_user(au, pk: int, username: str) -> str:
+    """Name, e-mail and group memberships of an authentik user (administrator groups only for admins)."""
+    f = request.form
+    email = (f.get("email") or "").strip()
+    if email and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        raise ValueError("Ungültige E-Mail-Adresse")
+    name = (f.get("name") or "").strip()[:150] or username
+    au.update_user(pk, name, email)
+    groups = {str(x.get("pk")): x for x in au.groups()}
+    wanted = {x for x in f.getlist("groups") if x in groups}
+    current = {k for k, x in groups.items() if pk in [int(u) for u in (x.get("users") or []) if str(u).isdigit()]}
+    changed = []
+    for gpk in sorted(wanted ^ current):
+        grp = groups[gpk]
+        if grp.get("is_superuser") and not g.user.is_admin:
+            raise ValueError(f"Die Administrator-Gruppe „{grp.get('name')}“ vergeben nur Administratoren des "
+                             "Servermanagers")
+        if gpk in wanted:
+            au.add_to_group(gpk, pk)
+            changed.append(f"+{grp.get('name')}")
+        else:
+            au.remove_from_group(gpk, pk)
+            changed.append(f"−{grp.get('name')}")
+    return f"{username} gespeichert." + (f" Gruppen: {', '.join(changed)}" if changed else "")
+
+
 # a new password is an account takeover: full access, and administrator accounts only for admins
-USER_ACTIONS = {"add": LEVEL_FULL, "delete": LEVEL_FULL, "active": LEVEL_OPERATE, "password": LEVEL_FULL}
+USER_ACTIONS = {"add": LEVEL_FULL, "delete": LEVEL_FULL, "active": LEVEL_OPERATE, "password": LEVEL_FULL,
+                "edit": LEVEL_FULL}
 
 
 @bp.post("/<int:sso_id>/users")
@@ -329,7 +362,9 @@ def user_action(sso_id: int):
             if not g.user.is_admin and au.is_admin_user(pk):
                 raise ValueError("Administrator-Konten von authentik können nur Administratoren des Servermanagers "
                                  "ändern")
-            if action == "active":
+            if action == "edit":
+                msg = _edit_user(au, pk, target)
+            elif action == "active":
                 au.set_active(pk, f.get("active") == "1")
                 msg = f"{target} {'aktiviert' if f.get('active') == '1' else 'deaktiviert'}."
             elif action == "password":

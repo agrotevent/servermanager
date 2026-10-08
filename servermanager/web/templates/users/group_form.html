@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% set help_page = "benutzer" %}
+{% from "_macros.html" import csrf, field, textarea with context %}
+{% block title %}{{ 'Neue Gruppe' if is_new else grp.name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>{{ 'Neue Gruppe' if is_new else grp.name }}</h1><p><a href="{{ url_for('users.index') }}#groups">Benutzer → Gruppen</a></p></div></div>
+<form method="post" autocomplete="off">{{ csrf() }}
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>Gruppe</h2></div><div class="card-body"><div class="form-grid">
+    {{ field('Name', 'name', grp.name, required=True) }}
+    <div class="field"><label for="f-sso">authentik-Gruppe</label><input type="text" id="f-sso" name="sso_group" value="{{ grp.sso_group or '' }}" list="ak-groups" maxlength="150" placeholder="optional">
+      <datalist id="ak-groups">{% for n in ak_groups %}<option value="{{ n }}">{% endfor %}</datalist>
+      <span class="help">Mitglieder dieser authentik-Gruppe gehören bei Anmeldung über authentik automatisch dazu.</span></div>
+    {{ textarea('Beschreibung', 'description', grp.description, rows=2, cls='full') }}
+  </div></div></div>
+  <div class="card"><div class="card-head"><h2>Mitglieder</h2></div><div class="card-body">
+    <div class="filters mb-1"><input type="search" placeholder="Benutzer filtern …" data-filter-list=".mem-row"></div>
+    <div class="check-list">{% for u in users %}
+      <label class="check mem-row"><input type="checkbox" name="members" value="{{ u.id }}" {{ 'checked' if u.id in members }}> {{ u.label }} <small class="muted">{{ u.username }}{% if u.is_admin %} · Administrator (hat ohnehin alle Rechte){% endif %}</small></label>
+    {% else %}<span class="muted">Keine Benutzer.</span>{% endfor %}</div>
+    {% if via_sso %}<p class="mt-1"><small class="muted">Über authentik zuletzt dabei: {{ via_sso|map(attribute='username')|join(', ') }}</small></p>{% endif %}
+  </div></div>
+</div>
+<div class="card"><div class="card-head"><h2>Rechte</h2><input type="search" placeholder="Filtern …" data-filter-list=".right-row" style="max-width:220px"></div>
+  <div class="card-body"><small class="muted">„Alle“ gilt für alle vorhandenen und künftigen Objekte dieser Art. Lesen: ansehen · Bedienen: steuern (Neustart, Updates, sperren …) · Vollzugriff: anlegen, ändern, löschen. Für Hetzner heißen die Stufen Auswerten, Neustarten und Ändern.</small></div>
+  <div class="table-wrap"><table class="table compact"><tbody>
+  {% for kind, label, objs in targets %}
+    <tr class="right-row"><td><strong>{{ label }}</strong> <span class="badge outline">alle</span></td>
+      <td style="width:220px"><select name="r_{{ kind }}_0"><option value="">–</option>
+        {% for k, v in KIND_LEVEL_LABELS.get(kind, LEVELS).items() %}<option value="{{ k }}" {{ 'selected' if levels.get(kind ~ '_0') == k }}>{{ v }}</option>{% endfor %}</select></td></tr>
+    {% for o in objs %}
+    <tr class="right-row"><td><span class="muted">{{ label }}:</span> {{ o.name }}{% if kind == 'hetzner_srv' %} <small class="muted">#{{ o.number }}</small>{% elif kind == 'system' %} <small class="muted">{{ o.hostname or o.host }}</small>{% endif %}</td>
+      <td><select name="r_{{ kind }}_{{ o.id }}"><option value="">–</option>
+        {% for k, v in KIND_LEVEL_LABELS.get(kind, LEVELS).items() %}<option value="{{ k }}" {{ 'selected' if levels.get(kind ~ '_' ~ o.id) == k }}>{{ v }}</option>{% endfor %}</select></td></tr>
+    {% endfor %}
+  {% endfor %}</tbody></table></div>
+</div>
+<div class="actions"><button class="btn primary">Speichern</button><a class="btn" href="{{ url_for('users.index') }}#groups">Abbrechen</a></div>
+</form>
+{% if not is_new %}
+<div class="card danger-zone mt-2"><div class="card-head"><h2>Gruppe löschen</h2></div><div class="card-body">
+  <form method="post" action="{{ url_for('users.group_delete', group_id=grp.id) }}" data-confirm="Gruppe {{ grp.name }} löschen? Ihre Mitglieder verlieren die Rechte der Gruppe.">{{ csrf() }}<button class="btn danger">Löschen</button></form>
+</div></div>
+{% endif %}
+{% endblock %}

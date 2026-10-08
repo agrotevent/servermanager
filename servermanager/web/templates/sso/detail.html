@@ -135,6 +135,7 @@
           {{ uact('active', 'Deaktivieren' if u.is_active else 'Aktivieren', u, 'xs', (u.username ~ ' deaktivieren?') if u.is_active else '', {'active': '0' if u.is_active else '1'}) }}
         {% endif %}
         {% if int_can('sso', s.id, 'full') and (user.is_admin or not u.is_superuser) %}
+          <button type="button" class="btn xs" data-dialog-open="#su-edit" data-dialog-values='{{ {"pk": u.pk, "username": u.username, "name": u.name or "", "email": u.email or "", "groups": member_of.get(u.pk, [])}|tojson }}'>Bearbeiten</button>
           {{ uact('password', 'Neues Passwort', u, 'xs', 'Neues Passwort für ' ~ u.username ~ ' setzen?') }}
         {% endif %}
         {% if int_can('sso', s.id, 'full') and not u.is_superuser %}{{ uact('delete', 'Löschen', u, 'xs danger-outline', u.username ~ ' löschen?') }}{% endif %}
@@ -152,6 +153,19 @@
       {{ field('Postfach-Quota (MB)', 'quota', 3072, type='number') }}{% endif %}
       <div class="full"><button class="btn primary">Anlegen</button></div>
     </form>
+    <dialog class="modal" id="su-edit" aria-labelledby="su-edit-title">
+      <form method="post" action="{{ url_for('sso.user_action', sso_id=s.id) }}">{{ csrf() }}<input type="hidden" name="action" value="edit"><input type="hidden" name="pk" value=""><input type="hidden" name="username" value="">
+        <div class="modal-head"><h3 id="su-edit-title">Benutzer bearbeiten</h3><button type="button" class="btn ghost xs" data-dialog-close aria-label="Schließen">✕</button></div>
+        <div class="modal-body">
+          <p class="mono" data-dialog-text="username"></p>
+          <div class="field"><label for="su-name">Name</label><input type="text" id="su-name" name="name" maxlength="150" autofocus></div>
+          <div class="field"><label for="su-email">E-Mail</label><input type="email" id="su-email" name="email"></div>
+          {% if groups %}<div class="field"><label>Gruppen in authentik</label><div class="check-list">{% for gp in groups %}{% if user.is_admin or not gp.is_superuser %}<label class="check"><input type="checkbox" name="groups" value="{{ gp.pk }}"> {{ gp.name }}{% if gp.is_superuser %} <small class="muted">(Administratoren)</small>{% endif %}</label>{% endif %}{% endfor %}</div>
+            <span class="help">Die Gruppen steuern auch die Rechte im Servermanager (Benutzer → Gruppen) und in angebundenen Anwendungen.</span></div>{% endif %}
+        </div>
+        <div class="modal-foot"><button type="button" class="btn" data-dialog-close>Abbrechen</button><button class="btn primary">Speichern</button></div>
+      </form>
+    </dialog>
     <small class="muted">In verbundenen Nextclouds entsteht das Konto automatisch beim ersten Login über SSO.</small>
     <h4 class="mt-2">Aus Nextcloud übernehmen</h4>
     <p><small class="muted">Gruppen und vorhandene Benutzer einer Nextcloud in authentik anlegen – mit Vorschau. Danach landen die Benutzer beim Login über authentik in ihrem bestehenden Nextcloud-Konto.</small></p>

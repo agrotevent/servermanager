@@ -116,8 +116,12 @@ Beides richten Administratoren unten auf der Hetzner-Seite unter *Zugriff über 
 
 ### Rechte über authentik-Gruppen
 
-Eine authentik-Gruppe bekommt ein Recht (*Auswerten*, *Neustarten*, *Ändern*) auf ein Ziel:
+Dieser Abschnitt ist ein Kurzweg zu den [Gruppen](benutzer.md#gruppen) der Benutzerverwaltung. Er zeigt
+alle Gruppen mit Hetzner-Rechten. Gibst du eine authentik-Gruppe an, die noch keiner Gruppe zugeordnet
+ist, legt der Servermanager die Gruppe dafür an. Eine Gruppe bekommt ein Recht (*Auswerten*,
+*Neustarten*, *Ändern*) auf ein Ziel:
 
+- alle Robot-Konten bzw. alle Cloud-Projekte, auch künftige,
 - ein Robot-Konto (alle Root-Server),
 - einen einzelnen Root-Server,
 - ein Cloud-Projekt (alle Cloud-Server),

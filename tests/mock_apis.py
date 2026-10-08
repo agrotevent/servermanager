@@ -1321,9 +1321,12 @@ class MockApp:
                 s.ak_groups.append(grp)
                 return _json(grp, 201)
             return page(s.ak_groups)
-        if p[:2] == ["core", "groups"] and len(p) == 4 and p[3] == "add_user":
+        if p[:2] == ["core", "groups"] and len(p) == 4 and p[3] in ("add_user", "remove_user"):
             g = next(x for x in s.ak_groups if x["pk"] == p[2])
-            g["users"].append(body["pk"])
+            if p[3] == "add_user" and body["pk"] not in g["users"]:
+                g["users"].append(body["pk"])
+            elif p[3] == "remove_user" and body["pk"] in g["users"]:
+                g["users"].remove(body["pk"])
             return Response(status=204)
         if p[:2] == ["core", "groups"] and len(p) == 3:
             g = next((x for x in s.ak_groups if x["pk"] == p[2]), None)
@@ -1349,6 +1352,10 @@ class MockApp:
             if req.method == "DELETE":
                 s.ak_users.remove(u)
                 return Response(status=204)
+            if req.method == "GET" and len(p) == 3:
+                groups = [x for x in s.ak_groups if pk in x["users"]]
+                return _json({**u, "groups_obj": [{"pk": x["pk"], "name": x["name"],
+                                                   "is_superuser": bool(x.get("is_superuser"))} for x in groups]})
         return _json({"detail": "Not found."}, 404)
 
     def hcloud(self, req: Request, path: str) -> Response:

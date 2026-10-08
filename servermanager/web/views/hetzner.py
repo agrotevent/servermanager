@@ -464,13 +464,20 @@ def group_targets() -> list[tuple[str, str, list[tuple[str, str]]]]:
 
 
 def group_rows() -> list[dict]:
-    from ...models import GroupAccess
+    """Group rights on Hetzner objects (all groups, also those managed under Benutzer → Gruppen)."""
+    from ...models import HETZNER_KINDS, GroupRight, UserGroup
     labels = {v: (section, label) for section, _k, items in group_targets() for v, label in items}
+    alls = {k: section for section, k, _i in group_targets()}
     rows = []
-    for r in g.db.execute(select(GroupAccess).order_by(GroupAccess.group_name, GroupAccess.kind)).scalars():
-        section, label = labels.get(f"{r.kind}:{r.obj_id}", ("", f"{r.kind} #{r.obj_id}"))
-        rows.append({"id": r.id, "group": r.group_name, "kind": r.kind, "target": label, "section": section,
-                     "level": r.level})
+    for r, grp in g.db.execute(select(GroupRight, UserGroup).join(UserGroup, UserGroup.id == GroupRight.group_id)
+                               .where(GroupRight.kind.in_(HETZNER_KINDS))
+                               .order_by(UserGroup.name, GroupRight.kind)).all():
+        if r.obj_id == 0:
+            section, label = alls.get(r.kind, ""), "alle"
+        else:
+            section, label = labels.get(f"{r.kind}:{r.obj_id}", ("", f"{r.kind} #{r.obj_id}"))
+        rows.append({"id": r.id, "group": grp.name, "sso_group": grp.sso_group, "group_id": grp.id, "kind": r.kind,
+                     "target": label, "section": section, "level": r.level})
     return rows
 
 
@@ -482,7 +489,7 @@ def tile_state() -> dict:
 def _sync_tile(restrict: Optional[bool] = None) -> list[str]:
     """Create/update the tile in authentik; returns warnings. Raises AuthentikError/ValueError."""
     from ... import settings, sso_login
-    from ...models import GroupAccess
+    from ...models import HETZNER_KINDS, GroupRight, UserGroup
     conf = sso_login.active(g.db)
     if conf is None:
         raise ValueError("Die Anmeldung am Servermanager über authentik ist nicht eingerichtet (SSO → Anwendungen "
@@ -497,8 +504,13 @@ def _sync_tile(restrict: Optional[bool] = None) -> list[str]:
     launch = f"{base}/login/sso?next=/hetzner/"
     app = au.upsert_link_app("Hetzner", TILE_SLUG, launch, "Root- und Cloud-Server im Servermanager",
                              "Servermanager")
-    groups = sorted({r[0] for r in g.db.execute(select(GroupAccess.group_name)).all()}, key=str.lower)
+    mapped = g.db.execute(select(UserGroup.name, UserGroup.sso_group).join(GroupRight, GroupRight.group_id == UserGroup.id)
+                          .where(GroupRight.kind.in_(HETZNER_KINDS)).distinct()).all()
+    groups = sorted({sso for _n, sso in mapped if sso}, key=str.lower)
     warnings = []
+    local_only = sorted({n for n, sso in mapped if not sso})
+    if restrict and local_only:
+        warnings.append("Ohne authentik-Gruppe (sehen die Kachel nicht): " + ", ".join(local_only))
     if restrict:
         missing = au.set_app_groups(app, groups)
         if missing:
@@ -526,28 +538,36 @@ def _after_group_change() -> None:
 @bp.post("/groups")
 @admin_required
 def group_add():
+    """Shortcut: rights of an authentik group on Hetzner objects (the group is created if needed)."""
     from ...integrations import ACCESS_MODELS
-    from ...models import GROUP_ACCESS_KINDS, KIND_LEVEL_LABELS, LEVEL_ORDER, GroupAccess
+    from ...models import HETZNER_KINDS, KIND_LEVEL_LABELS, LEVEL_ORDER, GroupRight, UserGroup
     f = request.form
     name = (f.get("group") or "").strip()
     kind, _, raw = (f.get("target") or "").partition(":")
     level = f.get("level", "")
-    if not GROUP_RE.match(name) or kind not in GROUP_ACCESS_KINDS or not raw.isdigit() or level not in LEVEL_ORDER:
+    if not GROUP_RE.match(name) or kind not in HETZNER_KINDS or not raw.isdigit() or level not in LEVEL_ORDER:
         flash("Gruppe, Ziel und Recht angeben.", "danger")
         return redirect(url_for("hetzner.index") + "#groups")
-    obj = g.db.get(ACCESS_MODELS[kind], int(raw))
-    if obj is None:
+    obj = g.db.get(ACCESS_MODELS[kind], int(raw)) if int(raw) else None
+    if int(raw) and obj is None:
         abort(404)
-    row = g.db.execute(select(GroupAccess).where(func.lower(GroupAccess.group_name) == name.lower(),
-                                                 GroupAccess.kind == kind, GroupAccess.obj_id == obj.id)).scalars().first()
+    grp = g.db.execute(select(UserGroup).where(func.lower(UserGroup.sso_group) == name.lower())).scalars().first() \
+        or g.db.execute(select(UserGroup).where(func.lower(UserGroup.name) == name.lower())).scalars().first()
+    if grp is None:
+        grp = UserGroup(name=name[:128], sso_group=name, description="angelegt auf der Hetzner-Seite")
+        g.db.add(grp)
+        g.db.flush()
+    row = g.db.execute(select(GroupRight).where(GroupRight.group_id == grp.id, GroupRight.kind == kind,
+                                                GroupRight.obj_id == int(raw))).scalars().first()
     if row is None:
-        g.db.add(GroupAccess(group_name=name, kind=kind, obj_id=obj.id, level=level))
+        g.db.add(GroupRight(group_id=grp.id, kind=kind, obj_id=int(raw), level=level))
     else:
         row.level = level
     label = KIND_LEVEL_LABELS[kind][level]
-    audit(g.db, g.user, "hetzner.group_access", name, f"{kind} {obj.name}: {label}", ip=client_ip())
+    target = obj.name if obj is not None else "alle"
+    audit(g.db, g.user, "group.right", grp.name, f"{kind} {target}: {label}", ip=client_ip())
     g.db.commit()
-    flash(f"Gruppe „{name}“: {label} auf {obj.name}.", "success")
+    flash(f"Gruppe „{grp.name}“: {label} auf {target}.", "success")
     _after_group_change()
     g.db.commit()
     return redirect(url_for("hetzner.index") + "#groups")
@@ -556,14 +576,15 @@ def group_add():
 @bp.post("/groups/<int:gid>/delete")
 @admin_required
 def group_delete(gid: int):
-    from ...models import GroupAccess
-    row = g.db.get(GroupAccess, gid)
-    if row is None:
+    from ...models import HETZNER_KINDS, GroupRight, UserGroup
+    row = g.db.get(GroupRight, gid)
+    if row is None or row.kind not in HETZNER_KINDS:
         abort(404)
-    audit(g.db, g.user, "hetzner.group_access_remove", row.group_name, f"{row.kind} {row.obj_id}", ip=client_ip())
+    grp = g.db.get(UserGroup, row.group_id)
+    audit(g.db, g.user, "group.right_remove", grp.name if grp else "?", f"{row.kind} {row.obj_id}", ip=client_ip())
     g.db.delete(row)
     g.db.commit()
-    flash(f"Recht der Gruppe „{row.group_name}“ entfernt.", "warning")
+    flash(f"Recht der Gruppe „{grp.name if grp else '?'}“ entfernt.", "warning")
     _after_group_change()
     g.db.commit()
     return redirect(url_for("hetzner.index") + "#groups")
