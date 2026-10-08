@@ -11,7 +11,7 @@ import re
 from datetime import datetime
 from typing import Optional
 
-from ..models import LEVEL_FULL, System
+from ..models import LEVEL_FULL, System, utcnow
 from .base import Action, Module, parse_kv, run_module_script
 
 DOMAIN_RE = re.compile(r"^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
@@ -34,6 +34,7 @@ class CloudPanelModule(Module):
     key = "cloudpanel"
     label = "CloudPanel"
     description = "Sites, Datenbanken, Benutzer, Let's Encrypt (clpctl)"
+    panel_template = "modules/cloudpanel.html"
 
     def build_actions(self) -> list[Action]:
         t = "cloudpanel.sh"
@@ -48,6 +49,16 @@ class CloudPanelModule(Module):
 
     def detect(self, facts: dict) -> bool:
         return bool(facts.get("cloudpanel_version"))
+
+    def panel(self, conn, system: System) -> dict:
+        d = parse_status(cp_task(conn, system, "status", timeout=120))
+        now = utcnow()
+        for s in d["sites"]:
+            until = (s.get("cert") or {}).get("until")
+            s["days"] = (until - now).days if until else None
+        d["expiring"] = [s for s in d["sites"] if s["days"] is not None and s["days"] < 21]
+        d["no_cert"] = [s for s in d["sites"] if s["days"] is None]
+        return d
 
 
 def cp_task(conn, system: System, task: str, extra: Optional[dict] = None, timeout: int = 180) -> str:

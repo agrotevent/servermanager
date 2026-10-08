@@ -174,10 +174,12 @@
 {% if m.key != 'debian' and m.visible_actions() %}
 <div class="card"><div class="card-head"><h2>{{ m.label }} - Aktionen</h2></div><div class="card-body">{{ action_groups(system, m) }}</div></div>
 {% endif %}
+{% if m.panel_template %}
 <div class="card">
   <div class="card-head"><h2>{{ 'Dienste' if m.key == 'debian' else m.label }}</h2><button class="btn sm" data-reload type="button"><svg class="icon"><use href="#i-refresh"/></svg>Neu laden</button></div>
   <div class="card-body" data-load="{{ url_for('systems.panel', system_id=system.id, module_key=m.key) }}"></div>
 </div>
+{% endif %}
 
 {# ------------------------------------------------------------------ command #}
 {% elif tab == 'command' and can(system.id, 'full') %}

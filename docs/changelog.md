@@ -2,6 +2,15 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.27.1 – 08.10.2026
+
+### Behoben
+
+- **System → Reiter CloudPanel:** Die Statuskarte meldete „Fehler beim Laden (HTTP 404)“, weil das Modul
+  keine eigene Statusanzeige hatte. Jetzt zeigt sie Version, Zahl der Sites, Datenbanken und Benutzer
+  sowie bald ablaufende Zertifikate, mit Link zur CloudPanel-Verwaltung. Module ohne Statusanzeige
+  laden keine leere Karte mehr.
+
 ## 1.27.0 – 08.10.2026
 
 ### Neu

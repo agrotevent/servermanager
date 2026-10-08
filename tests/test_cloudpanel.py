@@ -170,6 +170,20 @@ def test_pages_actions_and_rights(app, db, cp):
     db.commit()
 
 
+def test_system_page_panel(app, db, cp, monkeypatch):
+    """The CloudPanel tab on the system page loads its panel (was HTTP 404)."""
+    from servermanager.modules import cloudpanel as mod
+    system, _calls = cp
+    monkeypatch.setattr(mod, "cp_task", lambda conn, s, task, env=None, timeout=180: STATUS)
+    make_user(db, "cp-admin", "admin")
+    c = login(app, "cp-admin")
+    page = c.get(f"/systems/{system.id}?tab=cloudpanel").text
+    assert f"/systems/{system.id}/panel/cloudpanel" in page and "CloudPanel aktualisieren" in page
+    r = c.get(f"/systems/{system.id}/panel/cloudpanel")
+    assert r.status_code == 200 and "2.5.1" in r.text and "1 ohne Zertifikat" in r.text
+    assert f"/cloudpanel/{system.id}" in r.text
+
+
 @pytest.fixture(scope="module")
 def mock():
     srv = m.MockServer().start()

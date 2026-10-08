@@ -1,0 +1,14 @@
+{% from "_macros.html" import empty with context %}
+{% include "modules/_panel_head.html" %}
+{% if data.sites is defined %}
+<div class="stats">
+  <div class="stat"><div class="label">CloudPanel</div><div class="value" style="font-size:20px">{{ data.version or '?' }}</div></div>
+  <div class="stat"><div class="label">Sites</div><div class="value">{{ data.sites|length }}</div></div>
+  <div class="stat"><div class="label">Datenbanken</div><div class="value">{{ data.databases|length if data.full else '–' }}</div></div>
+  <div class="stat"><div class="label">Benutzer</div><div class="value">{{ data.users|length if data.full else '–' }}</div></div>
+  <div class="stat {{ 'warning' if data.expiring else 'success' }}"><div class="label">Zertifikate &lt; 21 Tage</div><div class="value">{{ data.expiring|length }}</div><div class="sub">{{ data.no_cert|length }} ohne Zertifikat</div></div>
+</div>
+{% if data.expiring %}<div class="alert warning"><div>Bald ablaufend: {% for s in data.expiring %}{{ s.domain }} ({{ s.days }} Tage){{ ', ' if not loop.last }}{% endfor %}</div></div>{% endif %}
+{% if not data.full %}<p class="muted"><small>Auf dem Server fehlt python3 – nur Sites aus der nginx-Konfiguration.</small></p>{% endif %}
+{% elif not error %}{{ empty('Keine Daten.') }}{% endif %}
+<p class="mt-1"><a class="btn sm" href="{{ url_for('cloudpanel.detail', system_id=system.id) }}">CloudPanel-Verwaltung (Sites, Datenbanken, Benutzer, Let's Encrypt)</a></p>
