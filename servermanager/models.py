@@ -78,6 +78,9 @@ class User(Base):
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_login: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # authentik groups of the last login through the SSO (rights via groups); emptied by a password login
+    sso_groups: Mapped[Optional[list]] = mapped_column(JSONText, default=list)
+    sso_groups_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     access: Mapped[list["SystemAccess"]] = relationship(
         back_populates="user", cascade="all, delete-orphan")
@@ -806,6 +809,24 @@ class SsoClient(Base):
     app_url: Mapped[str] = mapped_column(String(255), default="")
     status: Mapped[str] = mapped_column(String(16), default="pending")   # pending | active | error
     message: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+# rights that can be granted to authentik groups (applied to users logged in through the SSO)
+GROUP_ACCESS_KINDS = (KIND_HETZNER, KIND_HETZNER_SRV, KIND_HCLOUD, KIND_HCLOUD_SRV)
+
+
+class GroupAccess(Base):
+    """Access level of an authentik group on an integration object (e.g. a Hetzner account or server)."""
+
+    __tablename__ = "group_access"
+    __table_args__ = (UniqueConstraint("group_name", "kind", "obj_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    group_name: Mapped[str] = mapped_column(String(150), index=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    obj_id: Mapped[int] = mapped_column(Integer, index=True)
+    level: Mapped[str] = mapped_column(String(16), default=LEVEL_VIEW)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 

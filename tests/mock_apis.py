@@ -139,6 +139,7 @@ class State:
         self.ak_groups = [{"pk": "11111111-aaaa-bbbb-cccc-000000000001", "name": "mitarbeiter", "users": []}]
         self.ak_providers: dict[int, dict] = {}
         self.ak_apps: dict[str, dict] = {}
+        self.ak_bindings: list[dict] = []
         self.ak_passwords: dict[int, str] = {}
         self.ak_seq = 10
         # ---------------- hetzner robot
@@ -1114,12 +1115,37 @@ class MockApp:
             return Response(status=204)
         if path == "core/applications/":
             if req.method == "POST":
-                s.ak_apps[body["slug"]] = dict(body)
-                return _json(body, 201)
-            return page(list(s.ak_apps.values()))
-        if p[:2] == ["core", "applications"] and len(p) == 3 and req.method == "DELETE":
-            if s.ak_apps.pop(p[2], None) is None:
+                if body["slug"] in s.ak_apps:
+                    return _json({"slug": ["Application with this slug already exists."]}, 400)
+                s.ak_seq += 1
+                s.ak_apps[body["slug"]] = {"provider": None, **body, "pk": f"app-{s.ak_seq}",
+                                           "pbm_uuid": f"app-{s.ak_seq}"}
+                return _json(s.ak_apps[body["slug"]], 201)
+            # like authentik: the list only shows applications the token user may access
+            return page([a for a in s.ak_apps.values()
+                         if not any(b["target"] == a.get("pbm_uuid") for b in s.ak_bindings)])
+        if p[:2] == ["core", "applications"] and len(p) == 3 and req.method in ("GET", "PATCH"):
+            a = s.ak_apps.get(p[2])
+            if a is None:
                 return _json({"detail": "Not found."}, 404)
+            if req.method == "PATCH":
+                a.update(body)
+            return _json(a)
+        if path == "policies/bindings/":
+            if req.method == "POST":
+                s.ak_seq += 1
+                b = {"pk": f"bind-{s.ak_seq}", "policy": None, "user": None, **body}
+                s.ak_bindings.append(b)
+                return _json(b, 201)
+            return page([b for b in s.ak_bindings if b["target"] == req.args.get("target")])
+        if p[:2] == ["policies", "bindings"] and len(p) == 3 and req.method == "DELETE":
+            s.ak_bindings[:] = [b for b in s.ak_bindings if b["pk"] != p[2]]
+            return Response(status=204)
+        if p[:2] == ["core", "applications"] and len(p) == 3 and req.method == "DELETE":
+            a = s.ak_apps.pop(p[2], None)
+            if a is None:
+                return _json({"detail": "Not found."}, 404)
+            s.ak_bindings[:] = [b for b in s.ak_bindings if b["target"] != a.get("pbm_uuid")]
             return Response(status=204)
         if path == "core/users/":
             if req.method == "POST":

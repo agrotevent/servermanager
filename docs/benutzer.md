@@ -38,7 +38,9 @@ erscheint danach „Mit *authentik* anmelden“.
 ## Hetzner
 
 Rechte gibt es für ein ganzes Robot-Konto bzw. Cloud-Projekt oder für einzelne Root- und Cloud-Server, mit den Stufen *Auswerten*,
-*Neustarten* und *Ändern*. Details stehen unter [Hetzner](hetzner.md#rechte).
+*Neustarten* und *Ändern*. Details stehen unter [Hetzner](hetzner.md#rechte). Statt je Benutzer lassen sich
+diese Rechte auch **authentik-Gruppen** geben. Sie gelten dann für Anmeldungen über authentik, siehe
+[Zugriff über authentik](hetzner.md#zugriff-uber-authentik).
 
 ## Infrastruktur (Proxmox, RouterOS, Pangolin)
 

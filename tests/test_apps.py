@@ -706,3 +706,101 @@ def test_sso_connect_zammad(app, db, mock, apps):
         db.query(SsoClient).filter_by(target_kind="zammad", target_id=z.id).delete()
         db.delete(z)
         db.commit()
+
+
+def test_hetzner_rights_via_authentik_groups_and_tile(app, db, mock, apps):
+    from servermanager import access, settings
+    from servermanager.models import GroupAccess, HetznerAccount, HetznerServer, SsoClient, User
+    from tests.test_integrations import _run as run_job
+    from tests.test_web import login, make_user
+    st = mock.state
+    make_user(db, "hz-admin", "admin")
+    admin = login(app, "hz-admin")
+    acc = HetznerAccount(name="robot-grp", username="#ws+x", password_enc=security.encrypt("x"), monitor=False)
+    db.add(acc)
+    db.flush()
+    srv = HetznerServer(account_id=acc.id, number=4711, name="fsn-grp", server_ip="88.99.1.1", status="ready")
+    other = HetznerServer(account_id=acc.id, number=4712, name="nbg-grp", server_ip="88.99.1.2", status="ready")
+    db.add_all([srv, other])
+    settings.set(db, "general.base_url", "https://sm.example.com")
+    db.commit()
+    apps_before, groups_before = set(st.ak_apps), list(st.ak_groups)
+    try:
+        # the tile needs the login to the servermanager through authentik
+        r = admin.post("/hetzner/tile", data={"restrict": "1", "csrf_token": admin.csrf}, follow_redirects=True)
+        assert "Anmeldung am Servermanager über authentik ist nicht eingerichtet" in r.text
+        r = admin.post(f"/sso/{apps['ak'].id}/connect", data={
+            "kind": "servermanager", "target_id": 0, "app_url": "https://sm.example.com", "sso_auto_create": "1",
+            "sso_group": "", "csrf_token": admin.csrf})
+        run_job(int(r.headers["Location"].rstrip("/").split("/")[-1]))
+        # rights for a group, then the tile (only for the mapped groups)
+        r = admin.post("/hetzner/groups", data={"group": "Hetzner-Technik", "target": f"hetzner_srv:{srv.id}",
+                                                "level": "operate", "csrf_token": admin.csrf}, follow_redirects=True)
+        assert "Neustarten auf fsn-grp" in r.text
+        r = admin.post("/hetzner/tile", data={"restrict": "1", "csrf_token": admin.csrf}, follow_redirects=True)
+        assert "Kachel „Hetzner“ im authentik-Portal eingerichtet" in r.text and "unbekannte Gruppen: Hetzner-Technik" in r.text
+        tile = st.ak_apps["sm-hetzner"]
+        assert tile["meta_launch_url"] == "https://sm.example.com/login/sso?next=/hetzner/" and not tile["provider"]
+        st.ak_groups.append({"pk": "33333333-aaaa-bbbb-cccc-000000000001", "name": "hetzner-technik", "users": []})
+        admin.post("/hetzner/tile", data={"restrict": "1", "csrf_token": admin.csrf})
+        assert [b["group"] for b in st.ak_bindings if b["target"] == tile["pbm_uuid"]] == [
+            "33333333-aaaa-bbbb-cccc-000000000001"]
+        admin.post("/hetzner/tile", data={"restrict": "1", "csrf_token": admin.csrf})  # idempotent
+        assert len([b for b in st.ak_bindings if b["target"] == tile["pbm_uuid"]]) == 1
+        page = admin.get("/hetzner/").text
+        assert "Rechte über authentik-Gruppen" in page and "Hetzner-Technik" in page and "eingerichtet" in page
+        # login through authentik with the group (other case): sees exactly that server, may restart it
+        c = app.test_client()
+        r, _ = _sso_round(c, st, {"sub": "h-tech", "username": "sso-tech", "groups": ["hetzner-technik"]})
+        tech = db.query(User).filter_by(username="sso-tech").one()
+        assert tech.sso_groups == ["hetzner-technik"]
+        assert access.hetzner_server_level(db, tech, srv) == "operate"
+        assert access.hetzner_server_level(db, tech, other) is None
+        page = c.get("/hetzner/").text
+        assert "fsn-grp" in page and "nbg-grp" not in page and 'href="/hetzner/"' in page
+        assert c.get(f"/hetzner/server/{srv.id}").status_code == 200
+        assert c.get(f"/hetzner/server/{other.id}").status_code == 403
+        # the tile opens /login/sso – with a valid session it goes straight to the page
+        r = c.get("/login/sso?next=/hetzner/")
+        assert r.status_code == 302 and r.headers["Location"].endswith("/hetzner/")
+        # without the group: no access
+        c2 = app.test_client()
+        _sso_round(c2, st, {"sub": "h-sales", "username": "sso-sales", "groups": ["vertrieb"]})
+        assert c2.get("/hetzner/").status_code == 403
+        # a password login drops the rights from groups
+        make_user(db, "grp-pw")
+        u = db.query(User).filter_by(username="grp-pw").one()
+        u.sso_groups = ["hetzner-technik"]
+        db.commit()
+        assert access.hetzner_server_level(db, u, srv) == "operate"
+        c3 = login(app, "grp-pw")
+        db.expire_all()
+        assert db.get(User, u.id).sso_groups == [] and c3.get("/hetzner/").status_code == 403
+        # removing the mapping also updates the tile
+        gid = db.query(GroupAccess).filter_by(kind="hetzner_srv", obj_id=srv.id).one().id
+        admin.post(f"/hetzner/groups/{gid}/delete", data={"csrf_token": admin.csrf})
+        assert not [b for b in st.ak_bindings if b["target"] == tile["pbm_uuid"]]
+        assert c.get("/hetzner/").status_code == 403
+        # only administrators manage this
+        assert c.post("/hetzner/groups", data={"group": "x", "target": f"hetzner:{acc.id}", "level": "full",
+                                               "csrf_token": ""}).status_code in (302, 400, 403)
+        r = admin.post("/hetzner/tile", data={"remove": "1", "csrf_token": admin.csrf}, follow_redirects=True)
+        assert "Kachel aus authentik entfernt" in r.text and "sm-hetzner" not in st.ak_apps
+    finally:
+        from servermanager.web import auth as web_auth
+        web_auth._failures.clear()
+        db.rollback()
+        db.query(GroupAccess).delete()
+        db.query(SsoClient).filter_by(target_kind="servermanager").delete()
+        for name in ("sso-tech", "sso-sales", "grp-pw"):
+            u = db.query(User).filter_by(username=name).first()
+            if u:
+                db.delete(u)
+        for k in ("general.base_url", "hetzner.ak_tile", "login.sso_auto_create", "login.sso_group"):
+            settings.set(db, k, settings.DEFAULTS.get(k))
+        db.delete(acc)
+        db.commit()
+        for slug in set(st.ak_apps) - apps_before:
+            st.ak_apps.pop(slug, None)
+        st.ak_bindings.clear()
+        st.ak_groups[:] = groups_before

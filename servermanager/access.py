@@ -3,11 +3,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .models import (INTEGRATION_KINDS, KIND_PVE, LEVEL_FULL, LEVEL_ORDER, IntegrationAccess, Job, System,
-                     SystemAccess, User)
+from .models import (GROUP_ACCESS_KINDS, INTEGRATION_KINDS, KIND_PVE, LEVEL_FULL, LEVEL_ORDER, GroupAccess,
+                     IntegrationAccess, Job, System, SystemAccess, User)
 
 
 def system_level(db: Session, user: Optional[User], system_id: int) -> Optional[str]:
@@ -73,7 +73,31 @@ def grant(db: Session, user_id: int, system_id: int, level: str) -> None:
 # --------------------------------------------------------------------------
 # integrations (Proxmox API, RouterOS, Pangolin)
 # --------------------------------------------------------------------------
+def _higher(a: Optional[str], b: Optional[str]) -> Optional[str]:
+    if not a or not b:
+        return a or b
+    return a if LEVEL_ORDER[a] >= LEVEL_ORDER[b] else b
+
+
+def user_groups(user: User) -> list[str]:
+    """authentik groups of the user's last SSO login (lower case)."""
+    return sorted({str(x).lower() for x in (user.sso_groups or []) if str(x).strip()})
+
+
+def group_levels(db: Session, user: User, kind: str) -> dict[int, str]:
+    """obj_id -> level the user gets through authentik groups (the highest of all groups)."""
+    groups = user_groups(user)
+    if kind not in GROUP_ACCESS_KINDS or not groups:
+        return {}
+    out: dict[int, str] = {}
+    for oid, lv in db.execute(select(GroupAccess.obj_id, GroupAccess.level).where(
+            GroupAccess.kind == kind, func.lower(GroupAccess.group_name).in_(groups))).all():
+        out[oid] = _higher(out.get(oid), lv)
+    return out
+
+
 def integration_level(db: Session, user: Optional[User], kind: str, obj_id: int) -> Optional[str]:
+    """Own right or right through an authentik group – the higher one counts."""
     if user is None or not user.active or kind not in INTEGRATION_KINDS:
         return None
     if user.is_admin:
@@ -81,7 +105,7 @@ def integration_level(db: Session, user: Optional[User], kind: str, obj_id: int)
     row = db.execute(select(IntegrationAccess.level).where(
         IntegrationAccess.user_id == user.id, IntegrationAccess.kind == kind,
         IntegrationAccess.obj_id == obj_id)).first()
-    return row[0] if row else None
+    return _higher(row[0] if row else None, group_levels(db, user, kind).get(obj_id))
 
 
 def has_integration_level(db: Session, user: Optional[User], kind: str, obj_id: int, level: str) -> bool:
@@ -95,7 +119,10 @@ def integration_levels(db: Session, user: User, kind: str) -> Optional[dict[int,
         return None
     rows = db.execute(select(IntegrationAccess.obj_id, IntegrationAccess.level).where(
         IntegrationAccess.user_id == user.id, IntegrationAccess.kind == kind)).all()
-    return {oid: lv for oid, lv in rows}
+    out = {oid: lv for oid, lv in rows}
+    for oid, lv in group_levels(db, user, kind).items():
+        out[oid] = _higher(out.get(oid), lv)
+    return out
 
 
 def any_integration_access(db: Session, user: User) -> set[str]:
@@ -103,13 +130,21 @@ def any_integration_access(db: Session, user: User) -> set[str]:
     if user.is_admin:
         return set(INTEGRATION_KINDS)
     rows = db.execute(select(IntegrationAccess.kind).where(IntegrationAccess.user_id == user.id).distinct()).all()
-    return {r[0] for r in rows}
+    kinds = {r[0] for r in rows}
+    groups = user_groups(user)
+    if groups:
+        kinds |= {r[0] for r in db.execute(select(GroupAccess.kind).where(
+            func.lower(GroupAccess.group_name).in_(groups)).distinct()).all()}
+    return kinds
 
 
 def remove_integration(db: Session, kind: str, obj_id: int) -> None:
     for row in db.execute(select(IntegrationAccess).where(IntegrationAccess.kind == kind,
                                                           IntegrationAccess.obj_id == obj_id)).scalars():
         db.delete(row)
+    for grow in db.execute(select(GroupAccess).where(GroupAccess.kind == kind,
+                                                     GroupAccess.obj_id == obj_id)).scalars():
+        db.delete(grow)
 
 
 # --------------------------------------------------------------------------

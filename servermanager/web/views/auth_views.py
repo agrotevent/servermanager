@@ -88,6 +88,9 @@ def login():
             return _login_page(401, username=username)
         if security.password_needs_rehash(user.password_hash):
             user.password_hash = security.hash_password(password)
+        if user.sso_groups:
+            # rights through authentik groups only for logins through authentik (removals there take effect)
+            user.sso_groups, user.sso_groups_at = [], None
         return _finish_login(user, request.args.get("next"), "")
     return _login_page()
 
@@ -95,7 +98,8 @@ def login():
 @bp.get("/login/sso")
 def login_sso():
     if g.user:
-        return redirect(url_for("main.dashboard"))
+        # e.g. a tile in the authentik portal pointing here while the session is still valid
+        return redirect(_safe_next(request.args.get("next")))
     conf = sso_login.active(g.db)
     if conf is None:
         flash("Die Anmeldung per SSO ist nicht eingerichtet.", "warning")
@@ -150,6 +154,8 @@ def login_sso_callback():
         return fail("Das Konto ist vorübergehend gesperrt.", user.username)
     if created:
         audit(g.db, user, "user.create", user.username, f"automatisch per SSO ({srv.name})", ip=ip)
+    user.sso_groups = sso_login.groups_of(info)
+    user.sso_groups_at = utcnow()
     return _finish_login(user, pending.get("next"), f"SSO {srv.name}")
 
 

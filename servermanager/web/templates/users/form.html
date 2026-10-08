@@ -21,6 +21,7 @@
         {{ field('Passwort' if is_new else 'Neues Passwort', 'password', type='password', required=is_new, help=('' if is_new else 'leer lassen, um es nicht zu ändern'), attrs='autocomplete="new-password"') }}
         <div class="field"><label>&nbsp;</label>{{ checkbox('Muss Passwort bei nächster Anmeldung ändern', 'must_change', u.must_change_password) }}</div>
         <div class="full">{{ checkbox('Konto aktiv', 'active', u.active) }}</div>
+        {% if not is_new and u.sso_groups %}<div class="full"><small class="muted">authentik-Gruppen (Anmeldung über authentik am {{ u.sso_groups_at|dt }}): {{ u.sso_groups|join(', ') }} – Rechte über Gruppen vergibst du auf der <a href="{{ url_for('hetzner.index') }}#groups">Hetzner-Seite</a>.</small></div>{% endif %}
       </div>
     </div>
     <div class="card">

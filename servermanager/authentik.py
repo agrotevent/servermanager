@@ -176,6 +176,63 @@ class Authentik:
     def delete_user(self, pk: int) -> None:
         self.request("DELETE", f"core/users/{int(pk)}/")
 
+    # ------------------------------------------------------------------ link applications (tiles in the portal)
+    def application(self, slug: str) -> Optional[dict]:
+        """Application by slug (not filtered by the policies of the token user, unlike the list)."""
+        if not SLUG_RE.match(slug or ""):
+            raise AuthentikError("Ungültiger Slug")
+        try:
+            return self.request("GET", f"core/applications/{slug}/")
+        except AuthentikError as exc:
+            if exc.status == 404:
+                return None
+            raise
+
+    def upsert_link_app(self, name: str, slug: str, launch_url: str, description: str = "",
+                        publisher: str = "") -> dict:
+        """Application without provider: only a tile with a start address in the user's portal."""
+        body = {"name": name, "slug": slug, "meta_launch_url": launch_url, "meta_description": description,
+                "meta_publisher": publisher, "open_in_new_tab": False, "policy_engine_mode": "any"}
+        existing = self.application(slug)
+        if existing is None:
+            return self.request("POST", "core/applications/", body) or {}
+        if existing.get("provider"):
+            raise AuthentikError(f"In authentik gibt es bereits eine Anwendung „{slug}“ mit Provider")
+        return self.request("PATCH", f"core/applications/{slug}/", body) or {}
+
+    def set_app_groups(self, app: dict, group_names: list[str]) -> list[str]:
+        """Only members of these groups see and open the application (group bindings; none = everybody).
+
+        Bindings of other kinds (policies, single users) stay. Returns the group names authentik does not know."""
+        target = app.get("pbm_uuid") or app.get("pk")
+        if not target:
+            raise AuthentikError("Anwendung ohne Kennung")
+        known = {str(x.get("name") or "").lower(): x.get("pk") for x in self.groups()}
+        wanted = {known[n.lower()] for n in group_names if n.lower() in known}
+        missing = sorted({n for n in group_names if n.lower() not in known})
+        bindings = self._all("policies/bindings/", {"target": target})
+        have: set = set()
+        for b in bindings:
+            if not b.get("group") or b.get("policy") or b.get("user"):
+                continue
+            if b["group"] in wanted and b["group"] not in have:
+                have.add(b["group"])
+            else:
+                self.request("DELETE", f"policies/bindings/{quote(str(b['pk']), safe='')}/")
+        order = max([int(b.get("order") or 0) for b in bindings] or [0])
+        for gpk in sorted(wanted - have, key=str):
+            order += 1
+            self.request("POST", "policies/bindings/", {"target": target, "group": gpk, "order": order,
+                                                        "enabled": True, "negate": False, "timeout": 30})
+        return missing
+
+    def delete_app(self, slug: str) -> None:
+        try:
+            self.request("DELETE", f"core/applications/{slug}/")
+        except AuthentikError as exc:
+            if exc.status != 404:
+                raise
+
     # ------------------------------------------------------------------ OIDC applications
     def _flow(self, designation: str, preferred: str) -> Optional[str]:
         flows = self._all("flows/instances/", {"designation": designation})

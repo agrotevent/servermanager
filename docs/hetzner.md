@@ -105,6 +105,60 @@ Seite die angebundenen vSwitches mit VLAN und Netzen.
 Konten und Projekte anlegen, bearbeiten und entfernen dürfen nur Administratoren. Jeder Reset und jede Änderung
 steht mit Benutzer und Details im Audit-Log, ebenso ein fehlgeschlagener Reset.
 
+## Zugriff über authentik
+
+Hetzner Robot selbst bietet keine Anmeldung über einen fremden Anmeldedienst wie authentik. Stattdessen
+führt authentik zu den Hetzner-Funktionen des Servermanagers. Die Robot-Zugangsdaten bleiben dabei
+verschlüsselt im Servermanager, die Benutzer brauchen keine eigenen Hetzner-Zugänge. Voraussetzung ist
+die [Anmeldung am Servermanager über authentik](benutzer.md#anmeldung-uber-authentik-sso).
+
+Beides richten Administratoren unten auf der Hetzner-Seite unter *Zugriff über authentik* ein.
+
+### Rechte über authentik-Gruppen
+
+Eine authentik-Gruppe bekommt ein Recht (*Auswerten*, *Neustarten*, *Ändern*) auf ein Ziel:
+
+- ein Robot-Konto (alle Root-Server),
+- einen einzelnen Root-Server,
+- ein Cloud-Projekt (alle Cloud-Server),
+- einen einzelnen Cloud-Server.
+
+Den Gruppennamen schlägt das Eingabefeld aus authentik vor. Groß- und Kleinschreibung spielen keine
+Rolle.
+
+So wirkt es:
+
+- **Gruppen kommen bei jeder Anmeldung aus authentik.** Meldet sich ein Benutzer über authentik an,
+  übernimmt der Servermanager seine Gruppen und gibt ihm die zugeordneten Rechte. Wer in authentik aus
+  der Gruppe entfernt wird, verliert das Recht mit der nächsten Anmeldung. Sitzungen enden nach der
+  eingestellten Sitzungsdauer.
+- **Bei einer Anmeldung mit Passwort entfallen die Gruppen.** Rechte über Gruppen gelten nur für die
+  Anmeldung über authentik.
+- **Eigene Rechte zählen weiter.** Hat der Benutzer zusätzlich eigene Rechte (unter *Benutzer*), gilt
+  die höhere Stufe.
+- **Neue Benutzer:** Ist unter SSO *Unbekannte Benutzer anlegen* aktiv, entsteht das Konto beim ersten
+  Login automatisch. Die Gruppe genügt dann für den Zugriff.
+
+Welche Gruppen ein Benutzer zuletzt mitgebracht hat, steht unter *Benutzer → (Benutzer)*.
+
+### Kachel im authentik-Portal
+
+*Kachel in authentik anlegen* legt in authentik die Anwendung **Hetzner** an. Sie hat keinen Provider,
+sondern nur eine Start-Adresse.
+
+- **Klick auf die Kachel:** Sie meldet den Benutzer über authentik am Servermanager an
+  (`/login/sso?next=/hetzner/`) und öffnet direkt die Hetzner-Seite. Ist er schon angemeldet, geht es
+  sofort weiter.
+- **Sichtbarkeit:** Mit *Nur für Mitglieder der zugeordneten Gruppen sichtbar* (Standard) bindet der
+  Servermanager die Anwendung in authentik an die Gruppen aus *Rechte über authentik-Gruppen*. Nur deren
+  Mitglieder sehen die Kachel.
+  - Ändern sich die Zuordnungen, passt er die Bindungen automatisch an.
+  - Gruppen, die es in authentik nicht gibt, meldet er.
+  - Ohne zugeordnete Gruppe ist die Kachel für alle sichtbar.
+- **Entfernen** löscht die Anwendung samt Bindungen aus authentik.
+
+Voraussetzung ist die öffentliche URL des Servermanagers (*Einstellungen → Allgemein*).
+
 ## Fehlerbehebung
 
 - **„Anmeldung fehlgeschlagen – Webservice-Benutzer prüfen“:** Die Daten müssen vom

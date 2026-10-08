@@ -86,6 +86,12 @@ def exchange(au: Authentik, client: SsoClient, code: str, verifier: str, nonce: 
     return info
 
 
+def groups_of(info: dict) -> list[str]:
+    """Group names from the user info (authentik sends them in the profile scope)."""
+    raw = info.get("groups") or []
+    return sorted({str(x)[:150] for x in raw if isinstance(x, str) and x.strip()})[:200] if isinstance(raw, list) else []
+
+
 def resolve_user(db: Session, info: dict) -> tuple[User, bool]:
     """Local user for the SSO identity (created if allowed). Returns (user, created)."""
     username = str(info.get("preferred_username") or "").strip()

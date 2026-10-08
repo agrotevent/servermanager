@@ -81,6 +81,12 @@ def _v9(conn: Connection) -> None:
         add_column_if_missing(conn, "easybell_accounts", "transport", "VARCHAR(8) NOT NULL DEFAULT 'auto'")
 
 
+def _v10(conn: Connection) -> None:
+    # rights via authentik groups: groups of the last SSO login
+    add_column_if_missing(conn, "users", "sso_groups", "TEXT")
+    add_column_if_missing(conn, "users", "sso_groups_at", "DATETIME")
+
+
 MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     1: lambda conn: None,  # initial schema
     2: _v2,
@@ -91,6 +97,7 @@ MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     7: _v7,
     8: _v8,
     9: _v9,
+    10: _v10,
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 

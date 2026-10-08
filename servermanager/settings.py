@@ -19,6 +19,7 @@ DEFAULTS: dict[str, Any] = {
     "brand.primary": "",
     "brand.sidebar": "",
     "brand.accent": "",
+    "hetzner.ak_tile": {},             # tile "Hetzner" in the authentik portal (sso_id, slug, restrict)
     "brand.font": "setnetz",
     "brand.default_logo": True,        # Setnetz logos as long as no own logo is uploaded
     "brand.logo_only": False,

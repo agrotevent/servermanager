@@ -2,6 +2,21 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.21.0 – 08.10.2026
+
+### Neu
+
+- **Hetzner: Rechte über authentik-Gruppen.** Eine authentik-Gruppe bekommt *Auswerten*, *Neustarten*
+  oder *Ändern* auf ein Robot-Konto, einen Root-Server, ein Cloud-Projekt oder einen Cloud-Server. Das
+  gilt für Anmeldungen über authentik; die Gruppen kommen bei jeder Anmeldung frisch aus authentik.
+- **Hetzner: Kachel im authentik-Portal.** Ein Klick meldet über authentik am Servermanager an und öffnet
+  die Hetzner-Seite. Auf Wunsch sehen sie nur die Mitglieder der zugeordneten Gruppen.
+- Die Benutzerseite zeigt die authentik-Gruppen der letzten Anmeldung über authentik.
+
+### Geändert
+
+- `/login/sso` leitet bei bestehender Sitzung direkt auf die gewünschte Seite weiter.
+
 ## 1.20.0 – 08.10.2026
 
 ### Neu

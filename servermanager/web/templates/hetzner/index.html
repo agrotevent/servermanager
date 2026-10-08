@@ -71,4 +71,42 @@
 {% elif projects %}<div class="card"><div class="card-body"><p class="muted">Keine Cloud-Server im Projekt.</p></div></div>{% endif %}
 
 {% if not accounts and not servers and not projects and not cloud %}<div class="card"><div class="card-body">{{ empty('Noch kein Hetzner-Konto und kein Cloud-Projekt angebunden.', 'i-server') }}</div></div>{% endif %}
+
+{% if user.is_admin %}
+<h2 class="section-title" id="groups">Zugriff über authentik</h2>
+{% if not sso_login %}<div class="alert info"><div>Rechte über authentik-Gruppen und die Kachel im authentik-Portal setzen die <strong>Anmeldung am Servermanager über authentik</strong> voraus – einzurichten unter <a href="{{ url_for('sso.index') }}">SSO</a> → Anwendungen.</div></div>{% endif %}
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>Rechte über authentik-Gruppen</h2></div>
+    <div class="table-wrap"><table class="table compact"><thead><tr><th>authentik-Gruppe</th><th>Ziel</th><th>Recht</th><th></th></tr></thead><tbody>
+      {% for r in group_rows %}<tr><td><strong>{{ r.group }}</strong></td><td>{{ r.target }}<span class="sub">{{ r.section }}</span></td>
+        <td>{{ KIND_LEVEL_LABELS[r.kind][r.level] }}</td>
+        <td class="text-right"><form method="post" action="{{ url_for('hetzner.group_delete', gid=r.id) }}" class="inline" data-confirm="Recht der Gruppe {{ r.group }} entfernen?">{{ csrf() }}<button class="btn xs danger-outline">Entfernen</button></form></td></tr>
+      {% else %}<tr><td colspan="4" class="muted">Noch keine Gruppe zugeordnet.</td></tr>{% endfor %}</tbody></table></div>
+    <div class="card-body">
+      <form method="post" action="{{ url_for('hetzner.group_add') }}" class="form-grid">{{ csrf() }}
+        <div class="field"><label for="f-ak-group">authentik-Gruppe</label><input type="text" id="f-ak-group" name="group" required maxlength="150" list="ak-groups" placeholder="z. B. hetzner-technik">
+          <datalist id="ak-groups">{% for n in ak_groups %}<option value="{{ n }}">{% endfor %}</datalist></div>
+        <div class="field"><label for="f-ak-level">Recht</label><select id="f-ak-level" name="level">{% for lv, label in KIND_LEVEL_LABELS['hetzner'].items() %}<option value="{{ lv }}">{{ label }}</option>{% endfor %}</select></div>
+        <div class="field full"><label for="f-ak-target">Ziel</label><select id="f-ak-target" name="target" required>
+          {% for section, kind, items in group_targets %}{% if items %}<optgroup label="{{ section }}">{% for v, label in items %}<option value="{{ v }}">{{ label }}</option>{% endfor %}</optgroup>{% endif %}{% endfor %}</select></div>
+        <div class="full"><button class="btn primary">Zuordnen</button></div>
+      </form>
+      <p class="mt-1"><small class="muted">Gilt für Benutzer, die sich über authentik am Servermanager anmelden: Die Gruppen kommen bei jeder Anmeldung frisch aus authentik, bei einer Anmeldung mit Passwort entfallen sie. Zusammen mit eigenen Rechten des Benutzers gilt das höhere Recht. Neue Benutzer legt die SSO-Anmeldung automatisch an, wenn das unter SSO erlaubt ist.</small></p>
+    </div></div>
+  <div class="card"><div class="card-head"><h2>Kachel im authentik-Portal</h2></div><div class="card-body">
+    {% if tile.slug %}
+      <p><span class="badge success">eingerichtet</span> <small class="muted">am {{ (tile.at or '')|replace('T', ' ') }}</small></p>
+      <dl class="kv"><dt>Öffnet</dt><dd class="mono break">{{ tile.launch }}</dd>
+        <dt>Sichtbar für</dt><dd>{{ 'Mitglieder der zugeordneten Gruppen' if tile.restrict else 'alle Benutzer von authentik' }}</dd></dl>
+    {% else %}<p>Legt in authentik die Anwendung „Hetzner“ an. Sie erscheint als Kachel im Portal der Benutzer und meldet sie mit einem Klick über authentik am Servermanager an – direkt auf dieser Seite.</p>{% endif %}
+    <form method="post" action="{{ url_for('hetzner.tile') }}" class="mt-1">{{ csrf() }}
+      <label class="check"><input type="checkbox" name="restrict" value="1" {{ 'checked' if tile.restrict is not defined or tile.restrict }}> Nur für Mitglieder der zugeordneten Gruppen sichtbar</label>
+      <div class="flex mt-1" style="gap:8px"><button class="btn {{ '' if tile.slug else 'primary' }}" {{ 'disabled' if not sso_login or not base_url }}>{{ 'Kachel aktualisieren' if tile.slug else 'Kachel in authentik anlegen' }}</button>
+        {% if tile.slug %}<button class="btn danger-outline" name="remove" value="1" data-confirm="Kachel aus authentik entfernen?">Entfernen</button>{% endif %}</div>
+    </form>
+    {% if not base_url %}<p class="mt-1"><small style="color:var(--danger)">Die öffentliche URL des Servermanagers ist nicht gesetzt (Einstellungen → Allgemein).</small></p>{% endif %}
+    <p class="mt-1"><small class="muted">Hetzner Robot selbst bietet keine Anmeldung über einen fremden Anmeldedienst – die Kachel führt deshalb zu den Hetzner-Funktionen des Servermanagers. Die Zugangsdaten für Robot bleiben verschlüsselt im Servermanager. Benutzer mit eigenen (nicht über Gruppen vergebenen) Rechten sehen die Kachel nur, wenn sie nicht auf Gruppen beschränkt ist.</small></p>
+  </div></div>
+</div>
+{% endif %}
 {% endblock %}

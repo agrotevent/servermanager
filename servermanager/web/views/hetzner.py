@@ -6,10 +6,12 @@ Rights: on the Robot account (all servers) or on single servers; Auswerten = vie
 from __future__ import annotations
 
 import ipaddress
+import re
 from datetime import date, datetime, timezone
+from typing import Optional
 
 from flask import Blueprint, abort, flash, g, redirect, render_template, request, url_for
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from ... import access, hetzner, integrations, security
 from ...core import audit
@@ -61,9 +63,26 @@ def index():
     names = {a.id: a.name for a in g.db.execute(select(HetznerAccount)).scalars()}
     pnames = {p.id: p.name for p in g.db.execute(select(HcloudProject)).scalars()}
     systems = {s.id: s for s in g.db.execute(select(System)).scalars()}
+    ctx = {}
+    if g.user.is_admin:
+        from ... import settings, sso_login
+        conf = sso_login.active(g.db)
+        ctx = {"group_rows": group_rows(), "group_targets": group_targets(), "tile": tile_state(),
+               "sso_login": conf[0] if conf else None, "base_url": settings.base_url(g.db),
+               "ak_groups": _ak_group_names(conf[0]) if conf else []}
     return render_template("hetzner/index.html", accounts=accounts, servers=servers, names=names, systems=systems,
                            levels={s.id: _level(s) for s in servers}, projects=projects, cloud=[c for c, _ in cloud],
-                           cloud_levels={c.id: lv for c, lv in cloud}, pnames=pnames)
+                           cloud_levels={c.id: lv for c, lv in cloud}, pnames=pnames, **ctx)
+
+
+def _ak_group_names(srv) -> list[str]:
+    """Group names of authentik for the input suggestions (empty if authentik is not reachable)."""
+    from ...authentik import AuthentikError
+    try:
+        return sorted({str(x.get("name") or "") for x in integrations.sso_client(srv, timeout=5).groups()} - {""},
+                      key=str.lower)
+    except (AuthentikError, ValueError):
+        return []
 
 
 # ------------------------------------------------------------------ accounts (administrators)
@@ -423,3 +442,162 @@ def traffic_warnings(sid: int):
                traffic_monthly=res.get("traffic_monthly", monthly))
     g.db.commit()
     return _after(srv, f"Traffic-Warnungen für {ip} {'aktiviert' if enabled else 'deaktiviert'}.")
+
+
+# ------------------------------------------------------------------ access through authentik (administrators)
+TILE_SLUG = "sm-hetzner"
+TILE_SETTING = "hetzner.ak_tile"
+GROUP_RE = re.compile(r"^[^\x00-\x1f]{1,150}$")
+
+
+def group_targets() -> list[tuple[str, str, list[tuple[str, str]]]]:
+    """(section, kind, [(value, label)]) of everything rights can be granted on."""
+    from ...models import KIND_HCLOUD_SRV, HcloudServer
+    acc = g.db.execute(select(HetznerAccount).order_by(HetznerAccount.name)).scalars().all()
+    srv = g.db.execute(select(HetznerServer).order_by(HetznerServer.name)).scalars().all()
+    prj = g.db.execute(select(HcloudProject).order_by(HcloudProject.name)).scalars().all()
+    csv = g.db.execute(select(HcloudServer).order_by(HcloudServer.name)).scalars().all()
+    return [("Robot-Konten (alle Root-Server)", KIND_HETZNER, [(f"{KIND_HETZNER}:{a.id}", a.name) for a in acc]),
+            ("Root-Server", KIND_HETZNER_SRV, [(f"{KIND_HETZNER_SRV}:{s.id}", f"{s.name} (#{s.number})") for s in srv]),
+            ("Cloud-Projekte (alle Cloud-Server)", KIND_HCLOUD, [(f"{KIND_HCLOUD}:{p.id}", p.name) for p in prj]),
+            ("Cloud-Server", KIND_HCLOUD_SRV, [(f"{KIND_HCLOUD_SRV}:{c.id}", c.name) for c in csv])]
+
+
+def group_rows() -> list[dict]:
+    from ...models import GroupAccess
+    labels = {v: (section, label) for section, _k, items in group_targets() for v, label in items}
+    rows = []
+    for r in g.db.execute(select(GroupAccess).order_by(GroupAccess.group_name, GroupAccess.kind)).scalars():
+        section, label = labels.get(f"{r.kind}:{r.obj_id}", ("", f"{r.kind} #{r.obj_id}"))
+        rows.append({"id": r.id, "group": r.group_name, "kind": r.kind, "target": label, "section": section,
+                     "level": r.level})
+    return rows
+
+
+def tile_state() -> dict:
+    from ... import settings
+    return settings.get(g.db, TILE_SETTING) or {}
+
+
+def _sync_tile(restrict: Optional[bool] = None) -> list[str]:
+    """Create/update the tile in authentik; returns warnings. Raises AuthentikError/ValueError."""
+    from ... import settings, sso_login
+    from ...models import GroupAccess
+    conf = sso_login.active(g.db)
+    if conf is None:
+        raise ValueError("Die Anmeldung am Servermanager über authentik ist nicht eingerichtet (SSO → Anwendungen "
+                         "→ Anmeldung am Servermanager).")
+    base = settings.base_url(g.db)
+    if not base:
+        raise ValueError("Zuerst unter Einstellungen → Allgemein die öffentliche URL des Servermanagers setzen.")
+    srv, _client = conf
+    state = tile_state()
+    restrict = state.get("restrict", True) if restrict is None else restrict
+    au = integrations.sso_client(srv)
+    launch = f"{base}/login/sso?next=/hetzner/"
+    app = au.upsert_link_app("Hetzner", TILE_SLUG, launch, "Root- und Cloud-Server im Servermanager",
+                             "Servermanager")
+    groups = sorted({r[0] for r in g.db.execute(select(GroupAccess.group_name)).all()}, key=str.lower)
+    warnings = []
+    if restrict:
+        missing = au.set_app_groups(app, groups)
+        if missing:
+            warnings.append("In authentik unbekannte Gruppen: " + ", ".join(missing))
+        if not groups:
+            warnings.append("Noch keine Gruppe zugeordnet – die Kachel ist bis dahin für alle sichtbar.")
+    else:
+        au.set_app_groups(app, [])
+    settings.set(g.db, TILE_SETTING, {"sso_id": srv.id, "slug": TILE_SLUG, "restrict": bool(restrict),
+                                      "launch": launch, "at": integrations.utcnow().isoformat(timespec="minutes")})
+    return warnings
+
+
+def _after_group_change() -> None:
+    """Keep the visibility of the tile in step with the groups (best effort)."""
+    if not tile_state().get("restrict"):
+        return
+    try:
+        for w in _sync_tile():
+            flash(f"Kachel: {w}", "warning")
+    except Exception as exc:  # noqa: BLE001 - the rights are saved either way
+        flash(f"Kachel in authentik nicht aktualisiert: {exc}", "warning")
+
+
+@bp.post("/groups")
+@admin_required
+def group_add():
+    from ...integrations import ACCESS_MODELS
+    from ...models import GROUP_ACCESS_KINDS, KIND_LEVEL_LABELS, LEVEL_ORDER, GroupAccess
+    f = request.form
+    name = (f.get("group") or "").strip()
+    kind, _, raw = (f.get("target") or "").partition(":")
+    level = f.get("level", "")
+    if not GROUP_RE.match(name) or kind not in GROUP_ACCESS_KINDS or not raw.isdigit() or level not in LEVEL_ORDER:
+        flash("Gruppe, Ziel und Recht angeben.", "danger")
+        return redirect(url_for("hetzner.index") + "#groups")
+    obj = g.db.get(ACCESS_MODELS[kind], int(raw))
+    if obj is None:
+        abort(404)
+    row = g.db.execute(select(GroupAccess).where(func.lower(GroupAccess.group_name) == name.lower(),
+                                                 GroupAccess.kind == kind, GroupAccess.obj_id == obj.id)).scalars().first()
+    if row is None:
+        g.db.add(GroupAccess(group_name=name, kind=kind, obj_id=obj.id, level=level))
+    else:
+        row.level = level
+    label = KIND_LEVEL_LABELS[kind][level]
+    audit(g.db, g.user, "hetzner.group_access", name, f"{kind} {obj.name}: {label}", ip=client_ip())
+    g.db.commit()
+    flash(f"Gruppe „{name}“: {label} auf {obj.name}.", "success")
+    _after_group_change()
+    g.db.commit()
+    return redirect(url_for("hetzner.index") + "#groups")
+
+
+@bp.post("/groups/<int:gid>/delete")
+@admin_required
+def group_delete(gid: int):
+    from ...models import GroupAccess
+    row = g.db.get(GroupAccess, gid)
+    if row is None:
+        abort(404)
+    audit(g.db, g.user, "hetzner.group_access_remove", row.group_name, f"{row.kind} {row.obj_id}", ip=client_ip())
+    g.db.delete(row)
+    g.db.commit()
+    flash(f"Recht der Gruppe „{row.group_name}“ entfernt.", "warning")
+    _after_group_change()
+    g.db.commit()
+    return redirect(url_for("hetzner.index") + "#groups")
+
+
+@bp.post("/tile")
+@admin_required
+def tile():
+    from ... import settings
+    from ...authentik import AuthentikError
+    if request.form.get("remove"):
+        state = tile_state()
+        try:
+            from ...models import SsoServer
+            srv = g.db.get(SsoServer, int(state.get("sso_id") or 0))
+            if srv is not None:
+                integrations.sso_client(srv).delete_app(state.get("slug") or TILE_SLUG)
+        except (AuthentikError, ValueError) as exc:
+            flash(f"Kachel in authentik nicht entfernt: {exc}", "danger")
+            return redirect(url_for("hetzner.index") + "#groups")
+        settings.set(g.db, TILE_SETTING, {})
+        audit(g.db, g.user, "hetzner.tile_remove", "authentik", ip=client_ip())
+        g.db.commit()
+        flash("Kachel aus authentik entfernt.", "warning")
+        return redirect(url_for("hetzner.index") + "#groups")
+    try:
+        warnings = _sync_tile(restrict=bool(request.form.get("restrict")))
+    except (AuthentikError, ValueError) as exc:
+        g.db.rollback()
+        flash(f"Kachel nicht eingerichtet: {exc}", "danger")
+        return redirect(url_for("hetzner.index") + "#groups")
+    audit(g.db, g.user, "hetzner.tile", "authentik", tile_state().get("launch", ""), ip=client_ip())
+    g.db.commit()
+    flash("Kachel „Hetzner“ im authentik-Portal eingerichtet.", "success")
+    for w in warnings:
+        flash(f"Kachel: {w}", "warning")
+    return redirect(url_for("hetzner.index") + "#groups")
