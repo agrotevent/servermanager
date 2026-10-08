@@ -1,3 +1,3 @@
 """Servermanager - web based management of Debian, Nextcloud, Docker, ISPConfig and Proxmox systems."""
 
-__version__ = "1.28.0"
+__version__ = "1.28.1"

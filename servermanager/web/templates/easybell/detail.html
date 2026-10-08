@@ -11,7 +11,8 @@
       {% if not a.listen %}aus{% elif listener.connected %}<span class="badge success">verbunden</span>{% if listener.since %} <small class="muted">seit {{ listener.since|dt }}</small>{% endif %}{% elif listener.error %}<span class="badge danger">getrennt</span> <small class="muted">{{ listener.error }}</small>{% else %}<span class="badge">startet</span>{% endif %}
       {% if zammad %} · Anrufe an <a href="{{ url_for('zammad.detail', zid=zammad.id) }}">{{ zammad.name }}</a>{% endif %}</p></div>
   <div class="actions">
-    {% if int_can('easybell', a.id, 'operate') %}<form method="post" action="{{ url_for('easybell.refresh', aid=a.id) }}" class="inline">{{ csrf() }}<button class="btn ghost"><svg class="icon"><use href="#i-refresh"/></svg>Aktualisieren</button></form>{% endif %}
+    {% if int_can('easybell', a.id, 'operate') %}<form method="post" action="{{ url_for('easybell.refresh', aid=a.id) }}" class="inline">{{ csrf() }}<button class="btn ghost"><svg class="icon"><use href="#i-refresh"/></svg>Aktualisieren</button></form>
+    <form method="post" action="{{ url_for('easybell.public_ip', aid=a.id) }}" class="inline" title="Fragt api.ipify.org nach der Adresse, mit der der Servermanager ins Internet geht">{{ csrf() }}<button class="btn ghost">Öffentliche IP ermitteln</button></form>{% endif %}
     {% if user.is_admin %}<a class="btn ghost" href="{{ url_for('easybell.edit', aid=a.id) }}"><svg class="icon"><use href="#i-edit"/></svg>Bearbeiten</a>{% endif %}
   </div>
 </div>

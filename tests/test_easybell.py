@@ -445,3 +445,39 @@ def test_pages_and_permissions(app, db, ami, account):
     assert viewer.get(f"/easybell/{account.id}/edit").status_code == 403
     db.delete(new)
     db.commit()
+
+
+def test_poll_never_competes_with_the_event_connection(db, account, monkeypatch):
+    """Report 'Verbindung steht, aber keine Begrüßung': while listening is on and the event connection is
+    reconnecting, the poll opened a second AMI login - easybell allows one per access, so both blocked each
+    other. Now the poll only reports the listener's state."""
+    from servermanager import integrations
+
+    def no_second_login(*a, **kw):
+        raise AssertionError("second AMI connection")
+    monkeypatch.setattr(integrations, "easybell_client", no_second_login)
+    account.listener = {"connected": False, "error": "AMI jarvis.easybell.de:5039: Verbindung steht, aber keine "
+                                                     "Begrüßung vom Server"}
+    db.commit()
+    integrations.poll(db, account)
+    assert account.status == "error" and account.status_message.startswith("Ereignis-Verbindung: AMI")
+    account.listener = {"connected": False, "error": ""}   # starting
+    integrations.poll(db, account)
+    assert account.status == "online" and "baut sich gerade auf" in account.data["errors"]["endpoints"]
+
+
+def test_public_ip_on_request(app, db, account, monkeypatch):
+    import requests
+
+    from tests.test_web import login, make_user
+
+    class R:
+        text = "203.0.113.7\n"
+    monkeypatch.setattr(requests, "get", lambda url, timeout=8: R())
+    make_user(db, "eb-ip", "admin")
+    c = login(app, "eb-ip")
+    r = c.post(f"/easybell/{account.id}/public-ip", data={"csrf_token": c.csrf}, follow_redirects=True)
+    assert "203.0.113.7" in r.text and "IP-Freigabeliste" in r.text
+    R.text = "<html>"
+    r = c.post(f"/easybell/{account.id}/public-ip", data={"csrf_token": c.csrf}, follow_redirects=True)
+    assert "nicht ermittelbar" in r.text

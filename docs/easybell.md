@@ -87,7 +87,14 @@ und wählen Sie die Aufbewahrung nicht länger als nötig.
     Programm mit denselben Zugangsdaten (z. B. eine CTI-Software) blockiert dann den Servermanager.
 
   Solange die Ereignis-Verbindung des Servermanagers steht, fragt er Endgeräte und Gespräche über
-  genau diese Verbindung ab (alle 5 Minuten) und öffnet keine zweite.
+  genau diese Verbindung ab (alle 5 Minuten) und öffnet keine zweite. Ab 1.28.1 gilt das auch, während
+  sie sich neu verbindet. Bis dahin öffnete die Status-Abfrage dann eine zweite Verbindung, und beide
+  blockierten sich gegenseitig mit genau dieser Meldung.
+
+  **Öffentliche IP ermitteln** (oben auf der Seite) zeigt die Adresse, mit der der Servermanager ins
+  Internet geht. Sie muss in der IP-Freigabeliste stehen. Abgefragt wird sie nur auf Klick bei
+  `api.ipify.org`. Bei mehreren öffentlichen IPs am Router (z. B. eine eigene Mail-IP) ist es die
+  Adresse der Standard-Route, nicht die der Mail-IP.
 
 - **„keine Antwort – ist die öffentliche IP … in der IP-Freigabeliste eingetragen?“:** easybell
   verwirft Verbindungen von nicht freigegebenen Adressen kommentarlos. Die Public-IP prüfen, mit der

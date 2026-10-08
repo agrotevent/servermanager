@@ -2,6 +2,19 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.28.1 – 08.10.2026
+
+### Behoben
+
+- **easybell: „Verbindung steht, aber keine Begrüßung vom Server“**
+  - **Ursache:** Während sich die Ereignis-Verbindung neu verband, öffnete die regelmäßige
+    Status-Abfrage eine zweite AMI-Verbindung. easybell erlaubt je Zugang nur eine, also blockierten
+    sich beide gegenseitig.
+  - **Neu:** Bei eingeschalteter Ereignis-Verbindung öffnet die Abfrage nie eine eigene Verbindung und
+    meldet nur deren Zustand. Nur beim allerersten Test nach dem Einrichten verbindet sie sich direkt.
+- **easybell: Öffentliche IP ermitteln:** zeigt auf Klick die Adresse, mit der der Servermanager ins
+  Internet geht, zum Abgleich mit der IP-Freigabeliste.
+
 ## 1.28.0 – 08.10.2026
 
 ### Neu

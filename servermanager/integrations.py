@@ -249,6 +249,14 @@ def easybell_overview(e: EasybellAccount) -> tuple[dict, list[dict]]:
         # connected, first snapshot still pending: do not disturb the event connection with a second login
         data.update({"version": "", "endpoints": [], "channels": [], "via": "Ereignis-Verbindung",
                      "errors": {"endpoints": "Abfrage über die Ereignis-Verbindung läuft – gleich erneut ansehen"}})
+    elif e.listen and lst:
+        # the event connection holds or is about to take the only AMI connection of the access: a second login
+        # from here would block it (and itself) - so only its state is reported, nothing is connected here.
+        # (Before it ever ran - e.g. right after setting up the access - the direct test below is fine.)
+        if lst.get("error"):
+            raise AmiError(f"Ereignis-Verbindung: {lst['error']}")
+        data.update({"version": "", "endpoints": [], "channels": [], "via": "Ereignis-Verbindung",
+                     "errors": {"endpoints": "Die Ereignis-Verbindung baut sich gerade auf – gleich erneut ansehen"}})
     else:
         _easybell_query(e, data)
     bad = {"unavailable", "unreachable", "unknown", "invalid"}

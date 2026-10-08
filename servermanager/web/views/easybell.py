@@ -162,6 +162,27 @@ def refresh(aid: int):
     return redirect(url_for("easybell.detail", aid=aid))
 
 
+PUBLIC_IP_URL = "https://api.ipify.org"
+
+
+@bp.post("/<int:aid>/public-ip")
+@login_required
+def public_ip(aid: int):
+    """The address easybell sees: asked from an external service on request (for the IP allow list)."""
+    import ipaddress
+
+    import requests
+    _get(aid, LEVEL_OPERATE)
+    try:
+        r = requests.get(PUBLIC_IP_URL, timeout=8)
+        ip = str(ipaddress.ip_address(r.text.strip()))
+        flash(f"Öffentliche IP des Servermanagers (laut {PUBLIC_IP_URL}): {ip} – diese Adresse muss in der "
+              "IP-Freigabeliste der Cloud Telefonanlage stehen.", "info")
+    except (requests.RequestException, ValueError) as exc:
+        flash(f"Öffentliche IP nicht ermittelbar: {exc}", "danger")
+    return redirect(url_for("easybell.detail", aid=aid))
+
+
 @bp.get("/<int:aid>")
 @login_required
 def detail(aid: int):
