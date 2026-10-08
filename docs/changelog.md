@@ -2,6 +2,24 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.27.4 – 08.10.2026
+
+### Behoben
+
+- **Proxmox: Container übernehmen** brach mit „Für Container muss der Proxmox-Host als System (SSH)
+  verknüpft sein“ ab, wenn der Job nicht von der Übernahme-Seite kam, z. B. über *Einrichtung
+  wiederholen* oder die Optimierungen.
+  - Der Servermanager verknüpft den Host jetzt selbst, wenn er eindeutig ist: gleiche Adresse wie die
+    API, sonst das einzige Proxmox-System mit dem Namen des Nodes.
+  - Voraussetzung: Wer den Job startet, ist Administrator oder hat Vollzugriff auf den Host.
+  - Sonst sagt die Meldung, wo der Host zu verknüpfen ist.
+
+### Neu
+
+- **Updates: zurückgehaltene Pakete erklärt.** Hält `apt-get upgrade` Pakete zurück („kept back“), steht
+  am Ende des Jobs, was ein vollständiges Upgrade (dist-upgrade) für sie täte, und **welche Pakete es
+  entfernen würde**. Außerdem steht dort, welche Pakete von Hand festgehalten sind.
+
 ## 1.27.3 – 08.10.2026
 
 ### Behoben

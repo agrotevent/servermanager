@@ -40,6 +40,22 @@ Meist ist eine **Fremdquelle** kaputt, nicht Debian selbst. Ab 1.25.2 geht der S
 Dauerhaft lösen: veraltete Quellen entfernen. Beispiel: MariaDB 10.4 gibt es für Debian 13 nicht mehr,
 Debian bringt selbst MariaDB mit. Bei anderen Anbietern den Schlüssel nach deren Anleitung erneuern.
 
+## Updates: Pakete „kept back“ (zurückgehalten)
+
+`apt-get upgrade` installiert keine Updates, die neue Pakete brauchen oder andere Pakete entfernen würden.
+Solche Pakete bleiben stehen. Ab 1.27.4 steht am Ende des Jobs, was ein **vollständiges Upgrade**
+(dist-upgrade) für sie täte:
+
+- **ohne Entfernen:** Die Pakete brauchen nur neue Abhängigkeiten. *Vollständiges Upgrade* installiert sie
+  gefahrlos.
+- **mit „ENTFERNEN: …“:** Vorher prüfen! Häufige Ursache ist eine Fremdquelle (z. B. PHP von
+  `packages.sury.org`, nginx von `nginx.org`), deren Pakete nicht zur Debian-Version passen oder deren
+  Paketlisten wegen eines Schlüsselproblems nicht aktualisiert wurden. Erst die Quelle reparieren, dann
+  aktualisieren.
+
+Zur Fehlersuche auf dem System (ändert nichts): `apt-get -s dist-upgrade | grep -E '^(Inst|Remv)'` und
+`apt-cache policy <paket>`.
+
 ## Updates: „apt-get upgrade fehlgeschlagen“
 
 Die eigentliche Ursache steht im Job-Protokoll direkt über der Meldung (Zeilen mit `E:` oder

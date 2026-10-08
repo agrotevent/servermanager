@@ -341,3 +341,31 @@ esac
     assert ("Nicht aktualisiert: sgml-base – apt würde 1.31+nmu1 durch einen anderen Build derselben Version "
             "ersetzen (Priorität 1001 aus https://d17k9fuiwb52nc.cloudfront.net trixie/main)") in out
     assert "upgraded rest" in out and "SKIPPED=sgml-base" in out and state.read_text().strip() == ""
+
+
+def test_apt_explain_kept_back(tmp_path):
+    """Packages kept back by apt-get upgrade: say what a full upgrade would remove before anybody runs it."""
+    import os
+    b = tmp_path / "bin"
+    b.mkdir()
+    sim = tmp_path / "sim"
+    (b / "apt-get").write_text(f"#!/bin/bash\ncat {sim}\n")
+    (b / "apt-mark").write_text("#!/bin/bash\n[ \"$1\" = showhold ] && echo samba-libs\nexit 0\n")
+    for f in b.iterdir():
+        f.chmod(0o755)
+    env = {**os.environ, "PATH": f"{b}:{os.environ['PATH']}"}
+    lib = ROOT / "servermanager" / "modules" / "scripts" / "lib.sh"
+
+    def run(text, skipped=""):
+        sim.write_text(text)
+        return subprocess.run(["bash", "-c", f"source {lib}; APT_SKIPPED='{skipped}'; apt_explain_kept_back"],
+                              capture_output=True, text=True, env=env).stdout
+    out = run("Inst php8.3-fpm [8.3.20-1] (8.3.26-1 packages.sury.org [amd64])\n"
+              "Inst libicu76 (76.1-4 Debian:13.1/stable [amd64])\n"
+              "Remv php-smbclient [1.1.1-1]\nInst sgml-base [1.31+nmu1] (1.31+nmu1 cdn [all])\n", skipped="sgml-base")
+    assert "Zurückgehalten: 1 Paket(e) (php8.3-fpm)" in out and "ENTFERNEN: php-smbclient" in out
+    assert "neu installieren: libicu76" in out and "festgehalten (apt-mark hold): samba-libs" in out
+    out = run("Inst nginx [1.26.3-1] (1.28.0-1 nginx.org [amd64])\nInst libssl3t64 (3.5.1-1 Debian:13 [amd64])\n")
+    assert "Zurückgehalten: 1 Paket(e) (nginx) – sie brauchen neue Pakete (libssl3t64)" in out
+    assert "ohne etwas zu entfernen" in out and "ENTFERNEN" not in out
+    assert "Zurückgehalten" not in run("")

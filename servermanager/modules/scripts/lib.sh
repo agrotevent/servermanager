@@ -375,6 +375,26 @@ apt_run() {
     return 1
 }
 
+# after "apt-get upgrade": packages kept back (they need new packages or the removal of others). Says what a
+# full upgrade (dist-upgrade) would do for them, so nobody runs it blind - removals are often a sign of a
+# third-party source with versions that do not fit (e.g. PHP from packages.sury.org).
+apt_explain_kept_back() {
+    local sim kept rem new held
+    sim="$(LC_ALL=C apt-get -s -q dist-upgrade 2>/dev/null)"
+    kept="$(printf '%s\n' "$sim" | awk '/^Inst / && $3 ~ /^\[/ {print $2}' | grep -vxF -f <(printf '%s\n' $APT_SKIPPED) \
+            | sort -u | tr '\n' ' ' | sed 's/ $//')"
+    [ -n "$kept" ] || return 0
+    rem="$(printf '%s\n' "$sim" | awk '/^Remv / {print $2}' | sort -u | tr '\n' ' ' | sed 's/ $//')"
+    new="$(printf '%s\n' "$sim" | awk '/^Inst / && $3 !~ /^\[/ {print $2}' | sort -u | tr '\n' ' ' | sed 's/ $//')"
+    held="$(apt-mark showhold 2>/dev/null | tr '\n' ' ' | sed 's/ $//')"
+    [ -z "$held" ] || warn "Von Hand festgehalten (apt-mark hold): $held"
+    if [ -n "$rem" ]; then
+        warn "Zurückgehalten: $(printf '%s' "$kept" | wc -w) Paket(e) ($kept). Ein vollständiges Upgrade (dist-upgrade) würde dafür ENTFERNEN: $rem${new:+ – und neu installieren: $new}. Vorher prüfen, ob diese Pakete gebraucht werden – oft passt eine Fremdquelle nicht zur Debian-Version oder wurde nicht aktualisiert."
+    else
+        log "Zurückgehalten: $(printf '%s' "$kept" | wc -w) Paket(e) ($kept) – sie brauchen neue Pakete${new:+ ($new)}. Ein vollständiges Upgrade (dist-upgrade) installiert sie, ohne etwas zu entfernen."
+    fi
+}
+
 # message for die(): "<what>: <reason>"
 apt_fail() { die "$1${APT_ERR:+: $APT_ERR}"; }
 

@@ -40,6 +40,9 @@ list_new_conffiles "$stamp"
 rm -f "$stamp"
 remaining="$(apt-get -s dist-upgrade 2>/dev/null | grep -c '^Inst ')"
 log "Fertig. Noch ausstehende Paketupdates: $remaining"
+if [ "$mode" = "upgrade" ] && [ "${remaining:-0}" -gt 0 ]; then
+    apt_explain_kept_back
+fi
 if [ -n "$APT_REPOS_SKIPPED" ]; then
     warn "Nicht aktualisierte Paketquellen: $APT_REPOS_SKIPPED – Ursache siehe oben; Quelle reparieren oder entfernen"
 fi
