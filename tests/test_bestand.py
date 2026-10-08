@@ -282,3 +282,64 @@ def test_failed_import_keeps_failed_guests_for_retry(db, mocks, infra):
     job = db.get(Job, job.id)
     assert job.status == "failed" and job.remote["failed_items"] == [item]
     assert jobq.retry_plan(job)["payload"]["items"] == [item]
+
+
+def test_import_container_links_proxmox_host(db, mocks, infra, monkeypatch):
+    """Containers need pct exec on the Proxmox host: an unambiguous host system is linked automatically
+    (same address as the API), otherwise the message says where to link it; non-administrators need full
+    access to the host."""
+    import copy
+
+    from servermanager.jobs import enqueue, log_path
+    from servermanager.models import Job, System, SystemAccess
+    from servermanager.ssh import Result
+    from servermanager.worker import Worker
+    from tests.test_web import make_user
+    a, _b = mocks
+    a.state.guests[150] = dict(copy.deepcopy(a.state.guests[101]), vmid=150, name="powermanagement")
+    srv = infra["srv"]
+    calls = []
+
+    class HostConn:
+        def exec(self, cmd, **kw):
+            calls.append(cmd)
+            if cmd == "hostname":
+                return Result(0, "pve1\n", "")
+            return Result(0, "SM_KEY added\nSM_HOSTKEY ssh-ed25519 AAAAC3Nz\nSM_IP 127.0.0.2/8\n", "")
+
+        def close(self):
+            pass
+    monkeypatch.setattr(Worker, "_connect", lambda self, ctx, system: HostConn())
+    item = {"node": "pve1", "type": "lxc", "vmid": 150, "name": "powermanagement", "ip": "127.0.0.2"}
+
+    def run(user=None):
+        job = enqueue(db, kind="pve_import", title="import", pve_id=srv.id, user=user, payload={"items": [item]})
+        db.commit()
+        _run(job.id)
+        db.expire_all()
+        return db.get(Job, job.id)
+    try:
+        job = run()   # no system with the API's address
+        assert job.status == "failed" and "Bearbeiten → Verknüpfungen" in job.summary and not calls
+        host = System(name="pve1-host", host="127.0.0.1", types=["debian", "proxmox"])
+        db.add(host)
+        db.commit()
+        # a user without full access to the host may not have it linked
+        op = make_user(db, "pve-op")
+        job = run(op)
+        assert "ein Administrator" in job.summary and db.get(type(srv), srv.id).system_id is None
+        db.add(SystemAccess(user_id=op.id, system_id=host.id, level="full"))
+        db.commit()
+        job = run(op)
+        log = log_path(job.id).read_text()
+        assert "Proxmox-Host automatisch verknüpft: System „pve1-host“" in log, log
+        assert db.get(type(srv), srv.id).system_id == host.id
+        assert any(c.startswith("pct exec 150 ") for c in calls)
+    finally:
+        a.state.guests.pop(150, None)
+        db.query(System).filter_by(pve_server_id=srv.id, pve_vmid=150).delete()
+        db.query(SystemAccess).delete()
+        srv = db.get(type(srv), srv.id)
+        srv.system_id = None
+        db.query(System).filter_by(name="pve1-host").delete()
+        db.commit()

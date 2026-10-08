@@ -988,6 +988,37 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
         return f"veröffentlicht als {domain}"
 
     # ------------------------------------------------------------------ import of existing guests
+    def _link_pve_host(self, ctx, server: PveServer, node: str, user_id: Optional[int]) -> None:
+        """Containers are reached with ``pct exec`` on the Proxmox host, i.e. over SSH. Without a linked host
+        system take the one that is unambiguous: same address as the API, else the only Proxmox system named
+        like the node - if whoever started the job may act as root on it (administrator or full access)."""
+        from urllib.parse import urlsplit
+        api_host = (urlsplit(server.api_url or "").hostname or "").lower()
+        with session_scope() as db:
+            systems = db.execute(select(System)).scalars().all()
+            found = [x for x in systems if api_host and (x.host or "").lower() == api_host]
+            how = "Adresse der API"
+            if len(found) != 1:
+                found = [x for x in systems if x.has_type("proxmox") and node
+                         and node.lower() in {(x.hostname or "").lower(), (x.name or "").lower()}]
+                how = f"Name des Nodes {node}"
+            if len(found) != 1:
+                raise JobFailed(
+                    "Für Container braucht der Servermanager SSH zum Proxmox-Host (pct exec). Unter Infrastruktur → "
+                    f"Proxmox → {server.name} → Bearbeiten → Verknüpfungen „Proxmox-Host als System (SSH)“ wählen. "
+                    "Ist der Host noch kein System, ihn zuerst unter Systeme mit SSH-Zugang (root) anlegen. "
+                    "VMs brauchen das nicht (Guest-Agent).")
+            host_sys = found[0]
+            user = db.get(User, user_id) if user_id else None
+            if user is not None and not user.is_admin and not access.has_level(db, user, host_sys.id, LEVEL_FULL):
+                raise JobFailed(f"Für Container braucht der Servermanager SSH zum Proxmox-Host „{host_sys.name}“, "
+                                "den ein Administrator in der Proxmox-Verbindung verknüpfen muss (eigene Rechte "
+                                "auf das System reichen dafür nicht).")
+            db.get(PveServer, server.id).system_id = sid = host_sys.id
+            audit(db, None, "pve.link_host", server.name, f"{host_sys.name} ({how})")
+            ctx.say(f"Proxmox-Host automatisch verknüpft: System „{host_sys.name}“ ({host_sys.host}, über {how})")
+        server.system_id = sid
+
     def _import_guest(self, ctx, server: PveServer, api, host: dict, g: dict, install_ssh: bool,
                       user_id: Optional[int]) -> str:
         """Management access for an existing guest + register it as system (host key pinned)."""
@@ -997,7 +1028,7 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
         if g["type"] == "lxc":
             if host.get("conn") is None:
                 if not server.system_id:
-                    raise JobFailed("Für Container muss der Proxmox-Host als System (SSH) verknüpft sein")
+                    self._link_pve_host(ctx, server, g["node"], user_id)
                 hs = self._system(server.system_id)
                 host["conn"] = self._connect(ctx, hs)
                 host["node"] = host["conn"].exec("hostname", timeout=20).stdout.strip()
