@@ -61,7 +61,7 @@ zwei häufige Fälle selbst und versucht es dann noch einmal:
     (apt 3 meldet ihn ebenfalls als Rückstufung, ab 1.27.3), z. B. `sgml-base` aus einer
     Hersteller-Quelle.
   - Dauerhaft lösen: die Pin-Datei anpassen oder entfernen. Ist die angebotene Version gewollt, einmal von
-    Hand `apt-get install --allow-downgrades <paket>` ausführen.
+    Hand `apt-get -y install --allow-downgrades <paket>` ausführen (mit `-y`, denn unter *Befehl ausführen* kann niemand die Rückfrage von apt beantworten).
 
 Bleibt der Fehler, auf dem System als root prüfen:
 
