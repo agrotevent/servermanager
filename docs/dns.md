@@ -8,7 +8,7 @@ Unterstützte Anbieter:
 
 | Anbieter | Adresse der Schnittstelle | Zugang |
 |---|---|---|
-| **hosting.de-Plattform**: FRESH Internet, hosting.de, http.net | z. B. `https://secure.fresh-internet.de` | API-Schlüssel aus dem Kundenportal |
+| **hosting.de-Plattform**: FRESH Internet, hosting.de, http.net | z. B. `https://secure.fresh-internet.net` | API-Schlüssel aus dem Kundenportal |
 | **INWX** | `https://api.domrobot.com` | Benutzername und Passwort, optional Zwei-Faktor |
 
 Die Adresse ist einstellbar. FRESH Internet läuft auf der Plattform von hosting.de und nutzt dieselbe
@@ -19,7 +19,7 @@ Schnittstelle unter der eigenen Adresse.
 *Anbieter anbinden* (nur Administratoren), oben den Anbieter wählen:
 
 - **hosting.de-Plattform:**
-  - Adresse, für FRESH Internet `https://secure.fresh-internet.de`.
+  - Adresse, für FRESH Internet `https://secure.fresh-internet.net`.
   - **API-Schlüssel** aus dem Kundenportal, mit Rechten für DNS und Domains. Fehlen die Rechte für
     Domains, erscheinen nur die Zonen. Die Seite sagt dann, warum.
 - **INWX:**

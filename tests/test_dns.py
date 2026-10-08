@@ -58,7 +58,7 @@ def test_helpers():
                 {"type": "AAAA", "content": "1.2.3.4"}, {"type": "XYZ", "content": "x"}):
         with pytest.raises(DnsError):
             dnsapi.validate_record("example.com", bad)
-    assert dnsapi.normalize_url("secure.fresh-internet.de/api/dns/v1/json", "hostingde") == "https://secure.fresh-internet.de"
+    assert dnsapi.normalize_url("secure.fresh-internet.net/api/dns/v1/json", "hostingde") == "https://secure.fresh-internet.net"
     assert dnsapi.normalize_url("", "inwx") == "https://api.domrobot.com"
 
 
@@ -252,3 +252,9 @@ def test_mail_dns(app, db, mock, accounts):
     finally:
         db.delete(mc)
         db.commit()
+
+
+def test_unknown_host_message():
+    c = HostingDe("https://secure.fresh-internet.invalid", m.HD_KEY, timeout=5)
+    with pytest.raises(DnsError, match="gibt es im DNS nicht.*secure.fresh-internet.net"):
+        c.zones()

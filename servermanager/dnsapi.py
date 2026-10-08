@@ -25,7 +25,7 @@ import requests
 from . import tlspin
 
 PROVIDERS = {"hostingde": "hosting.de-Plattform (FRESH Internet, hosting.de, http.net)", "inwx": "INWX"}
-DEFAULT_URLS = {"hostingde": "https://secure.fresh-internet.de", "inwx": "https://api.domrobot.com"}
+DEFAULT_URLS = {"hostingde": "https://secure.fresh-internet.net", "inwx": "https://api.domrobot.com"}
 RECORD_TYPES = ("A", "AAAA", "CNAME", "MX", "TXT", "SRV", "CAA", "NS", "PTR")
 HOST_RE = re.compile(r"^(\*\.)?([a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?\.)*[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 HOST_ONLY_RE = re.compile(r"^([a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
@@ -173,6 +173,12 @@ class Provider:
         except requests.exceptions.SSLError as exc:
             raise DnsError(tlspin.tls_message(self.base, exc)) from exc
         except requests.RequestException as exc:
+            host = urlsplit(self.base).hostname or self.base
+            if "NameResolutionError" in str(exc) or "Name or service not known" in str(exc) \
+                    or "nodename nor servname" in str(exc) or "getaddrinfo failed" in str(exc):
+                hint = (" – für FRESH Internet lautet die Adresse https://secure.fresh-internet.net"
+                        if "fresh-internet" in host else "")
+                raise DnsError(f"Den Namen {host} gibt es im DNS nicht – Adresse der Schnittstelle prüfen{hint}") from exc
             raise DnsError(f"{PROVIDERS[self.kind].split(' (')[0]} nicht erreichbar ({self.base}): {exc}") from exc
         if r.status_code in (301, 302, 303, 307, 308):
             raise DnsError(f"Die Adresse leitet um (HTTP {r.status_code}) – Adresse der Schnittstelle prüfen",

@@ -2,6 +2,15 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.23.1 – 08.10.2026
+
+### Behoben
+
+- DNS & Domains: Die Vorgabe für FRESH Internet war `secure.fresh-internet.de`. Diesen Namen gibt es im
+  DNS nicht, richtig ist **`https://secure.fresh-internet.net`**. Kann der Servermanager die Adresse
+  einer Schnittstelle nicht auflösen, sagt die Meldung das jetzt deutlich, statt eine technische
+  Fehlermeldung zu zeigen.
+
 ## 1.23.0 – 08.10.2026
 
 ### Neu

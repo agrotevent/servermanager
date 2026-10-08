@@ -5,7 +5,7 @@
 {% block title %}{{ 'Anbieter anbinden' if is_new else a.name ~ ' bearbeiten' }}{% endblock %}
 {% block content %}
 <div class="page-head"><div class="grow"><h1>{{ 'DNS-Anbieter anbinden' if is_new else a.name ~ ' bearbeiten' }}</h1>
-  <p>{% if a.provider == 'inwx' %}INWX: mit Benutzername und Passwort (am besten ein eigener API-Benutzer unter <em>Konto → Benutzer</em>). Ist die Zwei-Faktor-Anmeldung aktiv, den geheimen Schlüssel aus dem QR-Code hinterlegen.{% else %}hosting.de-Plattform (auch FRESH Internet unter <code>secure.fresh-internet.de</code>): mit einem API-Schlüssel aus dem Kundenportal, mit Rechten für DNS und Domains.{% endif %}</p></div></div>
+  <p>{% if a.provider == 'inwx' %}INWX: mit Benutzername und Passwort (am besten ein eigener API-Benutzer unter <em>Konto → Benutzer</em>). Ist die Zwei-Faktor-Anmeldung aktiv, den geheimen Schlüssel aus dem QR-Code hinterlegen.{% else %}hosting.de-Plattform (auch FRESH Internet unter <code>secure.fresh-internet.net</code>): mit einem API-Schlüssel aus dem Kundenportal, mit Rechten für DNS und Domains.{% endif %}</p></div></div>
 {% if is_new %}<nav class="tabs">{% for k, v in providers.items() %}<a href="?provider={{ k }}" class="{{ 'active' if a.provider == k }}">{{ v.split(' (')[0] }}</a>{% endfor %}</nav>{% endif %}
 <form method="post" autocomplete="off">{{ csrf() }}<input type="hidden" name="provider" value="{{ a.provider }}">
 <div class="grid grid-2">
