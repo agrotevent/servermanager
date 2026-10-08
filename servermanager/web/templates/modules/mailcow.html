@@ -1,0 +1,12 @@
+{% from "_macros.html" import empty with context %}
+{% include "modules/_panel_head.html" %}
+{% if data.version %}
+{% set u = data.upd or {} %}
+{% set down = data.containers|rejectattr('state', 'equalto', 'running')|list %}
+<div class="stats">
+  <div class="stat"><div class="label">Installiert</div><div class="value" style="font-size:20px">{{ data.version }}</div><div class="sub">{{ data.path }}{% if data.branch %} · {{ data.branch }}{% endif %}</div></div>
+  <div class="stat {{ 'warning' if u.available else 'success' if u.checked else '' }}"><div class="label">Update</div><div class="value" style="font-size:20px">{{ 'verfügbar' if u.available else 'aktuell' if u.checked else '?' }}</div><div class="sub">{% if u.checked %}geprüft {{ u.checked|dt }}{% else %}noch nicht geprüft{% endif %}{% if u.error %} · {{ u.error }}{% endif %}</div></div>
+  <div class="stat {{ 'danger' if down else 'success' }}"><div class="label">Container</div><div class="value">{{ data.containers|length - down|length }}/{{ data.containers|length }}</div><div class="sub">laufen</div></div>
+</div>
+{% if down %}<div class="alert warning"><div>Nicht laufend: {% for c in down %}{{ c.name }} ({{ c.state }}){{ ', ' if not loop.last }}{% endfor %}</div></div>{% endif %}
+{% elif not error %}{{ empty('Keine Daten.') }}{% endif %}

@@ -71,6 +71,8 @@ def detect_types(facts: dict) -> list[str]:
         types.append("newt")
     if facts.get("cloudpanel_version"):
         types.append("cloudpanel")
+    if facts.get("mailcow_path"):
+        types.append("mailcow")
     return types
 
 

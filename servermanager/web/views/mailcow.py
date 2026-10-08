@@ -188,6 +188,8 @@ def detail(mc_id: int):
     ctx["router"] = g.db.get(RouterDevice, mc.router_id) if mc.router_id else None
     ctx["publish"] = _publish_args(mc)
     ctx["pangolin"] = primary_pangolin()
+    host = g.db.get(System, mc.system_id) if mc.system_id else None
+    ctx["host"] = host if host is not None and access.system_level(g.db, g.user, host.id) else None
     return render_template("mailcow/detail.html", **ctx)
 
 

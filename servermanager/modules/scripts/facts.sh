@@ -101,6 +101,14 @@ if command -v asterisk >/dev/null 2>&1; then
     kv asterisk_active "$(pgrep -x asterisk >/dev/null 2>&1 && echo active || echo inactive)"
     command -v fwconsole >/dev/null 2>&1 && kv freepbx yes
 fi
+for mc in /opt/mailcow-dockerized /root/mailcow-dockerized /srv/mailcow-dockerized; do
+    [ -f "$mc/mailcow.conf" ] && [ -f "$mc/update.sh" ] || continue
+    kv mailcow_path "$mc"
+    v="$(sed -n 's/.*MAILCOW_GIT_VERSION="\([^"]*\)".*/\1/p' "$mc/data/web/inc/app_info.inc.php" 2>/dev/null | head -n 1)"
+    [ -n "$v" ] || v="$(git -c safe.directory="$mc" -C "$mc" describe --tags --abbrev=0 2>/dev/null)"
+    kv mailcow_version "${v:-unbekannt}"
+    break
+done
 if command -v clpctl >/dev/null 2>&1; then
     kv cloudpanel_version "$(dpkg-query -W -f='${Version}' cloudpanel 2>/dev/null || echo unknown)"
 fi

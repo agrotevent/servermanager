@@ -6,6 +6,7 @@
 | **Nextcloud** | Status, Apps aktualisieren, Core-Update (updater.phar + occ upgrade + DB-Reparaturen), Wartungsmodus, DB-Indizes, Reparatur, Dateien neu einlesen, Cron | Core- und App-Updates (`occ update:check`), Wartungsmodus, DB-Upgrade nötig |
 | **Docker** | Container starten/stoppen/neu starten/entfernen, Compose-Projekte aktualisieren (pull + up -d) oder neu starten, alle Projekte aktualisieren, ungenutzte Images entfernen | neue Images für laufende Container (optional, per `docker pull`) |
 | **ISPConfig** | unbeaufsichtigtes Update (stable, mit ISPConfig-Backup, Dienste neu konfigurieren), Mail-Warteschlange abarbeiten | installierte vs. aktuelle Version, Dienste, Mail-Warteschlange, Fehler im cron.log |
+| **Mailcow** | Update prüfen (`update.sh --check`), **Mailcow aktualisieren** (`update.sh --force`, optional vorher sichern und ohne Ping-Prüfung), Sicherung (`helper-scripts/backup_and_restore.sh backup all`) | neuer Stand auf GitHub (`update.sh --check`), Container-Status |
 | **CloudPanel** | CloudPanel aktualisieren (`clp-update`), Cloudflare-IPs aktualisieren; Sites, Datenbanken, Benutzer und Let's Encrypt unter *Infrastruktur → CloudPanel* ([CloudPanel](cloudpanel.md)) | installierte Version (`dpkg`), Zertifikatslaufzeiten |
 | **Proxmox VE** | VMs/Container starten, herunterfahren, neu starten, Sicherung (vzdump), Upgrade-Prüfung (pve8to9) | Paketupdates (dist-upgrade), Cluster-Ressourcen, Storage |
 
@@ -59,3 +60,24 @@ Wird erkannt, wenn `asterisk` installiert ist; FreePBX zusätzlich an `fwconsole
 
 Wird ein System als ISPConfig erkannt, richtet der Servermanager automatisch die Remote-API ein und
 legt die Verbindung unter *Infrastruktur → ISPConfig* an – siehe [ISPConfig](ispconfig.md).
+
+### Mailcow: Update
+
+Erkannt wird mailcow-dockerized unter `/opt/mailcow-dockerized` (sonst `/root/…` oder `/srv/…`) an
+`mailcow.conf` und `update.sh`. Bei bestehenden Systemen einmal *Update-Prüfung* mit Typerkennung
+ausführen, z. B. über *Auf dem System erkennen* auf der Seite der Mailcow-Verbindung. Diese Verbindung
+zeigt den Stand und verlinkt auf die Aktionen, wenn unter *Bearbeiten* das System (SSH) verknüpft ist.
+
+- **Mailcow aktualisieren** (Vollzugriff) führt das offizielle `update.sh --force` aus, ohne Rückfragen.
+  Neuer Code und neue Images werden geladen, die Container neu gestartet. Mail und Webmail sind dabei
+  einige Minuten weg.
+  - Holt sich `update.sh` zuerst neue Module und verlangt einen Neustart (Exit-Code 2), startet der
+    Servermanager es ein zweites Mal.
+  - Der Job läuft vom SSH-Abbruch unabhängig weiter. Am Ende stehen Version und nicht laufende
+    Container im Protokoll.
+- **Vorher sichern** ruft vor dem Update `backup_and_restore.sh backup all` auf (Ordner wählbar,
+  Vorgabe `/var/backups/mailcow`). Scheitert die Sicherung, startet das Update nicht.
+- **Internet-Prüfung per Ping überspringen** (`--skip-ping-check`), wenn ICMP nach außen gesperrt ist.
+- Nach dem Update wird sofort neu geprüft, die Update-Übersicht ist damit aktuell. Regelmäßig geprüft
+  wird bei jeder tiefen Prüfung. Das Update lässt sich im **Wartungsplaner** einplanen, z. B. nachts.
+

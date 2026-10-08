@@ -2,6 +2,23 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.28.0 – 08.10.2026
+
+### Neu
+
+- **Mailcow-Update per SSH:** neuer Systemtyp *Mailcow*, erkannt an `/opt/mailcow-dockerized`. Er
+  bietet:
+  - Update prüfen (`update.sh --check`).
+  - **Mailcow aktualisieren** mit dem offiziellen `update.sh --force`, optional mit Sicherung vorher und
+    ohne Ping-Prüfung, auch im Wartungsplaner.
+  - Sicherung erstellen.
+  - Container-Status.
+
+  Die Mailcow-Verbindung zeigt den Update-Stand und verlinkt auf die Aktionen. Ein verfügbares Update
+  erscheint in der Update-Übersicht.
+- Nach einer Update-Aktion (Mailcow, Nextcloud, ISPConfig) läuft die Update-Prüfung des Moduls sofort
+  neu. Die Übersicht ist damit nicht mehr bis zur nächsten geplanten Prüfung veraltet.
+
 ## 1.27.5 – 08.10.2026
 
 ### Behoben

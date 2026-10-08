@@ -557,7 +557,25 @@ class Worker:
         body, env = mod.script_for(action, system, params)
         code, conn = self._run_script(ctx, conn, system, body, env, action.detached, action.timeout, state, idx)
         self._step_result(ctx, step, code, failures)
+        if code == 0 and action.group == "Updates":
+            self._recheck_module(ctx, conn, system.id, mod)
         return conn
+
+    def _recheck_module(self, ctx: JobContext, conn: Connection, system_id: int, mod) -> None:
+        """After an update action the module's own update check runs again, so the overview is current."""
+        from .modules.base import Module
+        if type(mod).check is Module.check:
+            return
+        try:
+            with session_scope() as db:
+                s = db.get(System, system_id)
+                data = mod.check(conn, s, {})
+                if data is not None:
+                    upd = dict(s.updates or {})
+                    upd[mod.key] = data
+                    s.updates = upd
+        except (SSHError, OSError, ValueError, RuntimeError) as exc:
+            ctx.say(f"Update-Prüfung von {mod.label} danach fehlgeschlagen: {exc}")
 
     # ------------------------------------------------------------------ job kinds
     def job_action(self, ctx, job_id, system_id, payload) -> str:

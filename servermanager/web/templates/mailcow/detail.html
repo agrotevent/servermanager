@@ -15,6 +15,17 @@
   <div class="actions">{% if user.is_admin %}<a class="btn ghost" href="{{ url_for('mailcow.edit', mc_id=m.id) }}"><svg class="icon"><use href="#i-edit"/></svg>Bearbeiten</a>{% endif %}</div>
 </div>
 {{ alerts_box(m) }}
+{% if host %}
+<div class="card"><div class="card-body flex" style="gap:12px;align-items:center;flex-wrap:wrap">
+  <span class="grow"><strong>Updates per SSH</strong> über das System <a href="{{ url_for('systems.detail', system_id=host.id) }}">{{ host.name }}</a>:
+  {% if host.has_type('mailcow') %}{% set u = host.upd.get('mailcow') or {} %}
+    mailcow {{ host.fact.get('mailcow_version') or '?' }} –
+    {% if u.available %}<span class="badge warning">Update verfügbar</span>{% elif u.checked %}<span class="badge success">aktuell</span> <small class="muted">geprüft {{ u.checked|dt }}</small>{% else %}<span class="muted">noch nicht geprüft</span>{% endif %}
+  {% else %}<span class="muted">mailcow ist auf dem System noch nicht erkannt.</span>{% endif %}</span>
+  {% if host.has_type('mailcow') %}<a class="btn {{ 'primary' if (host.upd.get('mailcow') or {}).available }}" href="{{ url_for('systems.detail', system_id=host.id, tab='mailcow') }}">Aktualisieren / Sicherung …</a>
+  {% elif can(host.id, 'operate') %}<form method="post" action="{{ url_for('systems.check', system_id=host.id) }}" class="inline">{{ csrf() }}<input type="hidden" name="detect" value="1"><button class="btn">Auf dem System erkennen</button></form>{% endif %}
+</div></div>
+{% elif user.is_admin and not m.system_id %}<p class="muted"><small>Für Updates per SSH (update.sh) unter <a href="{{ url_for('mailcow.edit', mc_id=m.id) }}">Bearbeiten</a> das System (SSH) des Mailcow-Servers verknüpfen.</small></p>{% endif %}
 <nav class="tabs">{% for k, v in tabs.items() %}<a href="?tab={{ k }}" class="{{ 'active' if tab == k }}">{{ v }}</a>{% endfor %}</nav>
 {% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
 

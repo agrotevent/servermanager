@@ -7,13 +7,14 @@ from .cloudpanel import CloudPanelModule
 from .debian import DebianModule
 from .docker import DockerModule
 from .ispconfig import ISPConfigModule
+from .mailcow import MailcowModule
 from .newt import NewtModule
 from .nextcloud import NextcloudModule
 from .proxmox import ProxmoxModule
 
 MODULES: dict[str, Module] = {m.key: m for m in (
     DebianModule(), NextcloudModule(), DockerModule(), ISPConfigModule(), ProxmoxModule(), NewtModule(),
-    AsteriskModule(), CloudPanelModule())}
+    AsteriskModule(), CloudPanelModule(), MailcowModule())}
 
 TYPE_LABELS = {k: m.label for k, m in MODULES.items()}
 TYPE_LABELS["debian"] = "Debian"
