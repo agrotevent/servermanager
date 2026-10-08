@@ -10,6 +10,7 @@
 <div class="card" id="new" style="border-color: var(--success)">
   <div class="card-head"><h2>Token erstellt{% if created.name %}: {{ created.name }}{% endif %}</h2><span class="badge warning">wird nur einmal angezeigt</span></div>
   <div class="card-body">
+    {% if pin.mismatch %}<div class="alert danger"><div><strong>Achtung:</strong> Der hinterlegte Zertifikats-Pin passt nicht zum Zertifikat unter {{ pin.host }} – der Befehl bricht mit „public key does not match pinned public key“ ab. Unter <a href="{{ url_for('admin.settings_page') }}#enroll">Einstellungen → Enrollment</a> „Pin übernehmen“ und danach ein neues Token erstellen.</div></div>{% endif %}
     <p>Auf dem neuen System als <strong>root</strong> ausführen:</p>
     <div class="codebox" id="cmd-curl">{{ command.curl }}</div>
     <button type="button" class="btn sm mt-1" data-copy="#cmd-curl">Kopieren</button>

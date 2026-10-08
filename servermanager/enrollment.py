@@ -62,9 +62,70 @@ def find_token(db: Session, token: str) -> Optional[EnrollmentToken]:
         EnrollmentToken.token_hash == security.token_hash(token))).scalar_one_or_none()
 
 
+_TLS_CACHE: dict[str, tuple[float, dict]] = {}
+
+
+def spki_pin(der: bytes) -> str:
+    """curl's --pinnedpubkey value (sha256 of the public key, base64) of a DER certificate."""
+    import base64
+    import hashlib
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import serialization
+    spki = x509.load_der_x509_certificate(der).public_key().public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+    return base64.b64encode(hashlib.sha256(spki).digest()).decode()
+
+
+def served_tls(base: str, timeout: float = 6) -> dict:
+    """The certificate clients get at the public address: its pin and whether it is publicly trusted
+    (then no pin is needed - and a pin would break with every renewal, e.g. Let's Encrypt behind Pangolin)."""
+    import socket
+    import ssl
+    import time
+    from urllib.parse import urlsplit
+    parts = urlsplit(base or "")
+    if parts.scheme != "https" or not parts.hostname:
+        return {"checked": False}
+    hit = _TLS_CACHE.get(base)
+    if hit and time.monotonic() - hit[0] < 300:
+        return hit[1]
+    host, port = parts.hostname, parts.port or 443
+    out: dict = {"checked": True, "host": f"{host}:{port}", "trusted": False, "pin": "", "error": ""}
+    try:
+        try:
+            with socket.create_connection((host, port), timeout=timeout) as sock:
+                with ssl.create_default_context().wrap_socket(sock, server_hostname=host) as tls:
+                    der = tls.getpeercert(binary_form=True)
+            out["trusted"] = True
+        except ssl.SSLCertVerificationError:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname, ctx.verify_mode = False, ssl.CERT_NONE
+            with socket.create_connection((host, port), timeout=timeout) as sock:
+                with ctx.wrap_socket(sock, server_hostname=host) as tls:
+                    der = tls.getpeercert(binary_form=True)
+        out["pin"] = spki_pin(der)
+    except (OSError, ValueError) as exc:
+        out["error"] = str(exc)[:200]
+    _TLS_CACHE[base] = (time.monotonic(), out)
+    return out
+
+
+def pin_status(db: Session) -> dict:
+    """Stored pin compared with what the public address serves (for the settings and the enrollment page)."""
+    pin = settings.get(db, "enroll.tls_pin") or ""
+    st = dict(served_tls(settings.base_url(db))) if pin or settings.get(db, "enroll.insecure_tls") else {}
+    st["stored"] = pin
+    st["mismatch"] = bool(pin and st.get("pin") and st["pin"] != pin)
+    return st
+
+
 def curl_opts(db: Session) -> str:
     pin = settings.get(db, "enroll.tls_pin")
     if pin:
+        if served_tls(settings.base_url(db)).get("trusted"):
+            # publicly trusted certificate at the public address: curl checks it against the CAs
+            return ""
         return f"-k --pinnedpubkey 'sha256//{pin}'"
     if settings.get(db, "enroll.insecure_tls"):
         return "-k"

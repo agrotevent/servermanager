@@ -2,6 +2,18 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.27.5 – 08.10.2026
+
+### Behoben
+
+- **Enrollment: „curl: (90) SSL: public key does not match pinned public key“**
+  - **Ursache:** Der Zertifikats-Pin stammte aus dem lokalen Zertifikat. Clients sehen aber das Zertifikat
+    unter der öffentlichen Adresse, z. B. Let's Encrypt über Pangolin.
+  - **Öffentlich vertrauenswürdiges Zertifikat dort:** Der Pin wird nicht mehr verwendet. curl prüft
+    normal gegen die Zertifizierungsstellen. Ein Pin würde ohnehin bei jeder Erneuerung brechen.
+  - **„Pin übernehmen“** nimmt das Zertifikat, das unter der öffentlichen Adresse tatsächlich kommt.
+  - **Hinweis bei falschem Pin:** Einstellungen und Enrollment-Seite warnen jetzt, wenn der Pin nicht passt.
+
 ## 1.27.4 – 08.10.2026
 
 ### Behoben

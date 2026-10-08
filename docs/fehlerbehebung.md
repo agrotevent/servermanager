@@ -40,6 +40,19 @@ Meist ist eine **Fremdquelle** kaputt, nicht Debian selbst. Ab 1.25.2 geht der S
 Dauerhaft lösen: veraltete Quellen entfernen. Beispiel: MariaDB 10.4 gibt es für Debian 13 nicht mehr,
 Debian bringt selbst MariaDB mit. Bei anderen Anbietern den Schlüssel nach deren Anleitung erneuern.
 
+## Enrollment: „curl: (90) SSL: public key does not match pinned public key“
+
+Der Zertifikats-Pin (*Einstellungen → Enrollment*) passt nicht zu dem Zertifikat, das der neue Client
+unter der öffentlichen Adresse des Servermanagers bekommt. Typisch nach einer Zertifikatserneuerung oder
+wenn der Servermanager über Pangolin bzw. einen anderen Proxy erreichbar ist.
+
+- Ab 1.27.5 zeigt die Seite der Einstellungen, ob der Pin passt. **Pin übernehmen** setzt ihn auf das
+  Zertifikat, das unter der öffentlichen Adresse tatsächlich ausgeliefert wird.
+- Ist dieses Zertifikat öffentlich vertrauenswürdig (z. B. Let's Encrypt), wird gar kein Pin gebraucht und
+  auch keiner verwendet.
+- Danach ein **neues Token** erstellen und den neuen Befehl verwenden. Im alten Befehl steht noch der
+  alte Pin.
+
 ## Updates: Pakete „kept back“ (zurückgehalten)
 
 `apt-get upgrade` installiert keine Updates, die neue Pakete brauchen oder andere Pakete entfernen würden.

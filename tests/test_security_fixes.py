@@ -217,3 +217,43 @@ def test_guest_import_cannot_take_over_other_system(db, monkeypatch):
     for o in (created, victim, server):
         db.delete(o)
     db.commit()
+
+
+def test_tls_pin_follows_the_certificate_at_the_public_address(app, db, monkeypatch):
+    """'curl: (90) public key does not match pinned public key': the pin must match what clients get at the
+    public address (e.g. behind Pangolin), and a publicly trusted certificate needs no pin at all."""
+    import ssl
+    from urllib.parse import urlsplit
+
+    from servermanager import enrollment, settings
+    from tests import mock_apis as m
+    from tests.test_web import login, make_user
+    srv = m.MockServer().start()
+    try:
+        parts = urlsplit(srv.url)
+        served = enrollment.spki_pin(ssl.PEM_cert_to_DER_cert(ssl.get_server_certificate((parts.hostname, parts.port))))
+        settings.set(db, "general.base_url", srv.url)
+        settings.set(db, "enroll.tls_pin", "abc=")      # stale pin, e.g. of the local certificate
+        db.commit()
+        enrollment._TLS_CACHE.clear()
+        st = enrollment.pin_status(db)
+        assert st["checked"] and not st["trusted"] and st["pin"] == served and st["mismatch"]
+        make_user(db, "pin-admin", "admin")
+        c = login(app, "pin-admin")
+        assert "Der Pin passt nicht" in c.get("/settings").text
+        r = c.post("/settings/tls-pin", data={"csrf_token": c.csrf}, follow_redirects=True)
+        assert f"Zertifikat unter {srv.url}" in r.text and settings.get(db, "enroll.tls_pin") == served
+        assert f"--pinnedpubkey 'sha256//{served}'" in enrollment.install_command(db, "tok")["curl"]
+        assert "Pin passt zum Zertifikat" in c.get("/settings").text
+        # publicly trusted certificate at the public address: no pin (it would break with every renewal)
+        monkeypatch.setattr(enrollment, "served_tls", lambda base, timeout=6: {"checked": True, "trusted": True,
+                                                                                "pin": "new=", "host": "x:443"})
+        assert "--pinnedpubkey" not in enrollment.install_command(db, "tok")["curl"]
+        r = c.post("/settings/tls-pin", data={"csrf_token": c.csrf}, follow_redirects=True)
+        assert "kein Pin nötig" in r.text and settings.get(db, "enroll.tls_pin") == ""
+    finally:
+        settings.set(db, "enroll.tls_pin", "")
+        settings.set(db, "general.base_url", "")
+        db.commit()
+        enrollment._TLS_CACHE.clear()
+        srv.stop()

@@ -105,7 +105,7 @@
       <div class="card-head"><h2>Enrollment</h2></div>
       <form method="post" action="{{ url_for('admin.settings_save', section='enroll') }}" class="card-body">{{ csrf() }}
         <div class="form-grid">
-          {{ field('TLS-Zertifikats-Pin (sha256)', 'enroll__tls_pin', v['enroll.tls_pin'], cls='full', help='Nur bei selbstsigniertem Zertifikat: curl prüft dann den öffentlichen Schlüssel statt der CA (--pinnedpubkey).') }}
+          {{ field('TLS-Zertifikats-Pin (sha256)', 'enroll__tls_pin', v['enroll.tls_pin'], cls='full', help='Nur bei selbstsigniertem Zertifikat: curl prüft dann den öffentlichen Schlüssel statt der CA (--pinnedpubkey). Bei einem öffentlich vertrauenswürdigen Zertifikat unter der öffentlichen Adresse wird er nicht verwendet.') }}
           {{ field('Öffentliche IP des Servermanagers', 'enroll__direct_source', v['enroll.direct_source'], help='Für direkte Verbindungen: SSH-Schlüssel nur von dieser Adresse erlauben (from=).') }}
           {{ field('Token-Gültigkeit (Stunden)', 'enroll__default_valid_hours', v['enroll.default_valid_hours'], type='number') }}
           <div class="full">
@@ -115,10 +115,16 @@
         </div>
         <div class="actions mt-1"><button class="btn primary">Speichern</button></div>
       </form>
-      {% if cfg.tls_cert_file %}
-      <div class="card-foot"><form method="post" action="{{ url_for('admin.tls_pin_detect') }}" class="inline">{{ csrf() }}
-        <button class="btn sm">Pin aus lokalem Zertifikat übernehmen</button> <small class="muted mono">{{ cfg.tls_cert_file }}</small></form></div>
+      {% if pin_status.stored and pin_status.checked %}
+      <div class="card-body">
+        {% if pin_status.trusted %}<div class="alert info"><div>Unter {{ pin_status.host }} kommt ein öffentlich vertrauenswürdiges Zertifikat (z. B. Let's Encrypt über Pangolin). Der Pin wird deshalb nicht verwendet – „Pin übernehmen“ entfernt ihn.</div></div>
+        {% elif pin_status.mismatch %}<div class="alert danger"><div><strong>Der Pin passt nicht</strong> zum Zertifikat unter {{ pin_status.host }} – Clients brechen mit „public key does not match pinned public key“ ab. „Pin übernehmen“ setzt den richtigen.</div></div>
+        {% elif pin_status.error %}<div class="alert warning"><div>{{ pin_status.host }} ist vom Servermanager aus nicht prüfbar ({{ pin_status.error }}).</div></div>
+        {% else %}<span class="badge success">Pin passt zum Zertifikat unter {{ pin_status.host }}</span>{% endif %}
+      </div>
       {% endif %}
+      <div class="card-foot"><form method="post" action="{{ url_for('admin.tls_pin_detect') }}" class="inline">{{ csrf() }}
+        <button class="btn sm">Pin übernehmen</button> <small class="muted">vom Zertifikat unter der öffentlichen Adresse{% if cfg.tls_cert_file %}, sonst {{ cfg.tls_cert_file }}{% endif %}</small></form></div>
     </div>
 
     <div class="card" id="mail">

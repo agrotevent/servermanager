@@ -51,6 +51,7 @@ def settings_page():
     return render_template("admin/settings.html", v=values, sm_pubkey=sshkeys.public_key(), timezones=tzs,
                            mail_ok=notify.mail_configured(g.db), cfg=get_config(), bv=brand_v,
                            font_labels=branding.FONT_LABELS, modules=settings.HIDEABLE_MODULES,
+                           pin_status=__import__("servermanager.enrollment", fromlist=["x"]).pin_status(g.db),
                            hidden_modules=settings.hidden_modules(g.db))
 
 
@@ -172,24 +173,38 @@ def mail_test():
 @bp.post("/settings/tls-pin")
 @admin_required
 def tls_pin_detect():
-    """Compute the public key pin of the local TLS certificate (self signed setups)."""
-    import base64
-    import hashlib
-
+    """Pin of the certificate the clients actually get at the public address (behind Pangolin or another
+    proxy that is not the local one); the local certificate file only if the address cannot be reached."""
     from cryptography import x509
     from cryptography.hazmat.primitives import serialization
-    path = get_config().tls_cert_file
-    if not path or not os.path.exists(path):
-        flash("Kein lokales Zertifikat konfiguriert (tls_cert_file in servermanager.conf).", "danger")
-        return redirect(url_for("admin.settings_page") + "#enroll")
-    cert = x509.load_pem_x509_certificate(open(path, "rb").read())
-    spki = cert.public_key().public_bytes(serialization.Encoding.DER,
-                                          serialization.PublicFormat.SubjectPublicKeyInfo)
-    pin = base64.b64encode(hashlib.sha256(spki).digest()).decode()
+
+    from ... import enrollment
+    enrollment._TLS_CACHE.clear()
+    base = settings.base_url(g.db)
+    st = enrollment.served_tls(base)
+    back = redirect(url_for("admin.settings_page") + "#enroll")
+    if st.get("trusted"):
+        settings.set(g.db, "enroll.tls_pin", "")
+        g.db.commit()
+        flash(f"Unter {base} kommt ein öffentlich vertrauenswürdiges Zertifikat – kein Pin nötig (er würde bei jeder "
+              "Erneuerung brechen). Pin entfernt, curl prüft das Zertifikat normal.", "success")
+        return back
+    if st.get("pin"):
+        pin = st["pin"]
+        source = f"Zertifikat unter {base}"
+    else:
+        path = get_config().tls_cert_file
+        if not path or not os.path.exists(path):
+            flash(f"{base or 'Die öffentliche Adresse'} ist nicht erreichbar ({st.get('error') or 'keine HTTPS-Adresse'}) "
+                  "und kein lokales Zertifikat konfiguriert.", "danger")
+            return back
+        cert = x509.load_pem_x509_certificate(open(path, "rb").read())
+        pin = enrollment.spki_pin(cert.public_bytes(serialization.Encoding.DER))
+        source = f"lokales Zertifikat {path} ({base or 'öffentliche Adresse'} nicht erreichbar)"
     settings.set(g.db, "enroll.tls_pin", pin)
     g.db.commit()
-    flash(f"Zertifikats-Pin übernommen: sha256//{pin}", "success")
-    return redirect(url_for("admin.settings_page") + "#enroll")
+    flash(f"Zertifikats-Pin übernommen aus {source}: sha256//{pin}", "success")
+    return back
 
 
 @bp.post("/settings/ssh-key/regenerate")

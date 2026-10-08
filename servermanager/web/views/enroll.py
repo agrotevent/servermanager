@@ -33,6 +33,7 @@ def index():
     return render_template("enroll/index.html", tokens=tokens, created=created, command=command, users=users,
                            systems=systems, pending=pending, wg_enabled=settings.get(g.db, "wg.enabled"),
                            base_url=settings.base_url(g.db),
+                           pin=enrollment.pin_status(g.db) if command and g.user.is_admin else {},
                            default_hours=settings.get(g.db, "enroll.default_valid_hours"))
 
 
