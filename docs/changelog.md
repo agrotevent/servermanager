@@ -2,6 +2,20 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.25.2 – 08.10.2026
+
+### Behoben
+
+- **Updates bei kaputten Fremdquellen:** Scheiterte `apt-get update` an einer Fremdquelle, brach der
+  ganze Lauf ab. Typische Ursachen sind ein neuer oder abgelaufener Signaturschlüssel (nginx.org,
+  packages.sury.org) oder ein nicht erreichbarer, veralteter Spiegel (z. B. MariaDB 10.4).
+  - Der Servermanager erneuert die Schlüssel bekannter Anbieter (nginx, sury, Docker) von deren
+    HTTPS-Adresse.
+  - Fremdquellen, die dann noch scheitern, überspringt er mit Grund und Datei. Die Updates aus den
+    übrigen Quellen werden installiert.
+  - Scheitert eine Debian-Quelle, bricht der Lauf weiter ab.
+  - Details unter [Fehlerbehebung](fehlerbehebung.md).
+
 ## 1.25.1 – 08.10.2026
 
 ### Behoben

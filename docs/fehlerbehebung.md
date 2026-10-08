@@ -10,6 +10,36 @@
 | MikroTik-API: 401 | Benutzer, Passwort, `address=`-Einschränkung und Gruppe (`rest-api`, `read`, `write`) prüfen |
 | Passwort vergessen | `servermanager-cli reset-password NAME` |
 
+## Updates: „apt-get update fehlgeschlagen“
+
+Meist ist eine **Fremdquelle** kaputt, nicht Debian selbst. Ab 1.25.2 geht der Servermanager so vor:
+
+1. **Signaturschlüssel erneuern** bei bekannten Anbietern, wenn apt einen fehlenden oder abgelaufenen
+   Schlüssel meldet („Missing key …“, „NO_PUBKEY“, „Expired on …“):
+
+   | Quelle | Schlüssel von |
+   |---|---|
+   | `nginx.org` | `https://nginx.org/keys/nginx_signing.key` |
+   | `packages.sury.org/<name>` | `https://packages.sury.org/<name>/apt.gpg` |
+   | `download.docker.com/linux/<distro>` | `https://download.docker.com/linux/<distro>/gpg` |
+
+   - Der Schlüssel kommt nur von dieser HTTPS-Adresse des Anbieters, wie in dessen Anleitung.
+   - Er landet in der Datei, die die Quelle mit `signed-by` bzw. `Signed-By` nennt. Ohne Angabe
+     schreibt der Servermanager `/etc/apt/trusted.gpg.d/servermanager-<host>.gpg`.
+   - Die alte Datei wird nach `/var/backups/servermanager-apt-keys/` gesichert.
+   - Nennt apt den fehlenden Schlüssel („Missing key <Fingerabdruck>“) und ist `gpg` installiert,
+     muss der geladene Schlüssel genau diesen Fingerabdruck enthalten, sonst wird er nicht übernommen.
+2. **Fremdquellen überspringen**, die danach noch scheitern (nicht erreichbar, Schlüssel unbekannt,
+   keine Pakete für diese Debian-Version). Das Protokoll nennt je Quelle Grund und Datei, z. B.
+   `Paketquelle übersprungen: http://mirror…/mariadb/repo/10.4/debian trixie – nicht erreichbar
+   (eingetragen in /etc/apt/sources.list.d/mariadb.list)`. Die Updates aus den übrigen Quellen werden
+   installiert. Am Ende des Jobs steht die Liste der nicht aktualisierten Quellen.
+3. **Scheitert eine Debian-Quelle** (`*.debian.org`), bricht der Lauf wie bisher ab. Mit halben
+   Paketlisten wird nichts installiert.
+
+Dauerhaft lösen: veraltete Quellen entfernen. Beispiel: MariaDB 10.4 gibt es für Debian 13 nicht mehr,
+Debian bringt selbst MariaDB mit. Bei anderen Anbietern den Schlüssel nach deren Anleitung erneuern.
+
 ## Updates: „apt-get upgrade fehlgeschlagen“
 
 Die eigentliche Ursache steht im Job-Protokoll direkt über der Meldung (Zeilen mit `E:` oder

@@ -123,3 +123,111 @@ esac
     assert "SKIPPED=libfoo" in out and "upgraded openssl" in out
     assert (tmp_path / "was_held").read_text().split() == ["libfoo"]
     assert state.read_text().strip() == ""  # hold released again
+
+
+def _apt_update_env(tmp_path, with_gpg: bool) -> dict:
+    """Fake apt-get update like the report: Debian fine, nginx key missing, sury key expired, MariaDB mirror gone."""
+    import base64
+    import os
+    etc = tmp_path / "etc"
+    (etc / "sources.list.d").mkdir(parents=True)
+    (etc / "trusted.gpg.d").mkdir()
+    nginx_kr = tmp_path / "keyrings" / "nginx-archive-keyring.gpg"
+    (etc / "sources.list").write_text("deb http://ftp.debian.org/debian trixie main\n")
+    (etc / "sources.list.d" / "nginx.list").write_text(
+        f"deb [signed-by={nginx_kr}] http://nginx.org/packages/mainline/debian trixie nginx\n")
+    (etc / "sources.list.d" / "php.list").write_text("deb https://packages.sury.org/php/ trixie main\n")
+    (etc / "sources.list.d" / "mariadb.sources").write_text(
+        "Types: deb\nURIs: http://mirror2.hs-esslingen.de/mariadb/repo/10.4/debian\nSuites: trixie\n")
+    sury_kr = etc / "trusted.gpg.d" / "servermanager-packages.sury.org.gpg"
+    b = tmp_path / "bin"
+    b.mkdir()
+    (b / "apt-get").write_text(f"""#!/bin/bash
+echo "Hit:1 http://ftp.debian.org/debian trixie InRelease"
+rc=0
+if ! grep -q NGINXKEY {nginx_kr} 2>/dev/null; then
+  echo "Err:4 http://nginx.org/packages/mainline/debian trixie InRelease"
+  echo "  Sub-process /usr/bin/sqv returned an error code (1), error message is: Missing key 8540A6F18833A80E9C1653A42FD21310B49F6B46, which is needed to verify signature."
+  rc=100
+fi
+if ! grep -q SURYNEW {sury_kr} 2>/dev/null; then
+  echo "Err:5 https://packages.sury.org/php trixie InRelease"
+  echo "  Sub-process /usr/bin/sqv returned an error code (1), error message is: Signing key on 15058500A0235D97F5D10063B188E2B695BD4743 is bad:            The primary key is not live   because: Expired on 2026-02-04T10:25:46Z"
+  rc=100
+fi
+echo "Ign:6 http://mirror2.hs-esslingen.de/mariadb/repo/10.4/debian trixie InRelease"
+echo "Err:6 http://mirror2.hs-esslingen.de/mariadb/repo/10.4/debian trixie InRelease"
+echo "  Could not connect to mirror2.hs-esslingen.de:80 (129.143.116.113), connection timed out"
+echo "  Unable to connect to mirror2.hs-esslingen.de:http:"
+[ $rc -ne 0 ] && echo "E: The repository 'http://nginx.org/packages/mainline/debian trixie InRelease' is not signed."
+exit $rc
+""")
+    armored = base64.b64encode(b"NGINXKEY-binary").decode()
+    (b / "curl").write_text(f"""#!/bin/bash
+out=""; url=""
+while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2 ;; -*) [ "$1" = "--max-time" ] || [ "$1" = "--proto" ] && shift; shift ;; *) url="$1"; shift ;; esac; done
+echo "$url" >> {tmp_path}/fetched
+case "$url" in
+  https://nginx.org/keys/nginx_signing.key) printf -- '-----BEGIN PGP PUBLIC KEY BLOCK-----\\n\\n{armored}\\n=abcd\\n-----END PGP PUBLIC KEY BLOCK-----\\n' > "$out" ;;
+  https://packages.sury.org/php/apt.gpg) printf 'SURYNEW' > "$out" ;;
+  *) exit 22 ;;
+esac
+""")
+    for f in b.iterdir():
+        f.chmod(0o755)
+    path = f"{b}:{os.environ['PATH']}"
+    if not with_gpg:   # a host without gpg: only the tools the library needs
+        tools = tmp_path / "tools"
+        tools.mkdir()
+        for t in ("bash", "awk", "sed", "grep", "base64", "mktemp", "tee", "sort", "tr", "cut", "install", "mkdir",
+                  "cp", "rm", "date", "basename", "dirname", "cat", "head", "sleep"):
+            (tools / t).symlink_to(shutil.which(t))
+        path = f"{b}:{tools}"
+    return {**os.environ, "PATH": path, "SM_APT_ETC": str(etc), "SM_APT_RETRY_WAIT": "0",
+            "SM_APT_KEY_BACKUP": str(tmp_path / "backup")}, nginx_kr, sury_kr
+
+
+def test_apt_update_renews_vendor_keys_and_skips_broken_sources(tmp_path):
+    env, nginx_kr, sury_kr = _apt_update_env(tmp_path, with_gpg=False)
+    lib = ROOT / "servermanager" / "modules" / "scripts" / "lib.sh"
+    res = subprocess.run(["bash", "-c", f"source {lib}; apt_update || exit 7; echo REPOS=$APT_REPOS_SKIPPED"],
+                         capture_output=True, text=True, env=env)
+    out = res.stdout
+    assert res.returncode == 0, out + res.stderr
+    assert nginx_kr.read_bytes() == b"NGINXKEY-binary" and sury_kr.read_bytes() == b"SURYNEW"
+    assert "Schlüssel erneuert" in out and "Neuer Versuch mit erneuerten Signaturschlüsseln" in out
+    assert ("Paketquelle übersprungen: http://mirror2.hs-esslingen.de/mariadb/repo/10.4/debian trixie – nicht "
+            "erreichbar (eingetragen in") in out and "mariadb.sources" in out
+    assert "REPOS=http://mirror2.hs-esslingen.de/mariadb/repo/10.4/debian" in out
+    assert "nginx.org" not in out.split("REPOS=")[1]
+
+
+def test_apt_update_skips_sources_it_cannot_repair_but_not_debian(tmp_path):
+    env, nginx_kr, sury_kr = _apt_update_env(tmp_path, with_gpg=False)
+    (tmp_path / "bin" / "curl").write_text("#!/bin/bash\nexit 22\n")   # vendor not reachable
+    lib = ROOT / "servermanager" / "modules" / "scripts" / "lib.sh"
+    res = subprocess.run(["bash", "-c", f"source {lib}; apt_update || exit 7; echo REPOS=$APT_REPOS_SKIPPED"],
+                         capture_output=True, text=True, env=env)
+    out = res.stdout
+    assert res.returncode == 0, out
+    assert "Schlüssel nicht ladbar: https://nginx.org/keys/nginx_signing.key" in out
+    assert "Paketquelle übersprungen: http://nginx.org/packages/mainline/debian trixie – Signaturschlüssel fehlt" in out
+    assert "https://packages.sury.org/php trixie – Signaturschlüssel abgelaufen" in out
+    assert "Updates aus den übrigen Quellen werden installiert" in out
+    # Debian's own source broken: no update with half the lists
+    apt = tmp_path / "bin" / "apt-get"
+    apt.write_text(apt.read_text().replace('echo "Hit:1 http://ftp.debian.org/debian trixie InRelease"',
+                                           'echo "Err:1 http://ftp.debian.org/debian trixie InRelease"\n'
+                                           'echo "  Could not resolve ftp.debian.org"'))
+    res = subprocess.run(["bash", "-c", f"source {lib}; apt_update || exit 7"], capture_output=True, text=True, env=env)
+    assert res.returncode == 7 and "apt-get update fehlgeschlagen (Versuch 3/3)" in res.stdout
+
+
+@pytest.mark.skipif(not shutil.which("gpg"), reason="gpg not installed")
+def test_apt_update_checks_the_missing_fingerprint_with_gpg(tmp_path):
+    env, nginx_kr, _sury = _apt_update_env(tmp_path, with_gpg=True)
+    lib = ROOT / "servermanager" / "modules" / "scripts" / "lib.sh"
+    res = subprocess.run(["bash", "-c", f"source {lib}; apt_update || exit 7"], capture_output=True, text=True,
+                         env={**env, "GNUPGHOME": str(tmp_path / "gnupg")})
+    assert "enthält 8540A6F18833A80E9C1653A42FD21310B49F6B46 nicht – nicht übernommen" in res.stdout
+    assert not nginx_kr.exists() and res.returncode == 0   # skipped like any other broken source

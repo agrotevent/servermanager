@@ -10,17 +10,209 @@ export UCF_FORCE_CONFFOLD=1
 APT_OPTS=(-y -q -o DPkg::Lock::Timeout=900 -o Dpkg::Options::=--force-confdef
           -o Dpkg::Options::=--force-confold -o APT::Get::Show-Upgraded=true)
 
+# apt-get update. Third-party sources often break on their own (rotated or expired signing key, mirror gone,
+# no packages for this Debian release): known vendors' keys are renewed from their HTTPS address, sources that
+# still fail are skipped for this run as long as the Debian sources themselves work.
+APT_ETC="${SM_APT_ETC:-/etc/apt}"
+APT_REPOS_SKIPPED=""
 apt_update() {
     log "Paketlisten aktualisieren (apt-get update)"
-    local i
+    local i out rc keys_tried=0
+    APT_REPOS_SKIPPED=""
     for i in 1 2 3; do
-        if apt-get -q -o DPkg::Lock::Timeout=900 update; then
+        out="$(mktemp)"
+        LC_ALL=C apt-get -q -o DPkg::Lock::Timeout=900 update 2>&1 | tee "$out"
+        rc=${PIPESTATUS[0]}
+        if [ "$keys_tried" -eq 0 ] && grep -qE "$APT_KEY_ERRORS" "$out"; then
+            keys_tried=1
+            if apt_fix_repo_keys "$out"; then
+                rm -f "$out"
+                log "Neuer Versuch mit erneuerten Signaturschlüsseln"
+                continue
+            fi
+        fi
+        if [ "$rc" -eq 0 ]; then
+            apt_report_failed_repos "$out"
+            rm -f "$out"
             return 0
         fi
+        if apt_only_foreign_failed "$out"; then
+            apt_report_failed_repos "$out"
+            warn "Diese Paketquellen werden für diesen Lauf übersprungen – Updates aus den übrigen Quellen werden installiert"
+            rm -f "$out"
+            return 0
+        fi
+        rm -f "$out"
         warn "apt-get update fehlgeschlagen (Versuch $i/3)"
-        sleep 10
+        sleep "${SM_APT_RETRY_WAIT:-10}"
     done
     return 1
+}
+
+APT_KEY_ERRORS="NO_PUBKEY|Missing key|EXPKEYSIG|KEYEXPIRED|is not live|[Ee]xpired on|signing key .* is bad"
+
+# failing sources of an apt-get update output, one "url suite<TAB>reason" per line
+apt_failed_repos() {
+    awk '
+        /^Err:[0-9]+ / { if (key != "") print key "\t" reason; key = $2 " " $3; reason = ""; inerr = 1; next }
+        inerr && /^  / { r = $0; sub(/^ +/, "", r); reason = (reason == "" ? r : reason "; " r); next }
+        { inerr = 0 }
+        END { if (key != "") print key "\t" reason }
+    ' "$1" | sort -u
+}
+
+apt_is_base_repo() {
+    case "$1" in
+        *://deb.debian.org/*|*://*.debian.org/*|*://debian.org/*|*://*.ubuntu.com/*) return 0 ;;
+    esac
+    return 1
+}
+
+# true if apt-get update only failed for third-party sources and fetched at least one source
+apt_only_foreign_failed() {
+    local f="$1" url _rest
+    grep -qE '^(Hit|Get):[0-9]+ ' "$f" || return 1
+    [ -n "$(apt_failed_repos "$f")" ] || return 1
+    while IFS=' ' read -r url _rest; do
+        apt_is_base_repo "$url/" && return 1
+    done <<< "$(apt_failed_repos "$f")"
+    return 0
+}
+
+# source files that name this repository URL
+apt_source_files() {
+    local hostpath="${1#*://}"
+    grep -lsF "${hostpath%/}" "$APT_ETC/sources.list" "$APT_ETC"/sources.list.d/*.list "$APT_ETC"/sources.list.d/*.sources \
+        2>/dev/null | tr '\n' ' ' | sed 's/ $//'
+}
+
+apt_repo_hint() {
+    case "$1" in
+        *"Missing key"*|*NO_PUBKEY*) echo "Signaturschlüssel fehlt (vom Anbieter erneuert?)" ;;
+        *xpired*|*EXPKEYSIG*|*KEYEXPIRED*|*"is not live"*) echo "Signaturschlüssel abgelaufen" ;;
+        *"401"*) echo "Zugang verweigert (401) – z. B. Enterprise-Quelle ohne Subskription" ;;
+        *"404"*|*"does not have a Release file"*) echo "gibt es für diese Debian-Version nicht (404) – veraltete Quelle?" ;;
+        *"Could not connect"*|*"timed out"*|*"Could not resolve"*|*"Temporary failure resolving"*|*"Unable to connect"*)
+            echo "nicht erreichbar" ;;
+        *) echo "${1:0:160}" ;;
+    esac
+}
+
+apt_report_failed_repos() {
+    local url_suite url suite reason files
+    while IFS=$'\t' read -r url_suite reason; do
+        [ -n "$url_suite" ] || continue
+        url="${url_suite%% *}"
+        suite="${url_suite#* }"
+        files="$(apt_source_files "$url")"
+        warn "Paketquelle übersprungen: $url $suite – $(apt_repo_hint "$reason")${files:+ (eingetragen in $files)}"
+        APT_REPOS_SKIPPED="${APT_REPOS_SKIPPED:+$APT_REPOS_SKIPPED, }$url"
+    done <<< "$(apt_failed_repos "$1")"
+}
+
+# official HTTPS address of the signing key of a known vendor repository
+apt_vendor_key_url() {
+    local url="${1%/}" seg
+    case "$url" in
+        *://nginx.org/*) echo "https://nginx.org/keys/nginx_signing.key" ;;
+        *://packages.sury.org/*)
+            seg="${url#*://packages.sury.org/}"
+            seg="${seg%%/*}"
+            [ -n "$seg" ] && echo "https://packages.sury.org/$seg/apt.gpg" ;;
+        *://download.docker.com/linux/*)
+            seg="${url#*://download.docker.com/linux/}"
+            seg="${seg%%/*}"
+            [ -n "$seg" ] && echo "https://download.docker.com/linux/$seg/gpg" ;;
+    esac
+}
+
+# keyring file a source uses (signed-by in .list, Signed-By in .sources); empty: the global trusted.gpg.d
+apt_signed_by() {
+    local hostpath="${1#*://}" f path
+    hostpath="${hostpath%/}"
+    for f in "$APT_ETC/sources.list" "$APT_ETC"/sources.list.d/*.list; do
+        [ -f "$f" ] || continue
+        path="$(grep -F "$hostpath" "$f" | grep -E '^[[:space:]]*deb[[:space:]]' | sed -n 's/.*signed-by=\([^] ]*\).*/\1/p' | head -n 1)"
+        [ -n "$path" ] && { echo "$path"; return; }
+    done
+    for f in "$APT_ETC"/sources.list.d/*.sources; do
+        [ -f "$f" ] || continue
+        path="$(awk -v u="$hostpath" 'BEGIN { RS = "" } index($0, u) {
+                    n = split($0, lines, "\n")
+                    for (i = 1; i <= n; i++) if (lines[i] ~ /^Signed-By:[ \t]*\//) { sub(/^Signed-By:[ \t]*/, "", lines[i]); print lines[i]; exit }
+                }' "$f")"
+        [ -n "$path" ] && { echo "$path"; return; }
+    done
+}
+
+# ASCII-armored OpenPGP key(s) -> binary keyring, with gpg or without (base64 of each block)
+apt_dearmor() {
+    if command -v gpg >/dev/null 2>&1; then
+        gpg --dearmor < "$1"
+        return
+    fi
+    awk '/^-----BEGIN PGP PUBLIC KEY BLOCK-----/ { inb = 1; body = 0; next }
+         /^-----END PGP PUBLIC KEY BLOCK-----/ { inb = 0; next }
+         inb && !body { if ($0 ~ /^[ \t\r]*$/) body = 1; next }
+         inb && body && /^=/ { next }
+         inb && body { print }' "$1" | base64 -d
+}
+
+apt_fetch() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --max-time 30 --proto '=https' -o "$2" "$1"
+    else
+        wget -q -T 30 -O "$2" "$1"
+    fi
+}
+
+# renew the signing keys of known vendors whose sources failed with a key error; true if one was renewed
+apt_fix_repo_keys() {
+    local f="$1" url_suite url reason key_url keyring tmp bin fpr renewed=1 backup
+    while IFS=$'\t' read -r url_suite reason; do
+        url="${url_suite%% *}"
+        printf '%s' "$reason" | grep -qE "$APT_KEY_ERRORS" || continue
+        key_url="$(apt_vendor_key_url "$url")"
+        [ -n "$key_url" ] || continue
+        keyring="$(apt_signed_by "$url")"
+        [ -n "$keyring" ] || keyring="$APT_ETC/trusted.gpg.d/servermanager-$(printf '%s' "${url#*://}" | cut -d/ -f1 | tr -c 'A-Za-z0-9.\n-' '_').gpg"
+        log "Signaturschlüssel für $url vom Anbieter laden ($key_url)"
+        tmp="$(mktemp)"
+        bin="$(mktemp)"
+        if ! apt_fetch "$key_url" "$tmp"; then
+            warn "Schlüssel nicht ladbar: $key_url"
+            rm -f "$tmp" "$bin"
+            continue
+        fi
+        if grep -q "BEGIN PGP PUBLIC KEY BLOCK" "$tmp"; then
+            apt_dearmor "$tmp" > "$bin" 2>/dev/null || :
+        else
+            cp "$tmp" "$bin"
+        fi
+        if [ ! -s "$bin" ]; then
+            warn "Kein gültiger Schlüssel unter $key_url"
+            rm -f "$tmp" "$bin"
+            continue
+        fi
+        # apt names the key it needs only when one is missing; an expired key is replaced by the current one
+        fpr="$(printf '%s' "$reason" | sed -n 's/.*Missing key \([0-9A-F]\{40\}\).*/\1/p' | head -n 1)"
+        if [ -n "$fpr" ] && command -v gpg >/dev/null 2>&1 && \
+           ! gpg --show-keys --with-colons "$bin" 2>/dev/null | grep -q ":$fpr:"; then
+            warn "Der Schlüssel unter $key_url enthält $fpr nicht – nicht übernommen"
+            rm -f "$tmp" "$bin"
+            continue
+        fi
+        if [ -f "$keyring" ]; then
+            backup="${SM_APT_KEY_BACKUP:-/var/backups/servermanager-apt-keys}"
+            mkdir -p "$backup" 2>/dev/null && cp -p "$keyring" "$backup/$(basename "$keyring").$(date +%Y%m%d%H%M%S)" 2>/dev/null
+        fi
+        mkdir -p "$(dirname "$keyring")"
+        install -m 0644 "$bin" "$keyring"
+        log "Schlüssel erneuert: $keyring${fpr:+ (enthält $fpr)}"
+        renewed=0
+        rm -f "$tmp" "$bin"
+    done <<< "$(apt_failed_repos "$f")"
+    return "$renewed"
 }
 
 # apt-get with automatic repair of the usual failures (interrupted dpkg, broken dependencies) and one
