@@ -31,8 +31,12 @@ def users(system_id: int):
         error = str(exc)
     sso = g.db.execute(select(SsoClient).where(SsoClient.target_kind == "nextcloud",
                                                SsoClient.target_id == system.id)).scalars().first()
+    from ...models import KIND_SSO, SsoServer
+    from . import _integration as common
+    sso_servers = [x for x in g.db.execute(select(SsoServer).order_by(SsoServer.name)).scalars()
+                   if common.can(KIND_SSO, x.id, LEVEL_FULL)]
     return render_template("nextcloud/users.html", system=system, users=users_, groups=groups, error=error,
-                           sso=sso)
+                           sso=sso, sso_servers=sso_servers)
 
 
 @bp.post("/<int:system_id>/nextcloud/users")

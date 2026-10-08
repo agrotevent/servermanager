@@ -1,10 +1,11 @@
-"""Connect applications (Nextcloud, Mailcow, Pangolin, Proxmox VE) to the SSO (authentik) with one click.
+"""Connect applications (Nextcloud, Mailcow, Pangolin, Proxmox VE, Zammad) to the SSO (authentik) with one click.
 
 1. OAuth2/OIDC provider + application are created in authentik (via its internal API URL).
 2. The application is configured with the public endpoints (reached through Pangolin):
    Nextcloud via ``occ`` (app user_oidc), Mailcow via its API (identity provider),
    Pangolin via its integration API (OIDC identity provider + organization policy),
-   Proxmox VE via its API (OpenID Connect realm, users created on first login without permissions).
+   Proxmox VE via its API (OpenID Connect realm, users created on first login without permissions),
+   Zammad via its settings API (OpenID Connect as third-party login, public client with PKCE).
 If step 2 fails, the authentik application is removed again.
 
 Pangolin is special: its callback URL contains the id of the identity provider, so the IdP is created
@@ -19,9 +20,10 @@ from urllib.parse import urlsplit
 from . import security
 from .authentik import Authentik, AuthentikError
 from .mailcow import MailcowError
-from .models import MailcowServer, PangolinServer, PveServer, SsoClient, SsoServer, System
+from .models import MailcowServer, PangolinServer, PveServer, SsoClient, SsoServer, System, ZammadServer
 from .pangolin import PangolinError
 from .pveapi import PveError
+from .zammad import ZammadError
 
 Log = Callable[[str], None]
 
@@ -43,8 +45,9 @@ def slug_for(kind: str, target_id: int) -> str:
 
 
 KIND_LABELS = {"nextcloud": "Nextcloud", "mailcow": "Mailcow", "pangolin": "Pangolin", "pve": "Proxmox",
-               "servermanager": "Anmeldung am"}
-TARGET_MODELS = {"nextcloud": System, "mailcow": MailcowServer, "pangolin": PangolinServer, "pve": PveServer}
+               "zammad": "Zammad", "servermanager": "Anmeldung am"}
+TARGET_MODELS = {"nextcloud": System, "mailcow": MailcowServer, "pangolin": PangolinServer, "pve": PveServer,
+                 "zammad": ZammadServer}
 
 
 def redirect_uris(kind: str, app_url: str) -> list[str]:
@@ -154,9 +157,37 @@ def _connect_pve(au: Authentik, sso: SsoServer, target, app_url: str, slug: str,
             "target_ref": realm}
 
 
+def _connect_zammad(au: Authentik, sso: SsoServer, app_url: str, slug: str, name: str, log: Log, zammad,
+                    options: dict) -> dict:
+    from . import zammad as zlib
+    log("Zammad: Einstellungen lesen ...")
+    by = zlib.oidc_settings(zammad)
+    redirect = zlib.callback_url(by, app_url)
+    log(f"Zammad: Rückruf-Adresse {redirect}")
+    log(f"authentik: Anwendung „{name}“ ({slug}) als öffentlichen Client mit PKCE anlegen ...")
+    app = au.create_oidc_app(name, slug, [redirect], app_url, client_type="public")
+    log(f"Client-ID {app['client_id']}, Aussteller {app['issuer']}")
+    try:
+        log("Zammad: Anmeldung über OpenID Connect einrichten ...")
+        zlib.enable_oidc(zammad, by, app["client_id"], app["issuer"], sso.name or "authentik",
+                         auto_link=bool(options.get("auto_link", True)))
+    except ZammadError:
+        log("Fehler – entferne die Anwendung wieder aus authentik")
+        try:
+            au.delete_oidc_app(slug, app["provider_pk"])
+        except AuthentikError as exc:
+            log(f"Aufräumen fehlgeschlagen: {exc}")
+        raise
+    if options.get("auto_link", True):
+        log("Bestehende Zammad-Konten werden beim ersten Login über die E-Mail-Adresse bzw. den Benutzernamen "
+            "verknüpft")
+    return {"slug": slug, "provider_pk": app["provider_pk"], "client_id": app["client_id"], "app_url": app_url,
+            "target_ref": "openid_connect"}
+
+
 def connect(au: Authentik, sso: SsoServer, kind: str, target, app_url: str, log: Log,
             nextcloud_occ: Optional[Callable[[str, dict], str]] = None, mailcow=None, pangolin=None, pve=None,
-            options: Optional[dict] = None) -> dict:
+            zammad=None, options: Optional[dict] = None) -> dict:
     """Returns the data for the SsoClient record."""
     app_url = public_base(app_url)
     slug = slug_for(kind, target.id)
@@ -165,6 +196,8 @@ def connect(au: Authentik, sso: SsoServer, kind: str, target, app_url: str, log:
         return _connect_pangolin(au, sso, target, app_url, slug, name, log, pangolin)
     if kind == "pve":
         return _connect_pve(au, sso, target, app_url, slug, name, log, pve, options or {})
+    if kind == "zammad":
+        return _connect_zammad(au, sso, app_url, slug, name, log, zammad, options or {})
     if kind == "servermanager":
         log(f"authentik: Anwendung „{name}“ ({slug}) anlegen ...")
         app = au.create_oidc_app(name, slug, redirect_uris(kind, app_url), app_url)
@@ -204,7 +237,7 @@ def connect(au: Authentik, sso: SsoServer, kind: str, target, app_url: str, log:
 
 def disconnect(au: Authentik, sso: SsoServer, client: SsoClient, log: Log,
                nextcloud_occ: Optional[Callable[[str, dict], str]] = None, mailcow=None, pangolin=None,
-               pve=None) -> None:
+               pve=None, zammad=None) -> None:
     if client.target_kind == "nextcloud" and nextcloud_occ:
         log("Nextcloud: OIDC-Anbieter entfernen ...")
         nextcloud_occ("oidc_remove", {"SM_OIDC_ID": provider_id(sso)})
@@ -230,6 +263,14 @@ def disconnect(au: Authentik, sso: SsoServer, client: SsoClient, log: Log,
             if exc.status != 404 and "does not exist" not in str(exc):
                 raise
             log("Proxmox: Realm war bereits entfernt")
+    elif client.target_kind == "zammad" and zammad is not None:
+        from . import zammad as zlib
+        log("Zammad: Anmeldung über OpenID Connect abschalten (verknüpfte Konten bleiben bestehen) ...")
+        try:
+            zlib.disable_oidc(zammad)
+        except ZammadError as exc:
+            log(f"Zammad: konnte nicht abgeschaltet werden ({exc}) – bitte unter Einstellungen → Sicherheit → "
+                "Drittanbieter-Anwendungen prüfen")
     log("authentik: Anwendung entfernen ...")
     au.delete_oidc_app(client.slug, client.provider_pk)
 

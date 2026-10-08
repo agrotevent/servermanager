@@ -2,6 +2,30 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.20.0 – 08.10.2026
+
+### Neu
+
+- **Nextcloud unter Infrastruktur** über die Schnittstelle (OCS-API), mit Administrator-Konto und
+  App-Passwort, auch ohne SSH-Zugang:
+  - Übersicht: Version und Updates, Benutzer, aktive Benutzer, Speicher.
+  - Benutzer anlegen, bearbeiten (Fenster für Anzeigename, E-Mail, Quota, Gruppen), sperren, neues
+    Passwort, löschen.
+  - Gruppen anzeigen und anlegen.
+  - Überwachung mit Warnung bei vollen Benutzerspeichern.
+  - Eigene Rechte (Lesen, Bedienen, Vollzugriff).
+- **Nextcloud-Benutzer und -Gruppen nach authentik übernehmen**, mit Vorschau:
+  - Gruppen werden unter demselben Namen angelegt, fehlende Benutzer mit der Nextcloud-Benutzer-ID.
+  - Die Mitgliedschaften werden ergänzt; Startpasswörter erscheinen einmal.
+  - Danach landen die Benutzer beim Login über authentik in ihrem bestehenden Nextcloud-Konto.
+- **Zammad per Klick an authentik anbinden** (OpenID Connect). Bestehende Zammad-Konten werden beim
+  ersten Login verknüpft.
+
+### Geändert
+
+- Die SSO-Anbindung einer Nextcloud setzt jetzt ausdrücklich, dass bestehende Konten übernommen werden
+  (`soft_auto_provision`).
+
 ## 1.19.2 – 08.10.2026
 
 ### Behoben

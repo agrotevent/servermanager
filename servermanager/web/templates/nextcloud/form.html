@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% set help_page = "apps" %}
+{% from "_macros.html" import csrf, field with context %}
+{% from "integrations/_macros.html" import conn_fields with context %}
+{% block title %}{{ 'Nextcloud hinzufügen' if is_new else 'Nextcloud bearbeiten' }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>{{ 'Nextcloud hinzufügen' if is_new else n.name ~ ' bearbeiten' }}</h1>
+  <p>Mit einem Administrator-Konto der Nextcloud und einem App-Passwort: in der Nextcloud unter <em>Persönliche Einstellungen → Sicherheit → Neues App-Passwort erstellen</em>. Für die Übersicht muss die App <em>Monitoring</em> (serverinfo) aktiviert sein – sie ist es standardmäßig.</p></div></div>
+<form method="post" autocomplete="off">{{ csrf() }}
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>Schnittstelle</h2></div><div class="card-body"><div class="form-grid">
+    {{ conn_fields(n, 'Adresse', 'https://cloud.example.com', 'Adresse der Nextcloud (wie im Browser)', 'Bei Let’s-Encrypt-Zertifikat die CA-Prüfung verwenden.') }}
+  </div></div></div>
+  <div class="card"><div class="card-head"><h2>Zugang</h2></div><div class="card-body"><div class="form-grid">
+    {{ field('Benutzername', 'username', n.username, required=True, help='Administrator der Nextcloud') }}
+    {{ field('App-Passwort', 'password', '', type='password', help=('Hinterlegt – leer lassen, um es zu behalten' if n.password_enc else 'nicht das Login-Passwort, sondern ein App-Passwort'), attrs='autocomplete="new-password"') }}
+    <div class="field full"><label for="f-system">Gleiche Nextcloud als System (SSH)</label>
+      <select id="f-system" name="system_id"><option value="">– keines –</option>{% for s in systems %}<option value="{{ s.id }}" {{ 'selected' if n.system_id == s.id }}>{{ s.name }} ({{ s.host }})</option>{% endfor %}</select>
+      <span class="help">Optional. Darüber laufen Aufgaben, die nur mit occ gehen, z. B. die Anmeldung über authentik (SSO).</span></div>
+  </div></div></div>
+</div>
+<div class="actions mt-1"><button class="btn primary">Speichern</button><a class="btn" href="{{ url_for('nextcloud.index') if is_new else url_for('nextcloud.detail', nid=n.id) }}">Abbrechen</a></div>
+</form>
+{% if not is_new %}
+<div class="card danger-zone mt-2"><div class="card-head"><h2>Verbindung entfernen</h2></div><div class="card-body">
+  <form method="post" action="{{ url_for('nextcloud.delete', nid=n.id) }}" data-confirm="Verbindung {{ n.name }} entfernen? In der Nextcloud ändert sich nichts.">{{ csrf() }}<button class="btn danger">Entfernen</button></form>
+</div></div>
+{% endif %}
+{% endblock %}

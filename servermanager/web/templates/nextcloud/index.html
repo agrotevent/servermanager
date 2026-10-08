@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% set help_page = "apps" %}
+{% from "_macros.html" import empty with context %}
+{% from "integrations/_macros.html" import int_status with context %}
+{% block title %}Nextcloud{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>Nextcloud</h1><p>Nextcloud über die Schnittstelle (OCS-API): Zustand, Benutzer und Gruppen – auch ohne SSH-Zugang zum Server.</p></div>
+  {% if user.is_admin %}<div class="actions"><a class="btn primary" href="{{ url_for('nextcloud.new') }}"><svg class="icon"><use href="#i-plus"/></svg>Nextcloud hinzufügen</a></div>{% endif %}
+</div>
+{% if items %}
+<div class="card"><div class="table-wrap"><table class="table">
+  <thead><tr><th>Nextcloud</th><th>Status</th><th>Version</th><th>Benutzer</th><th>Aktiv (24 h)</th><th>Freier Speicher</th></tr></thead>
+  <tbody>{% for n in items %}
+    <tr><td><a href="{{ url_for('nextcloud.detail', nid=n.id) }}"><strong>{{ n.name }}</strong></a><span class="sub">{{ n.api_url }}</span></td>
+      <td>{{ int_status(n) }}<span class="sub">{{ n.last_poll|ago }}</span></td>
+      <td>{{ n.data.version or '–' }}{% if n.data.core_update %} <span class="badge warning">Update {{ n.data.core_update }}</span>{% endif %}</td>
+      <td>{{ n.data.users if n.data.users is not none else '–' }}</td><td>{{ n.data.active_24h if n.data.active_24h is not none else '–' }}</td>
+      <td>{{ n.data.freespace|bytes if n.data.freespace else '–' }}</td></tr>
+  {% endfor %}</tbody></table></div></div>
+{% else %}<div class="card"><div class="card-body">{{ empty('Noch keine Nextcloud angebunden.', 'i-cloud') }}</div></div>{% endif %}
+{% endblock %}

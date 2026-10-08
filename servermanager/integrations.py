@@ -11,11 +11,12 @@ from .mikrotik import MikroTik, MikroTikError
 from .authentik import Authentik, AuthentikError
 from .mailcow import Mailcow, MailcowError
 from .ispconfig_api import IspConfig, IspError
-from .models import (KIND_EASYBELL, KIND_HCLOUD, KIND_HCLOUD_SRV, KIND_HETZNER, KIND_HETZNER_SRV, KIND_ISPC, KIND_MAILCOW, KIND_PANGOLIN, KIND_PBX, KIND_PVE, KIND_ROUTER,
+from .models import (KIND_EASYBELL, KIND_HCLOUD, KIND_HCLOUD_SRV, KIND_HETZNER, KIND_HETZNER_SRV, KIND_ISPC, KIND_MAILCOW,
+                     KIND_NEXTCLOUD, KIND_PANGOLIN, KIND_PBX, KIND_PVE, KIND_ROUTER,
                      KIND_SSO, KIND_ZABBIX, KIND_ZAMMAD, STATUS_ERROR, STATUS_ONLINE, EasybellAccount, HcloudProject, HcloudServer,
                      HetznerAccount,
                      HetznerServer, IspServer,
-                     MailcowServer, PangolinServer, PbxServer, PveServer, RouterDevice, SsoServer, System, ZabbixHost,
+                     MailcowServer, NextcloudServer, PangolinServer, PbxServer, PveServer, RouterDevice, SsoServer, System, ZabbixHost,
                      ZabbixServer, ZammadServer, utcnow)
 from .pangolin import Pangolin, PangolinError
 from .pbx import PbxError
@@ -26,23 +27,24 @@ from .zammad import Zammad, ZammadError
 from .ami import Ami, AmiError
 from .hetzner import Robot, RobotError
 from .hcloud import Cloud, CloudError
+from .nextcloud_api import Nextcloud, NextcloudError
 
 log = logging.getLogger(__name__)
 
 MODELS = {KIND_PVE: PveServer, KIND_ROUTER: RouterDevice, KIND_PANGOLIN: PangolinServer,
           KIND_MAILCOW: MailcowServer, KIND_SSO: SsoServer, KIND_PBX: PbxServer, KIND_ZABBIX: ZabbixServer,
           KIND_ISPC: IspServer, KIND_ZAMMAD: ZammadServer, KIND_EASYBELL: EasybellAccount,
-          KIND_HETZNER: HetznerAccount, KIND_HCLOUD: HcloudProject}
+          KIND_HETZNER: HetznerAccount, KIND_HCLOUD: HcloudProject, KIND_NEXTCLOUD: NextcloudServer}
 # objects permissions can be granted on (single Hetzner servers are not polled on their own)
 ACCESS_MODELS = {**MODELS, KIND_HETZNER_SRV: HetznerServer, KIND_HCLOUD_SRV: HcloudServer}
 LABELS = {KIND_PVE: "Proxmox", KIND_ROUTER: "RouterOS", KIND_PANGOLIN: "Pangolin", KIND_MAILCOW: "Mailcow",
           KIND_SSO: "SSO", KIND_PBX: "Telefonie", KIND_ZABBIX: "Zabbix", KIND_ISPC: "ISPConfig",
           KIND_ZAMMAD: "Zammad", KIND_EASYBELL: "easybell", KIND_HETZNER: "Hetzner",
-          KIND_HCLOUD: "Hetzner Cloud"}
+          KIND_HCLOUD: "Hetzner Cloud", KIND_NEXTCLOUD: "Nextcloud"}
 Integration = Union[PveServer, RouterDevice, PangolinServer, MailcowServer, SsoServer, PbxServer, ZabbixServer,
-                    IspServer, ZammadServer, EasybellAccount, HetznerAccount, HcloudProject]
+                    IspServer, ZammadServer, EasybellAccount, HetznerAccount, HcloudProject, NextcloudServer]
 ApiError = (PveError, MikroTikError, PangolinError, MailcowError, AuthentikError, PbxError, ZabbixError, IspError,
-            ZammadError, AmiError, RobotError, CloudError, SSHError, ValueError)
+            ZammadError, AmiError, RobotError, CloudError, NextcloudError, SSHError, ValueError)
 
 
 def kind_of(obj: Integration) -> str:
@@ -155,6 +157,28 @@ def ispconfig_auto(db: Session, system: System) -> Optional[int]:
 def zammad_client(z: ZammadServer, timeout: int = 20) -> Zammad:
     return Zammad(z.api_url, security.decrypt(z.token_enc), fingerprint=z.fingerprint or "",
                   verify_ca=bool(z.verify_ca) or not z.fingerprint, timeout=timeout)
+
+
+def nextcloud_client(n: NextcloudServer, timeout: int = 20) -> Nextcloud:
+    if not n.api_url or not n.username or not n.password_enc:
+        raise NextcloudError("Schnittstelle noch nicht eingerichtet")
+    return Nextcloud(n.api_url, n.username, security.decrypt(n.password_enc), fingerprint=n.fingerprint or "",
+                     verify_ca=bool(n.verify_ca) or not n.fingerprint, timeout=timeout)
+
+
+def nextcloud_overview(nc: Nextcloud, disk_pct: int) -> tuple[dict, list[dict]]:
+    from .nextcloud_api import quota_info, summary
+    data = summary(nc.serverinfo())
+    users = nc.users()
+    data.update({"users": len(users), "disabled": sum(1 for u in users if u.get("enabled") is False),
+                 "groups": len(nc.groups())})
+    alerts = []
+    for u in users:
+        q = quota_info(u)
+        if q["total"] and disk_pct and q["pct"] >= disk_pct:
+            alerts.append({"key": f"quota:{u['id']}", "severity": "warn",
+                           "text": f"Speicher von {u['id']} zu {q['pct']} % belegt"})
+    return data, alerts
 
 
 def easybell_client(e: EasybellAccount, timeout: float = 15.0) -> Ami:
@@ -522,6 +546,8 @@ def poll(db: Session, obj: Integration) -> list[dict]:
             data, alerts = hcloud_sync(db, obj)
         elif kind == KIND_ISPC:
             data = ispconfig_overview(ispconfig_client(obj))
+        elif kind == KIND_NEXTCLOUD:
+            data, alerts = nextcloud_overview(nextcloud_client(obj), disk_pct)
         elif kind == KIND_SSO:
             au = sso_client(obj)
             data = {"version": au.version(), "applications": len(au.applications())}

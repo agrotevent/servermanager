@@ -504,3 +504,6 @@ dialog.modal .modal-body { padding: 16px 18px; display: flex; flex-direction: co
 dialog.modal .modal-body p { margin: 0; }
 dialog.modal .modal-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px;
                            border-top: 1px solid var(--border); background: var(--surface-2); }
+/* checkboxes/radios inside a field keep the normal text style (only the field caption is a label style) */
+.field > label.check { font-family: var(--font); text-transform: none; letter-spacing: 0; font-weight: 400;
+                       font-size: 14px; }

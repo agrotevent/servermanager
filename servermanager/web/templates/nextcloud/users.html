@@ -11,6 +11,8 @@
 <div class="page-head"><div class="grow"><h1>Nextcloud-Benutzer</h1>
   <p><a href="{{ url_for('systems.detail', system_id=system.id, tab='nextcloud') }}">{{ system.name }}</a>{% if sso %} · SSO über authentik aktiv (<span class="mono">{{ sso.app_url }}</span>) – neue SSO-Benutzer werden beim ersten Login automatisch angelegt{% endif %}</p></div></div>
 {% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+{% if sso_servers %}<div class="card"><div class="card-body flex" style="gap:8px;flex-wrap:wrap;align-items:center"><span class="grow"><strong>Nach authentik übernehmen:</strong> <small class="muted">Gruppen und Benutzer dieser Nextcloud in authentik anlegen (mit Vorschau).</small></span>
+  {% for x in sso_servers %}<a class="btn" href="{{ url_for('sso.nc_import', sso_id=x.id, source='ssh:' ~ system.id) }}">{{ x.name }} …</a>{% endfor %}</div></div>{% endif %}
 <div class="card"><div class="card-head"><h2>Benutzer</h2><input type="search" placeholder="Suchen …" data-filter-list="#nc-users tbody tr" style="max-width:220px"></div>
   {% if users %}
   <div class="table-wrap"><table class="table compact" id="nc-users">

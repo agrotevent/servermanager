@@ -80,6 +80,17 @@
     <p class="mt-1"><small>Legt in Proxmox den OpenID-Connect-Realm <code>{{ pve_realm }}</code> an. In authentik entsteht die passende Anwendung. Benutzer melden sich als <code>&lt;authentik-Benutzer&gt;@{{ pve_realm }}</code> an und werden beim ersten Login angelegt, zunächst <strong>ohne Rechte</strong>. Rechte vergibst du in Proxmox unter <em>Rechenzentrum → Berechtigungen</em>, mit Gruppen-Übernahme auch für ganze authentik-Gruppen. Proxmox muss die Anmeldeseite von authentik erreichen können. Das API-Token braucht das Recht <code>Realm.Allocate</code> (Rolle Administrator).</small></p>
     {% else %}<p class="muted">Keine (weitere) Proxmox-Verbindung mit Vollzugriff vorhanden.</p>{% endif %}
   </div></div>
+  <div class="card"><div class="card-head"><h2>Zammad verbinden</h2></div><div class="card-body">
+    {% if zammads %}
+    <form method="post" action="{{ url_for('sso.connect', sso_id=s.id) }}" class="form-grid" data-confirm="Anmeldung über authentik in Zammad einrichten?">{{ csrf() }}<input type="hidden" name="kind" value="zammad">
+      <div class="field full"><label>Zammad</label><select name="target_id">{% for x, web in zammads %}<option value="{{ x.id }}">{{ x.name }}{% if web %} ({{ web }}){% endif %}</option>{% endfor %}</select></div>
+      {{ field('Adresse der Zammad-Oberfläche', 'app_url', zammads[0][1], placeholder='https://support.example.com', help='leer = aus der Zammad-Verbindung', cls='full') }}
+      <div class="full"><label class="check"><input type="checkbox" name="auto_link" value="1" checked> Bestehende Zammad-Konten beim ersten Login automatisch verknüpfen (über Benutzername bzw. E-Mail-Adresse)</label></div>
+      <div class="full"><button class="btn primary">Per Klick verbinden</button></div>
+    </form>
+    <p class="mt-1"><small>Richtet in Zammad die Anmeldung über OpenID Connect ein (<em>Einstellungen → Sicherheit → Drittanbieter-Anwendungen</em>) und legt in authentik die passende Anwendung als öffentlichen Client mit PKCE an. Auf der Zammad-Anmeldeseite erscheint dann „{{ s.name }}“; die Anmeldung mit Passwort bleibt möglich. Das API-Token der Zammad-Verbindung braucht dafür zusätzlich die Berechtigung <code>admin.security</code>. Zammad muss authentik unter der öffentlichen Adresse erreichen.</small></p>
+    {% else %}<p class="muted">Keine (weitere) Zammad-Verbindung mit Vollzugriff vorhanden.</p>{% endif %}
+  </div></div>
 </div>
 {% endif %}
 {% if user.is_admin %}
@@ -141,7 +152,10 @@
       {{ field('Postfach-Quota (MB)', 'quota', 3072, type='number') }}{% endif %}
       <div class="full"><button class="btn primary">Anlegen</button></div>
     </form>
-    <small class="muted">In verbundenen Nextclouds entsteht das Konto automatisch beim ersten Login über SSO.</small></div>
+    <small class="muted">In verbundenen Nextclouds entsteht das Konto automatisch beim ersten Login über SSO.</small>
+    <h4 class="mt-2">Aus Nextcloud übernehmen</h4>
+    <p><small class="muted">Gruppen und vorhandene Benutzer einer Nextcloud in authentik anlegen – mit Vorschau. Danach landen die Benutzer beim Login über authentik in ihrem bestehenden Nextcloud-Konto.</small></p>
+    <a class="btn" href="{{ url_for('sso.nc_import', sso_id=s.id) }}">Nextcloud-Benutzer übernehmen …</a></div>
   {% endif %}
 </div>
 {% endif %}

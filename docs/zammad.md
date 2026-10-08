@@ -19,6 +19,12 @@ Richtungen** abgeglichen.
    Änderungen zurückmelden* für Tickets mit dem Tag `servermanager` an. Voraussetzung: Die öffentliche
    URL des Servermanagers (Einstellungen → Allgemein) ist von Zammad aus erreichbar.
 
+## Anmeldung über authentik (SSO)
+
+Unter *Infrastruktur → SSO → Anwendungen → Zammad verbinden* richtet der Servermanager die Anmeldung
+an Zammad über authentik ein (OpenID Connect). Das Token braucht dafür zusätzlich die Berechtigung
+`admin.security`. Details unter [Nextcloud, Mailcow & SSO](apps.md#anwendungen-per-klick-verbinden).
+
 ## Abgleich
 
 | Ereignis | Wirkung |

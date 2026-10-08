@@ -42,8 +42,14 @@
       let values = {};
       try { values = JSON.parse(opener.dataset.dialogValues || "{}"); } catch (err) { values = {}; }
       Object.entries(values).forEach(([key, value]) => {
-        dlg.querySelectorAll(`[name="${key}"]`).forEach((el) => { el.value = value; });
-        dlg.querySelectorAll(`[data-dialog-text="${key}"]`).forEach((el) => { el.textContent = value; });
+        dlg.querySelectorAll(`[name="${key}"]`).forEach((el) => {
+          // checkbox lists take an array of the checked values
+          if (el.type === "checkbox") el.checked = Array.isArray(value) ? value.includes(el.value) : Boolean(value);
+          else el.value = value;
+        });
+        dlg.querySelectorAll(`[data-dialog-text="${key}"]`).forEach((el) => {
+          el.textContent = Array.isArray(value) ? value.join(", ") : value;
+        });
       });
       dlg.querySelectorAll("button").forEach((b) => { b.disabled = false; });
       dlg.showModal();

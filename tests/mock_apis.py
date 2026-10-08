@@ -39,6 +39,7 @@ AK_TOKEN = "ak-token"
 PG_ORG = "acme"
 HZ_USER, HZ_PASS = "#ws+test", "robot-secret"
 HC_TOKEN, HC_RO_TOKEN = "hc-rw-token", "hc-ro-token"
+NC_USER, NC_PASS = "ncadmin", "Nc-App-Pass-12345"
 
 EXPORT = (Path(__file__).parent / "data" / "chr_export.rsc").read_text()
 
@@ -191,6 +192,23 @@ class State:
         self.hc_floating = [{"id": 77, "name": "mail-ip", "ip": "78.46.0.5", "type": "ipv4", "server": 1001,
                              "dns_ptr": [{"ip": "78.46.0.5", "dns_ptr": "mail.example.com"}], "blocked": False}]
         self.hc_actions: list[tuple] = []
+        # ---------------- nextcloud (OCS)
+        self.nc_groups = ["admin", "Buchhaltung", "Mitarbeiter", "Vertrieb Nord"]
+        self.nc_users = {
+            "ncadmin": {"id": "ncadmin", "enabled": True, "displayname": "NC Admin", "email": "admin@example.com",
+                        "groups": ["admin"], "quota": {"used": 1000, "quota": -3}, "lastLogin": 1760000000000,
+                        "backend": "Database"},
+            "anna": {"id": "anna", "enabled": True, "displayname": "Anna Beispiel", "email": "anna@example.com",
+                     "groups": ["Mitarbeiter", "Buchhaltung"], "quota": {"used": 9 * 1024 ** 3,
+                                                                         "quota": 10 * 1024 ** 3},
+                     "lastLogin": 1760000000000, "backend": "Database"},
+            "bernd": {"id": "bernd", "enabled": True, "displayname": "Bernd", "email": "",
+                      "groups": ["Mitarbeiter", "Vertrieb Nord"], "quota": {"used": 0, "quota": "default"},
+                      "lastLogin": 0, "backend": "Database"},
+            "carl.old": {"id": "carl.old", "enabled": False, "displayname": "Carl", "email": "carl@example.com",
+                         "groups": ["Mitarbeiter"], "quota": {"used": 0, "quota": "none"}, "lastLogin": 0,
+                         "backend": "Database"}}
+        self.nc_passwords: dict[str, str] = {}
         self.ak_codes: dict[str, dict] = {}     # code -> {"user", "challenge", "nonce", "client_id", "redirect"}
         self.ak_tokens: dict[str, dict] = {}    # access token -> user info
 
@@ -271,6 +289,8 @@ class MockApp:
                 resp = self.robot(req, req.path[len("/robot/"):])
             elif req.path.startswith("/application/o/"):
                 resp = self.authentik_oauth(req, req.path[len("/application/o/"):])
+            elif req.path.startswith("/ocs/v2.php/"):
+                resp = self.nextcloud(req, req.path[len("/ocs/v2.php/"):])
             elif req.path == "/zabbix/api_jsonrpc.php":
                 resp = self.zabbix(req)
             elif req.path == "/remote/json.php":
@@ -278,6 +298,93 @@ class MockApp:
             else:
                 resp = Response("not found", 404)
         return resp(environ, start_response)
+
+    # ------------------------------------------------------------------ nextcloud (OCS v2)
+    def nextcloud(self, req: Request, path: str) -> Response:
+        s = self.s
+
+        def ok(data: Any = None) -> Response:
+            return _json({"ocs": {"meta": {"status": "ok", "statuscode": 200, "message": "OK"}, "data": data or []}})
+
+        def fail(status: int, msg: str) -> Response:
+            return _json({"ocs": {"meta": {"status": "failure", "statuscode": status, "message": msg}, "data": []}},
+                         status)
+        auth = req.authorization
+        if req.headers.get("OCS-APIRequest") != "true":
+            return fail(401, "CSRF check failed")
+        if auth is None or auth.username != NC_USER or auth.password != NC_PASS:
+            return Response("", 401)
+        f = {**req.form.to_dict(), "groups[]": req.form.getlist("groups[]")}
+        p = path.strip("/").split("/")
+        if path == "apps/serverinfo/api/v1/info":
+            return ok({"nextcloud": {"system": {"version": "31.0.9.1", "freespace": 500 * 1024 ** 3,
+                                                "apps": {"num_installed": 60, "num_updates_available": 1,
+                                                         "app_updates": {"calendar": "5.5.1"}},
+                                                "update": {"available": True, "available_version": "32.0.0"}},
+                                     "storage": {"num_users": len(s.nc_users), "num_files": 1234},
+                                     "shares": {"num_shares": 7}},
+                       "server": {"webserver": "Apache", "php": {"version": "8.3.6"},
+                                  "database": {"type": "mysql", "version": "10.11.6"}},
+                       "activeUsers": {"last5minutes": 1, "last1hour": 2, "last24hours": 3}})
+        if path == "cloud/users/details":
+            off, lim = int(req.args.get("offset", 0)), int(req.args.get("limit", 500))
+            keys = sorted(s.nc_users)[off:off + lim]
+            return ok({"users": {k: s.nc_users[k] for k in keys}})
+        if path == "cloud/groups/details":
+            return ok({"groups": [{"id": g_, "displayname": g_, "disabled": False,
+                                   "usercount": sum(1 for u in s.nc_users.values() if g_ in u["groups"])}
+                                  for g_ in s.nc_groups]})
+        if path == "cloud/groups" and req.method == "POST":
+            if f.get("groupid") in s.nc_groups:
+                return fail(400, "group exists")
+            s.nc_groups.append(f["groupid"])
+            return ok()
+        if path == "cloud/users" and req.method == "POST":
+            uid = f.get("userid", "")
+            if uid in s.nc_users:
+                return fail(400, "User already exists")
+            for g_ in f["groups[]"]:
+                if g_ not in s.nc_groups:
+                    return fail(400, "group " + g_ + " does not exist")
+            s.nc_users[uid] = {"id": uid, "enabled": True, "displayname": f.get("displayName", uid),
+                               "email": f.get("email", ""), "groups": f["groups[]"],
+                               "quota": {"used": 0, "quota": f.get("quota") or "default"}, "lastLogin": 0,
+                               "backend": "Database"}
+            s.nc_passwords[uid] = f.get("password", "")
+            return ok({"id": uid})
+        if p[:2] == ["cloud", "users"] and len(p) >= 3:
+            u = s.nc_users.get(p[2])
+            if u is None:
+                return fail(404, "User does not exist")
+            if len(p) == 3 and req.method == "GET":
+                return ok(u)
+            if len(p) == 3 and req.method == "DELETE":
+                del s.nc_users[p[2]]
+                return ok()
+            if len(p) == 3 and req.method == "PUT":
+                key, value = f.get("key"), f.get("value", "")
+                if key == "password":
+                    s.nc_passwords[p[2]] = value
+                elif key == "quota":
+                    u["quota"]["quota"] = value
+                elif key in ("displayname", "email"):
+                    u[key] = value
+                else:
+                    return fail(400, "unknown key")
+                return ok()
+            if len(p) == 4 and p[3] in ("enable", "disable") and req.method == "PUT":
+                u["enabled"] = p[3] == "enable"
+                return ok()
+            if len(p) == 4 and p[3] == "groups":
+                gid = f.get("groupid", "")
+                if gid not in s.nc_groups:
+                    return fail(400, "group does not exist")
+                if req.method == "POST" and gid not in u["groups"]:
+                    u["groups"].append(gid)
+                elif req.method == "DELETE" and gid in u["groups"]:
+                    u["groups"].remove(gid)
+                return ok()
+        return fail(404, "not found")
 
     # ------------------------------------------------------------------ zammad
     def zammad(self, req: Request, path: str) -> Response:
@@ -297,6 +404,23 @@ class MockApp:
             return z["seq"]
         if path == "users/me":
             return _json(z["users"][0])
+        settings = z.setdefault("settings", [
+            {"id": 1, "name": "fqdn", "state_current": {"value": "support.example.com"}},
+            {"id": 2, "name": "http_type", "state_current": {"value": "https"}},
+            {"id": 3, "name": "auth_saml", "state_current": {"value": False}},
+            {"id": 4, "name": "auth_openid_connect", "state_current": {"value": False}},
+            {"id": 5, "name": "auth_openid_connect_credentials", "state_current": {"value": {}}},
+            {"id": 6, "name": "auth_third_party_auto_link_at_inital_login", "state_current": {"value": False}}])
+        if path == "settings":
+            if z.get("no_admin"):
+                return _json({"error": "Not authorized (user)!"}, 403)
+            return _json([x for x in settings if not z.get("old_version") or x["name"] != "auth_openid_connect"])
+        if path.startswith("settings/") and req.method == "PUT":
+            row = next((x for x in settings if x["id"] == int(path.split("/")[1])), None)
+            if row is None or body.get("name") != row["name"]:
+                return _json({"error": "not found"}, 404)
+            row["state_current"] = body["state_current"]
+            return _json(row)
         if path == "users/search":
             q = req.args.get("query", "")
             return _json([u for u in z["users"] if q and q in u["email"]])
@@ -1007,11 +1131,29 @@ class MockApp:
                 return _json(u, 201)
             return page(s.ak_users)
         if path == "core/groups/":
+            if req.method == "POST":
+                if any(x["name"] == body["name"] for x in s.ak_groups):
+                    return _json({"name": ["group with this name already exists."]}, 400)
+                s.ak_seq += 1
+                grp = {"pk": f"22222222-aaaa-bbbb-cccc-{s.ak_seq:012d}", "name": body["name"],
+                       "is_superuser": bool(body.get("is_superuser")), "users": list(body.get("users") or [])}
+                s.ak_groups.append(grp)
+                return _json(grp, 201)
             return page(s.ak_groups)
         if p[:2] == ["core", "groups"] and len(p) == 4 and p[3] == "add_user":
             g = next(x for x in s.ak_groups if x["pk"] == p[2])
             g["users"].append(body["pk"])
             return Response(status=204)
+        if p[:2] == ["core", "groups"] and len(p) == 3:
+            g = next((x for x in s.ak_groups if x["pk"] == p[2]), None)
+            if g is None:
+                return _json({"detail": "Not found."}, 404)
+            if req.method == "PATCH":
+                unknown = [x for x in body.get("users", []) if not any(u["pk"] == x for u in s.ak_users)]
+                if unknown:
+                    return _json({"users": [f"Invalid pk \"{unknown[0]}\" - object does not exist."]}, 400)
+                g.update(body)
+            return _json(g)
         if p[:2] == ["core", "users"] and len(p) >= 3:
             pk = int(p[2])
             u = next((x for x in s.ak_users if x["pk"] == pk), None)

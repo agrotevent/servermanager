@@ -373,12 +373,13 @@ KIND_HETZNER = "hetzner"            # Robot account: all its root servers
 KIND_HETZNER_SRV = "hetzner_srv"    # a single root server
 KIND_HCLOUD = "hcloud"              # Hetzner Cloud project: all its servers
 KIND_HCLOUD_SRV = "hcloud_srv"      # a single cloud server
+KIND_NEXTCLOUD = "nextcloud"        # Nextcloud via its OCS API (systems of type nextcloud use SSH/occ)
 INTEGRATION_KINDS = {KIND_PVE: "Proxmox VE", KIND_ROUTER: "RouterOS", KIND_PANGOLIN: "Pangolin",
                      KIND_MAILCOW: "Mailcow", KIND_SSO: "SSO (authentik)", KIND_PBX: "Telefonie (Asterisk/FreePBX)",
                      KIND_ZABBIX: "Zabbix & Tickets", KIND_ISPC: "ISPConfig", KIND_ZAMMAD: "Zammad",
                      KIND_EASYBELL: "easybell Cloud Telefonanlage", KIND_HETZNER: "Hetzner (alle Server des Kontos)",
                      KIND_HETZNER_SRV: "Hetzner Root-Server", KIND_HCLOUD: "Hetzner Cloud (alle Server des Projekts)",
-                     KIND_HCLOUD_SRV: "Hetzner Cloud-Server"}
+                     KIND_HCLOUD_SRV: "Hetzner Cloud-Server", KIND_NEXTCLOUD: "Nextcloud (API)"}
 # access levels named after what they allow, where the general names would be misleading
 # (each level includes the ones before: Ändern may also restart and evaluate)
 KIND_LEVEL_LABELS = {k: {"view": "Auswerten", "operate": "Neustarten", "full": "Ändern"}
@@ -536,6 +537,18 @@ class IspServer(IntegrationMixin, Base):
         from urllib.parse import urlsplit
         p = urlsplit(self.api_url or "")
         return f"{p.scheme}://{p.netloc}/" if p.netloc else ""
+
+
+class NextcloudServer(IntegrationMixin, Base):
+    """Nextcloud via its OCS API: server info, users and groups (admin account with app password)."""
+
+    __tablename__ = "nextcloud_servers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    api_url: Mapped[str] = mapped_column(String(255), default="")        # https://cloud.example.com
+    username: Mapped[str] = mapped_column(String(64), default="")
+    password_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # app password
+    system_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # same Nextcloud as SSH system (occ, SSO)
 
 
 class ZabbixServer(IntegrationMixin, Base):

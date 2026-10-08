@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% set help_page = "apps" %}
+{% from "_macros.html" import csrf, field, empty with context %}
+{% from "integrations/_macros.html" import int_status, alerts_box with context %}
+{% block title %}{{ n.name }} · Nextcloud{% endblock %}
+{% macro uact(action, label, uid, cls='xs', confirm='') -%}
+  <form method="post" action="{{ url_for('nextcloud.user_action', nid=n.id) }}" class="inline" {% if confirm %}data-confirm="{{ confirm }}"{% endif %}>{{ csrf() }}
+    <input type="hidden" name="action" value="{{ action }}"><input type="hidden" name="uid" value="{{ uid }}">
+    <button class="btn {{ cls }}">{{ label }}</button></form>
+{%- endmacro %}
+{% block content %}
+{% set d = n.data %}
+<div class="page-head">
+  <div class="grow"><h1>{{ n.name }} {{ int_status(n) }}{% if sso_client %} <span class="badge info">SSO aktiv</span>{% endif %}</h1>
+    <p><a href="{{ n.api_url }}" target="_blank" rel="noopener">{{ n.api_url }}</a> · angemeldet als {{ n.username }}{% if system %} · System <a href="{{ url_for('systems.detail', system_id=system.id) }}">{{ system.name }}</a>{% endif %}</p></div>
+  <div class="actions">
+    {% if int_can('nextcloud', n.id, 'operate') %}<form method="post" action="{{ url_for('nextcloud.sync', nid=n.id) }}" class="inline">{{ csrf() }}<input type="hidden" name="next" value="{{ request.full_path }}"><button class="btn ghost"><svg class="icon"><use href="#i-refresh"/></svg>Aktualisieren</button></form>{% endif %}
+    {% if user.is_admin %}<a class="btn ghost" href="{{ url_for('nextcloud.edit', nid=n.id) }}"><svg class="icon"><use href="#i-edit"/></svg>Bearbeiten</a>{% endif %}
+  </div>
+</div>
+{{ alerts_box(n) }}
+<nav class="tabs">{% for k, v in tabs.items() %}<a href="?tab={{ k }}" class="{{ 'active' if tab == k }}">{{ v }}</a>{% endfor %}</nav>
+{% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+
+{% if tab == 'overview' %}
+<div class="stats">
+  <div class="stat"><div class="label">Version</div><div class="value">{{ d.version or '–' }}</div><div class="sub">{% if d.core_update %}Update verfügbar: {{ d.core_update }}{% else %}{{ d.webserver }}{% endif %}</div></div>
+  <div class="stat"><div class="label">Benutzer</div><div class="value">{{ d.users if d.users is not none else '–' }}</div><div class="sub">{{ d.disabled or 0 }} gesperrt · {{ d.groups or 0 }} Gruppen</div></div>
+  <div class="stat"><div class="label">Aktiv</div><div class="value">{{ d.active_24h if d.active_24h is not none else '–' }}</div><div class="sub">24 h · {{ d.active_1h or 0 }} in der letzten Stunde</div></div>
+  <div class="stat"><div class="label">Dateien</div><div class="value">{{ d.files or 0 }}</div><div class="sub">{{ d.shares or 0 }} Freigaben</div></div>
+  <div class="stat"><div class="label">Freier Speicher</div><div class="value">{{ d.freespace|bytes if d.freespace else '–' }}</div><div class="sub">Datenverzeichnis</div></div>
+</div>
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>Server</h2></div><div class="card-body">
+    <dl class="kv"><dt>PHP</dt><dd>{{ d.php or '–' }}</dd><dt>Datenbank</dt><dd>{{ d.database or '–' }}</dd><dt>Webserver</dt><dd>{{ d.webserver or '–' }}</dd>
+      <dt>Apps</dt><dd>{{ d.apps_installed or 0 }} installiert{% if d.app_updates %} · Updates: {{ d.app_updates|join(', ') }}{% endif %}</dd>
+      <dt>Zuletzt abgefragt</dt><dd>{{ n.last_poll|dt }}</dd></dl>
+  </div></div>
+  <div class="card"><div class="card-head"><h2>Anmeldung über authentik</h2></div><div class="card-body">
+    {% if sso_client %}
+      <p><span class="badge success">aktiv</span> über {{ sso_server.name }} – Benutzer, deren authentik-Benutzername der Nextcloud-Benutzer-ID entspricht, landen in ihrem bestehenden Konto.</p>
+    {% elif system %}
+      <p>Noch nicht verbunden. Die Verbindung richtest du auf der SSO-Seite ein (über das System {{ system.name }}).</p>
+    {% else %}
+      <p>Für die Anmeldung über authentik braucht der Servermanager SSH-Zugang zur Nextcloud (occ): unter „Bearbeiten“ das System zuordnen.</p>
+    {% endif %}
+    {% if sso_servers and int_can('nextcloud', n.id, 'view') %}
+      <h4 class="mt-1">Benutzer und Gruppen nach authentik übernehmen</h4>
+      <p><small class="muted">Legt die Nextcloud-Gruppen und fehlende Benutzer in authentik an und überträgt die Mitgliedschaften – mit Vorschau.</small></p>
+      <div class="flex" style="gap:8px;flex-wrap:wrap">{% for s in sso_servers %}<a class="btn{{ ' primary' if loop.first }}" href="{{ url_for('sso.nc_import', sso_id=s.id, source='api:' ~ n.id) }}">Nach {{ s.name }} übernehmen …</a>{% endfor %}</div>
+    {% endif %}
+  </div></div>
+</div>
+
+{% elif tab == 'users' and not error %}
+<div class="card"><div class="card-head"><h2>Benutzer</h2><input type="search" placeholder="Suchen …" data-filter-list="#ncu tbody tr" style="max-width:220px"></div>
+  <div class="table-wrap"><table class="table compact" id="ncu">
+    <thead><tr><th>Benutzer</th><th>Gruppen</th><th>Speicher</th><th>Letzte Anmeldung</th><th>Status</th><th></th></tr></thead><tbody>
+    {% for u in users %}{% set q = u._quota %}{% set enabled = u.enabled is not false %}{% set is_admin_acc = admin_group in (u.groups or []) %}
+      <tr class="{{ 'muted' if not enabled }}"><td><strong>{{ u.id }}</strong><span class="sub">{{ u.displayname }}{% if u.email %} · {{ u.email }}{% endif %}{% if u.backend and u.backend != 'Database' %} · {{ u.backend }}{% endif %}</span></td>
+        <td><small>{{ (u.groups or [])|join(', ') }}</small></td>
+        <td class="nowrap"><small>{{ q.used|bytes }} / {{ q.total|bytes if q.total else (u._quota_text or '∞') }}{% if q.total %} ({{ q.pct }} %){% endif %}</small></td>
+        <td><small>{{ (u.lastLogin // 1000)|dt if u.lastLogin else 'nie' }}</small></td>
+        <td>{% if enabled %}<span class="badge success">aktiv</span>{% else %}<span class="badge">gesperrt</span>{% endif %}{% if is_admin_acc %} <span class="badge warning">Admin</span>{% endif %}</td>
+        <td class="nowrap text-right">{% if user.is_admin or not is_admin_acc %}
+          {% if int_can('nextcloud', n.id, 'full') %}<button type="button" class="btn xs" data-dialog-open="#ncu-edit" data-dialog-values='{{ {"uid": u.id, "display": u.displayname or "", "email": u.email or "", "quota": u._quota_text, "groups": u.groups or []}|tojson }}'>Bearbeiten</button>{% endif %}
+          {% if int_can('nextcloud', n.id, 'operate') and u.id|lower != n.username|lower %}
+            {% if enabled %}{{ uact('disable', 'Sperren', u.id, 'xs', u.id ~ ' sperren?') }}{% else %}{{ uact('enable', 'Entsperren', u.id) }}{% endif %}
+          {% endif %}
+          {% if int_can('nextcloud', n.id, 'full') %}{{ uact('password', 'Neues Passwort', u.id, 'xs', 'Neues Passwort für ' ~ u.id ~ ' setzen?') }}{% if u.id|lower != n.username|lower %}{{ uact('delete', 'Löschen', u.id, 'xs danger-outline', u.id ~ ' mit allen Dateien löschen?') }}{% endif %}{% endif %}
+        {% endif %}</td></tr>
+    {% else %}<tr><td colspan="6" class="muted">Keine Benutzer.</td></tr>{% endfor %}</tbody></table></div>
+  {% if int_can('nextcloud', n.id, 'full') %}
+  <div class="card-body"><h4>Benutzer anlegen</h4>
+    <form method="post" action="{{ url_for('nextcloud.user_action', nid=n.id) }}" class="form-grid" autocomplete="off">{{ csrf() }}<input type="hidden" name="action" value="add">
+      {{ field('Benutzer-ID', 'uid', '', required=True, placeholder='max.muster', help='Bei Anmeldung über authentik: gleich dem authentik-Benutzernamen') }}
+      {{ field('Anzeigename', 'display', '') }}
+      {{ field('E-Mail', 'email', '', type='email') }}
+      {{ field('Quota', 'quota', '', placeholder='10 GB', help='leer = Standard, none = unbegrenzt') }}
+      {{ field('Passwort', 'password', '', type='password', help='leer = zufällig, wird einmal angezeigt', attrs='autocomplete="new-password"') }}
+      {% if groups %}<div class="field full"><label>Gruppen</label><div class="check-list">{% for gp in groups %}{% if user.is_admin or gp.id != admin_group %}<label class="check"><input type="checkbox" name="groups" value="{{ gp.id }}"> {{ gp.displayname or gp.id }}</label>{% endif %}{% endfor %}</div></div>{% endif %}
+      <div class="full"><button class="btn primary">Anlegen</button></div>
+    </form></div>
+  <dialog class="modal" id="ncu-edit" aria-labelledby="ncu-edit-title">
+    <form method="post" action="{{ url_for('nextcloud.user_action', nid=n.id) }}">{{ csrf() }}<input type="hidden" name="action" value="edit"><input type="hidden" name="uid" value="">
+      <div class="modal-head"><h3 id="ncu-edit-title">Benutzer bearbeiten</h3><button type="button" class="btn ghost xs" data-dialog-close aria-label="Schließen">✕</button></div>
+      <div class="modal-body">
+        <p class="mono" data-dialog-text="uid"></p>
+        <div class="field"><label for="ncu-display">Anzeigename</label><input type="text" id="ncu-display" name="display" maxlength="100" autofocus></div>
+        <div class="field"><label for="ncu-email">E-Mail</label><input type="email" id="ncu-email" name="email"></div>
+        <div class="field"><label for="ncu-quota">Quota</label><input type="text" id="ncu-quota" name="quota" placeholder="10 GB"><span class="help">z. B. 10 GB, none = unbegrenzt, default = Standard</span></div>
+        {% if groups %}<div class="field"><label>Gruppen</label><div class="check-list">{% for gp in groups %}{% if user.is_admin or gp.id != admin_group %}<label class="check"><input type="checkbox" name="groups" value="{{ gp.id }}"> {{ gp.displayname or gp.id }}</label>{% endif %}{% endfor %}</div></div>{% endif %}
+      </div>
+      <div class="modal-foot"><button type="button" class="btn" data-dialog-close>Abbrechen</button><button class="btn primary">Speichern</button></div>
+    </form>
+  </dialog>
+  {% endif %}
+</div>
+
+{% elif tab == 'groups' and not error %}
+<div class="card"><div class="card-head"><h2>Gruppen</h2></div>
+  <div class="table-wrap"><table class="table compact"><thead><tr><th>Gruppe</th><th>Anzeigename</th><th>Mitglieder</th><th>Status</th></tr></thead><tbody>
+    {% for gp in groups %}<tr><td class="mono">{{ gp.id }}</td><td>{{ gp.displayname or '' }}</td><td>{{ gp.usercount if gp.usercount is not none else '–' }}</td>
+      <td>{% if gp.disabled %}<span class="badge">deaktiviert</span>{% elif gp.id == admin_group %}<span class="badge warning">Administratoren</span>{% endif %}</td></tr>
+    {% else %}<tr><td colspan="4" class="muted">Keine Gruppen.</td></tr>{% endfor %}</tbody></table></div>
+  {% if int_can('nextcloud', n.id, 'full') %}
+  <div class="card-body"><h4>Gruppe anlegen</h4>
+    <form method="post" action="{{ url_for('nextcloud.group_add', nid=n.id) }}" class="inline-form">{{ csrf() }}
+      <div class="field"><label for="f-gid">Name</label><input type="text" id="f-gid" name="gid" required maxlength="64" style="max-width:220px"></div>
+      <button class="btn primary">Anlegen</button></form></div>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

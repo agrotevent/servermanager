@@ -13,8 +13,8 @@ from ...authentik import AuthentikError
 from ...core import audit
 from ...jobs import enqueue
 from ...mailcow import MailcowError
-from ...models import (KIND_MAILCOW, KIND_PANGOLIN, KIND_PVE, KIND_SSO, LEVEL_FULL, LEVEL_OPERATE, LEVEL_VIEW, MailcowServer,
-                       PangolinServer, PveServer, SsoClient, SsoServer, System)
+from ...models import (KIND_MAILCOW, KIND_PANGOLIN, KIND_PVE, KIND_SSO, KIND_ZAMMAD, LEVEL_FULL, LEVEL_OPERATE, LEVEL_VIEW, MailcowServer,
+                       PangolinServer, PveServer, SsoClient, SsoServer, System, ZammadServer)
 from ...pangolin import dashboard_guess
 from ..auth import admin_required, can, client_ip, login_required
 from . import _integration as common
@@ -164,6 +164,8 @@ def detail(sso_id: int):
                    for x in g.db.execute(select(PveServer).order_by(PveServer.name)).scalars()
                    if common.can(KIND_PVE, x.id, LEVEL_FULL) and ("pve", x.id) not in linked]
     ctx["pve_realm"] = sso_lib.pve_realm(s)
+    ctx["zammads"] = [(x, _zammad_web(x)) for x in g.db.execute(select(ZammadServer).order_by(ZammadServer.name)).scalars()
+                      if common.can(KIND_ZAMMAD, x.id, LEVEL_FULL) and ("zammad", x.id) not in linked]
     ctx["pangolins"] = [(x, dashboard_guess(x.api_url))
                         for x in g.db.execute(select(PangolinServer).order_by(PangolinServer.name)).scalars()
                         if common.can(KIND_PANGOLIN, x.id, LEVEL_FULL) and ("pangolin", x.id) not in linked]
@@ -200,6 +202,8 @@ def connect(sso_id: int):
         target = common.get_or_403(KIND_PANGOLIN, target_id, LEVEL_FULL)
     elif kind == "pve":
         target = common.get_or_403(KIND_PVE, target_id, LEVEL_FULL)
+    elif kind == "zammad":
+        target = common.get_or_403(KIND_ZAMMAD, target_id, LEVEL_FULL)
     elif kind == sso_login.KIND:
         if not g.user.is_admin:
             abort(403)
@@ -208,7 +212,8 @@ def connect(sso_id: int):
     else:
         abort(400)
     default = {"mailcow": getattr(target, "public_url", ""), "pangolin": dashboard_guess(getattr(target, "api_url", "")),
-               sso_login.KIND: settings.base_url(g.db), "pve": _pve_gui(target) if kind == "pve" else ""}
+               sso_login.KIND: settings.base_url(g.db), "pve": _pve_gui(target) if kind == "pve" else "",
+               "zammad": _zammad_web(target) if kind == "zammad" else ""}
     app_url = (request.form.get("app_url") or default.get(kind) or "").strip().rstrip("/")
     if not re.match(r"^https://[A-Za-z0-9.-]+(:\d+)?(/[A-Za-z0-9._/-]*)?$", app_url):
         flash("Öffentliche Adresse der Anwendung als https://… angeben (über Pangolin erreichbar).", "danger")
@@ -220,11 +225,27 @@ def connect(sso_id: int):
     job = enqueue(g.db, kind="sso_connect", title=f"SSO verbinden: {target.name} ↔ {s.name}", user=g.user,
                   system=target if kind == "nextcloud" else None,
                   payload={"sso_id": s.id, "kind": kind, "target_id": target.id, "app_url": app_url,
-                           "options": {"groups": request.form.get("groups") == "1",
-                                       "default": request.form.get("default") == "1"} if kind == "pve" else {}})
+                           "options": _connect_options(kind)})
     audit(g.db, g.user, "sso.connect_start", s.name, f"{kind} {target.name}", ip=client_ip())
     g.db.commit()
     return redirect(url_for("jobs.detail", job_id=job.id))
+
+
+def _connect_options(kind: str) -> dict:
+    f = request.form
+    if kind == "pve":
+        return {"groups": f.get("groups") == "1", "default": f.get("default") == "1"}
+    if kind == "zammad":
+        return {"auto_link": f.get("auto_link") == "1"}
+    return {}
+
+
+def _zammad_web(z: ZammadServer) -> str:
+    from ...zammad import ZammadError, normalize_url
+    try:
+        return normalize_url(z.api_url)
+    except ZammadError:
+        return ""
 
 
 def _save_login_options() -> None:
@@ -324,3 +345,87 @@ def user_action(sso_id: int):
     except (AuthentikError, MailcowError, ValueError) as exc:
         flash(f"Fehlgeschlagen: {exc}", "danger")
     return redirect(url_for("sso.detail", sso_id=sso_id, tab="users"))
+
+
+# --------------------------------------------------------------------------
+# take over users and groups of a Nextcloud
+# --------------------------------------------------------------------------
+def nc_sources() -> list[tuple[str, str]]:
+    """(source, label) of the Nextclouds the user may read the users of: API connections and SSH systems."""
+    from ...models import KIND_NEXTCLOUD, NextcloudServer
+    out = [(f"api:{n.id}", f"{n.name} (Schnittstelle)")
+           for n in g.db.execute(select(NextcloudServer).order_by(NextcloudServer.name)).scalars()
+           if common.can(KIND_NEXTCLOUD, n.id, LEVEL_VIEW)]
+    out += [(f"ssh:{x.id}", f"{x.name} (SSH)") for x in g.db.execute(select(System).order_by(System.name)).scalars()
+            if x.has_type("nextcloud") and can(x.id, LEVEL_VIEW)]
+    return out
+
+
+def _nc_source(source: str) -> tuple[str, list[dict], list[str], object]:
+    """(label, users, groups, linked system) of a source; checks the right to read it."""
+    from ... import inventory
+    from ... import nc_import
+    from ...models import KIND_NEXTCLOUD
+    from ...modules.nextcloud import occ_task, parse_users
+    from ...nextcloud_api import NextcloudError
+    from ...ssh import SSHError
+    kind, _, raw = (source or "").partition(":")
+    if kind not in ("api", "ssh") or not raw.isdigit():
+        abort(400)
+    try:
+        if kind == "api":
+            n = common.get_or_403(KIND_NEXTCLOUD, int(raw), LEVEL_VIEW)
+            nc = integrations.nextcloud_client(n)
+            users, groups = nc.users(), [x["id"] for x in nc.groups()]
+            system = g.db.get(System, n.system_id) if n.system_id else None
+            return n.name, nc_import.normalize_users(users), groups, system
+        system = g.db.get(System, int(raw))
+        if system is None or not system.has_type("nextcloud"):
+            abort(404)
+        if not can(system.id, LEVEL_VIEW):
+            abort(403)
+        with inventory.connect(system) as conn:
+            users, groups = parse_users(occ_task(conn, system, "user_list", timeout=120))
+        return system.name, nc_import.normalize_users(users), groups, system
+    except (NextcloudError, SSHError, OSError, ValueError) as exc:
+        raise AuthentikError(f"Nextcloud-Benutzer nicht lesbar: {exc}") from exc
+
+
+@bp.route("/<int:sso_id>/import", methods=["GET", "POST"])
+@login_required
+def nc_import(sso_id: int):
+    from ... import nc_import as imp
+    s = _get(sso_id, LEVEL_FULL)
+    source = request.values.get("source", "")
+    sources = nc_sources()
+    ctx: dict = {"s": s, "source": source, "sources": sources, "plan": None, "result": None, "error": None,
+                 "label": "", "sso_active": False, "admin_group": imp.ADMIN_GROUP}
+    if not source:
+        return render_template("sso/nc_import.html", **ctx)
+    try:
+        label, users, groups, system = _nc_source(source)
+        ctx["label"] = label
+        ctx["sso_active"] = system is not None and g.db.execute(select(SsoClient).where(
+            SsoClient.target_kind == "nextcloud", SsoClient.target_id == system.id)).first() is not None
+        au = _client(s)
+        if request.method == "POST":
+            chosen_users = set(request.form.getlist("users"))
+            chosen_groups = set(request.form.getlist("groups"))
+            if not g.user.is_admin:
+                # SSO into a Nextcloud administrator account is an account takeover: only for admins
+                admins = {u["uid"] for u in users if imp.ADMIN_GROUP in u["groups"]}
+                if chosen_users & admins or imp.ADMIN_GROUP in chosen_groups:
+                    raise AuthentikError("Nextcloud-Administratoren und die Gruppe „admin“ können nur Administratoren "
+                                         "des Servermanagers übernehmen")
+            result = imp.apply(au, users, groups, chosen_groups, chosen_users,
+                               passwords=request.form.get("passwords") == "random",
+                               existing_members=bool(request.form.get("existing_members")))
+            audit(g.db, g.user, "sso.nextcloud_import", s.name,
+                  f"{label}: {len(result['groups_created'])} Gruppen, {len(result['users_created'])} Benutzer, "
+                  f"{result['memberships']} Mitgliedschaften", ip=client_ip())
+            g.db.commit()
+            ctx["result"] = result
+        ctx["plan"] = imp.plan(users, groups, au.users(), au.groups())
+    except AuthentikError as exc:
+        ctx["error"] = str(exc)
+    return render_template("sso/nc_import.html", **ctx)

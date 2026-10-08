@@ -16,7 +16,7 @@ einem MikroTik (RouterOS 7)** oder direkt per SSH für bestehende Systeme ohne T
   bestehender Router
 - Pangolin: Dienste aus dem internen Netz unter einer Domain veröffentlichen, mit Backup-Weg über einen
   zweiten Pangolin-Server und Newt-Tunnel-Containern auf verschiedenen Hosts
-- Nextcloud, Mailcow & SSO (authentik): Benutzer und Postfächer anlegen, SSO per Klick anbinden
+- Nextcloud (per SSH oder Schnittstelle), Mailcow & SSO (authentik): Benutzer, Gruppen und Postfächer verwalten, Nextcloud-Konten nach authentik übernehmen, SSO per Klick anbinden (auch Proxmox, Pangolin, Zammad)
 - Bestand übernehmen & Optimierungen: vorhandene Geräte einlesen, Management-Zugänge anlegen,
   Verbesserungen nach Bestätigung umsetzen (Ziel: eine Public-IP)
 - Benutzerverwaltung mit Rollen und Rechten je System, Zwei-Faktor-Anmeldung, Audit-Log

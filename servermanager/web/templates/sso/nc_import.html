@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% set help_page = "apps" %}
+{% from "_macros.html" import csrf, empty with context %}
+{% block title %}Nextcloud → {{ s.name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>Nextcloud nach authentik übernehmen</h1>
+  <p>Ziel: <a href="{{ url_for('sso.detail', sso_id=s.id, tab='users') }}">{{ s.name }}</a>{% if label %} · Quelle: {{ label }}{% endif %}</p></div></div>
+
+<div class="card"><div class="card-body">
+  <form method="get" class="inline-form"><div class="field"><label for="f-source">Nextcloud</label>
+    <select id="f-source" name="source" data-autosubmit><option value="">– auswählen –</option>{% for k, l in sources %}<option value="{{ k }}" {{ 'selected' if k == source }}>{{ l }}</option>{% endfor %}</select></div>
+    <button class="btn">Vorschau</button></form>
+  {% if not sources %}<p class="muted mt-1">Keine Nextcloud verfügbar – als Infrastruktur → Nextcloud (Schnittstelle) oder als System mit Typ Nextcloud (SSH) anlegen.</p>{% endif %}
+</div></div>
+
+{% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+
+{% if result %}
+<div class="card"><div class="card-head"><h2>Ergebnis</h2></div><div class="card-body">
+  <p>{{ result.groups_created|length }} Gruppe(n) und {{ result.users_created|length }} Benutzer angelegt, {{ result.memberships }} Mitgliedschaft(en) ergänzt.{% if result.skipped %} {{ result.skipped }} weitere Benutzer folgen beim nächsten Durchgang (höchstens 300 je Durchgang).{% endif %}</p>
+  {% if result.errors %}<div class="alert warning"><div>{% for e in result.errors %}<div>{{ e }}</div>{% endfor %}</div></div>{% endif %}
+  {% if result.passwords %}
+    <div class="alert warning"><div><strong>Startpasswörter – werden nur jetzt angezeigt.</strong> Bitte sicher an die Benutzer weitergeben; sie können es danach in authentik ändern.</div></div>
+    <div class="table-wrap"><table class="table compact" id="nc-pw"><thead><tr><th>Benutzer</th><th>Passwort</th></tr></thead><tbody>
+      {% for uid, pw in result.passwords %}<tr><td class="mono">{{ uid }}</td><td class="mono">{{ pw }}</td></tr>{% endfor %}</tbody></table></div>
+    <textarea id="nc-pw-text" class="hidden" readonly>{% for uid, pw in result.passwords %}{{ uid }}	{{ pw }}
+{% endfor %}</textarea>
+    <button type="button" class="btn mt-1" data-copy="#nc-pw-text">Liste kopieren</button>
+  {% endif %}
+</div></div>
+{% endif %}
+
+{% if plan %}
+<div class="alert info"><div>
+  <strong>So funktioniert es:</strong> Gruppen werden in authentik unter demselben Namen angelegt, fehlende Benutzer mit der Nextcloud-Benutzer-ID als Benutzername. In authentik wird nichts gelöscht, in der Nextcloud nichts geändert.
+  Meldet sich ein Benutzer danach über authentik an der Nextcloud an, landet er in seinem <em>bestehenden</em> Konto mit allen Dateien und Freigaben.
+  {% if not sso_active %}<br>Die Anmeldung dieser Nextcloud über authentik ist noch nicht verbunden – das geht auf der <a href="{{ url_for('sso.detail', sso_id=s.id) }}">SSO-Seite</a> (über das System mit SSH-Zugang).{% endif %}
+</div></div>
+<form method="post" data-confirm="Ausgewählte Gruppen und Benutzer in {{ s.name }} anlegen?">{{ csrf() }}<input type="hidden" name="source" value="{{ source }}">
+<div class="grid grid-2">
+  <div class="card"><div class="card-head"><h2>Gruppen</h2><small class="muted">{{ plan.counts.groups_new }} neu</small></div>
+    <div class="table-wrap"><table class="table compact"><thead><tr><th><input type="checkbox" data-check-all="input[name=groups]" checked aria-label="alle"></th><th>Gruppe</th><th>Mitglieder</th><th>authentik</th></tr></thead><tbody>
+    {% for gr in plan.groups %}{% set locked = gr.admin and not user.is_admin %}
+      <tr><td><input type="checkbox" name="groups" value="{{ gr.name }}" {{ 'checked' if not gr.admin }} {{ 'disabled' if locked }}></td>
+        <td>{{ gr.name }}{% if gr.admin %}<span class="sub">Nextcloud-Administratoren – in authentik ohne Sonderrechte</span>{% endif %}</td><td>{{ gr.members }}</td>
+        <td>{% if gr.exists %}<span class="badge">vorhanden</span>{% if gr.superuser %} <span class="badge warning">Admin</span>{% endif %}{% else %}<span class="badge info">wird angelegt</span>{% endif %}</td></tr>
+    {% else %}<tr><td colspan="4" class="muted">Keine Gruppen.</td></tr>{% endfor %}</tbody></table></div></div>
+  <div class="card"><div class="card-head"><h2>Optionen</h2></div><div class="card-body">
+    <div class="field"><label>Passwort neuer Benutzer</label>
+      <label class="check"><input type="radio" name="passwords" value="random" checked> Zufälliges Startpasswort (wird einmal angezeigt)</label>
+      <label class="check"><input type="radio" name="passwords" value="none"> Kein Passwort – Benutzer setzen es über „Passwort vergessen“ in authentik (Wiederherstellungs-Flow nötig)</label></div>
+    <label class="check mt-1"><input type="checkbox" name="existing_members" value="1" checked> Bereits vorhandene authentik-Benutzer ihren Gruppen hinzufügen</label>
+    <p class="mt-1"><small class="muted">{{ plan.counts.users_new }} Benutzer neu, {{ plan.counts.users_exist }} schon in authentik{% if plan.counts.users_invalid %}, {{ plan.counts.users_invalid }} mit einer ID, die authentik nicht erlaubt (z. B. Leerzeichen){% endif %}. Gesperrte Nextcloud-Benutzer werden – falls ausgewählt – in authentik deaktiviert angelegt.</small></p>
+    <button class="btn primary mt-1">Übernehmen</button>
+  </div></div>
+</div>
+<div class="card"><div class="card-head"><h2>Benutzer</h2><input type="search" placeholder="Suchen …" data-filter-list="#nci tbody tr" style="max-width:220px"></div>
+  <div class="table-wrap"><table class="table compact" id="nci"><thead><tr><th><input type="checkbox" data-check-all="input[name=users]" aria-label="alle"></th><th>Nextcloud-Benutzer</th><th>E-Mail</th><th>Gruppen</th><th>authentik</th></tr></thead><tbody>
+  {% for u in plan.users %}{% set locked = u.status == 'invalid' or (u.admin and not user.is_admin) %}
+    <tr class="{{ 'muted' if not u.enabled }}"><td><input type="checkbox" name="users" value="{{ u.uid }}" {{ 'checked' if u.status == 'new' and u.enabled and not u.admin }} {{ 'disabled' if locked }}></td>
+      <td><strong>{{ u.uid }}</strong><span class="sub">{{ u.display }}{% if not u.enabled %} · gesperrt{% endif %}{% if u.admin %} · Administrator{% endif %}</span></td>
+      <td><small>{{ u.email }}</small></td><td><small>{{ u.groups|join(', ') }}</small></td>
+      <td>{% if u.status == 'exists' %}<span class="badge">vorhanden</span>{% if u.ak_username != u.uid %}<span class="sub">als {{ u.ak_username }}</span>{% endif %}{% elif u.status == 'invalid' %}<span class="badge danger">Name nicht zulässig</span>{% else %}<span class="badge info">wird angelegt</span>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="5" class="muted">Keine Benutzer.</td></tr>{% endfor %}</tbody></table></div>
+</div>
+</form>
+{% endif %}
+{% endblock %}

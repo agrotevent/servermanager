@@ -1465,7 +1465,7 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
         """Target and the clients to configure it: occ via SSH for Nextcloud, APIs for the others.
 
         Returns (target, clients for sso.connect/disconnect, holder of an SSH connection to close)."""
-        from .models import MailcowServer, PangolinServer, PveServer
+        from .models import MailcowServer, PangolinServer, PveServer, ZammadServer
         from .modules.nextcloud import occ_task
         if kind == "nextcloud":
             system = self._system(target_id)
@@ -1483,6 +1483,7 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
             "pangolin": (PangolinServer, "Pangolin", "pangolin", integrations.pangolin_client),
             "mailcow": (MailcowServer, "Mailcow", "mailcow", integrations.mailcow_client),
             "pve": (PveServer, "Proxmox", "pve", lambda srv: pve.client(srv, timeout=30)),
+            "zammad": (ZammadServer, "Zammad", "zammad", integrations.zammad_client),
         }.get(kind, (None, "", "", None))
         if model is None:
             raise JobFailed("Unbekannter Anwendungstyp")

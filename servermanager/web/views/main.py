@@ -81,10 +81,10 @@ def dashboard():
                  "mailcow": "mailcow.detail", "sso": "sso.detail", "pbx": "pbx.detail",
                  "zabbix": "zabbix.detail", "ispconfig": "ispc.detail", "zammad": "zammad.detail",
                  "easybell": "easybell.detail", "hetzner": "hetzner.index",
-                 "hcloud": "hetzner.index"}
+                 "hcloud": "hetzner.index", "nextcloud": "nextcloud.detail"}
     params = {"pve": "pve_id", "router": "router_id", "pangolin": "pg_id", "mailcow": "mc_id", "sso": "sso_id",
               "pbx": "pbx_id", "zabbix": "zid", "ispconfig": "isp_id", "zammad": "zid", "easybell": "aid", "hetzner": None,
-              "hcloud": None}
+              "hcloud": None, "nextcloud": "nid"}
     for kind, model in integrations.MODELS.items():
         levels = access.integration_levels(g.db, g.user, kind)
         for obj in g.db.execute(select(model).order_by(model.name)).scalars():

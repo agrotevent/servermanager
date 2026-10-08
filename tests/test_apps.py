@@ -650,3 +650,59 @@ def test_mailcow_edit_mailbox_size(app, db, mock, apps):
     assert op.post(f"/mailcow/{mc.id}/do", data={"action": "mb_edit", "address": "info@example.com", "quota": "1",
                                                  "csrf_token": op.csrf}).status_code == 403
     box["quota"], box["name"] = 1073741824, "Info"
+
+
+def test_sso_connect_zammad(app, db, mock, apps):
+    from servermanager.jobs import enqueue, log_path
+    from servermanager.models import Job, SsoClient, ZammadServer
+    from tests.test_web import login, make_user
+    st = mock.state
+    z = ZammadServer(name="helpdesk", api_url=mock.url, token_enc=security.encrypt(m.ZAM_TOKEN),
+                     fingerprint=mock.fingerprint, group_name="Users", customer="mon@example.com")
+    db.add(z)
+    db.commit()
+
+    def run(kind="sso_connect", payload=None):
+        job = enqueue(db, kind=kind, title="sso", payload=payload or {
+            "sso_id": apps["ak"].id, "kind": "zammad", "target_id": z.id, "app_url": "https://support.example.com",
+            "options": {"auto_link": True}})
+        db.commit()
+        _run(job.id)
+        db.expire_all()
+        return db.get(Job, job.id), log_path(job.id).read_text()
+    try:
+        make_user(db, "zam-sso-admin", "admin")
+        page = login(app, "zam-sso-admin").get(f"/sso/{apps['ak'].id}").text
+        assert "Zammad verbinden" in page and "helpdesk" in page
+        job, log = run()
+        assert job.status == "success", log
+        zs = {x["name"]: x["state_current"]["value"] for x in st.zam["settings"]}
+        client = db.query(SsoClient).filter_by(target_kind="zammad", target_id=z.id).one()
+        prov = st.ak_providers[client.provider_pk]
+        assert prov["client_type"] == "public"   # Zammad sends no client secret (PKCE)
+        assert {"matching_mode": "strict",
+                "url": "https://support.example.com/auth/openid_connect/callback"} in prov["redirect_uris"]
+        cred = zs["auth_openid_connect_credentials"]
+        assert zs["auth_openid_connect"] is True and zs["auth_third_party_auto_link_at_inital_login"] is True
+        assert cred["identifier"] == prov["client_id"] and cred["pkce"] is True
+        assert cred["issuer"] == f"https://auth.example.com/application/o/{client.slug}/"
+        slug = client.slug
+        job, log = run("sso_disconnect", {"client_id": client.id})
+        assert job.status == "success", log
+        zs = {x["name"]: x["state_current"]["value"] for x in st.zam["settings"]}
+        assert zs["auth_openid_connect"] is False and zs["auth_openid_connect_credentials"] == {}
+        assert slug not in st.ak_apps
+        # token without admin.security / old Zammad: clear message, nothing left behind in authentik
+        apps_before = set(st.ak_apps)
+        st.zam["no_admin"] = True
+        job, log = run()
+        assert job.status == "failed" and "admin.security" in log and set(st.ak_apps) == apps_before
+        st.zam["no_admin"] = False
+        st.zam["old_version"] = True
+        job, log = run()
+        assert job.status == "failed" and "aktualisieren" in log and set(st.ak_apps) == apps_before
+    finally:
+        st.__dict__.get("zam", {}).update({"no_admin": False, "old_version": False})
+        db.query(SsoClient).filter_by(target_kind="zammad", target_id=z.id).delete()
+        db.delete(z)
+        db.commit()

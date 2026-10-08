@@ -194,3 +194,65 @@ class Zammad:
         else:
             trigger_id = self.request("POST", "triggers", trigger)["id"]
         return {"webhook_id": webhook_id, "trigger_id": trigger_id}
+
+
+# ----------------------------------------------------------------------------- SSO (OpenID Connect)
+OIDC_SETTING = "auth_openid_connect"
+OIDC_CREDENTIALS = "auth_openid_connect_credentials"
+AUTO_LINK_SETTING = "auth_third_party_auto_link_at_inital_login"   # sic, Zammad's spelling
+
+
+def _setting_value(row: Optional[dict]) -> Any:
+    return ((row or {}).get("state_current") or {}).get("value")
+
+
+def oidc_settings(z: Zammad) -> dict:
+    """The settings the OpenID Connect login needs (only those the token may read are listed by Zammad)."""
+    try:
+        rows = [r for r in z.request("GET", "settings") or [] if isinstance(r, dict)]
+    except ZammadError as exc:
+        if exc.status == 403:
+            raise ZammadError("Für die Anmeldung über authentik braucht das API-Token zusätzlich die Berechtigung "
+                              "admin.security (Profil → Token-Zugriff)", 403) from exc
+        raise
+    by = {r.get("name"): r for r in rows}
+    if OIDC_SETTING not in by:
+        if "auth_saml" in by:
+            raise ZammadError("Diese Zammad-Version kennt die Anmeldung über OpenID Connect noch nicht – bitte "
+                              "Zammad aktualisieren")
+        raise ZammadError("Für die Anmeldung über authentik braucht das API-Token zusätzlich die Berechtigung "
+                          "admin.security (Profil → Token-Zugriff)", 403)
+    return by
+
+
+def callback_url(by: dict, fallback_base: str) -> str:
+    """Zammad builds its redirect URI from the settings http_type and fqdn."""
+    fqdn, http_type = _setting_value(by.get("fqdn")), _setting_value(by.get("http_type"))
+    if fqdn and http_type in ("http", "https"):
+        return f"{http_type}://{fqdn}/auth/openid_connect/callback"
+    return f"{fallback_base.rstrip('/')}/auth/openid_connect/callback"
+
+
+def set_setting(z: Zammad, by: dict, name: str, value: Any) -> None:
+    row = by.get(name)
+    if row is None or not row.get("id"):
+        raise ZammadError(f"Zammad-Einstellung {name} nicht gefunden")
+    z.request("PUT", f"settings/{int(row['id'])}", {"id": row["id"], "name": name, "state_current": {"value": value}})
+
+
+def enable_oidc(z: Zammad, by: dict, client_id: str, issuer: str, display_name: str, auto_link: bool) -> None:
+    """Public client with PKCE (Zammad sends no client secret); the user is matched by login (= authentik user
+    name, the ``sub`` of the provider) or e-mail address."""
+    set_setting(z, by, OIDC_CREDENTIALS, {"display_name": display_name[:50], "identifier": client_id,
+                                          "issuer": issuer, "uid_field": "sub", "scope": "openid email profile",
+                                          "pkce": True})
+    set_setting(z, by, OIDC_SETTING, True)
+    if auto_link and AUTO_LINK_SETTING in by:
+        set_setting(z, by, AUTO_LINK_SETTING, True)
+
+
+def disable_oidc(z: Zammad) -> None:
+    by = oidc_settings(z)
+    set_setting(z, by, OIDC_SETTING, False)
+    set_setting(z, by, OIDC_CREDENTIALS, {})
+

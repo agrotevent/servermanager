@@ -129,6 +129,8 @@ case "${SM_TASK}" in
             --mapping-uid=preferred_username --mapping-display-name=name --mapping-email=email \
             >/dev/null || die "Anbieter konnte nicht eingerichtet werden"
         occ config:app:set user_oidc allow_multiple_user_backends --value=1 >/dev/null
+        # existing accounts (same user ID as the authentik user name) are taken over instead of duplicated
+        occ config:system:set user_oidc soft_auto_provision --type=boolean --value=true >/dev/null
         echo "SM_OK"
         ;;
     oidc_remove)

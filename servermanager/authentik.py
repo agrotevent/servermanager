@@ -132,16 +132,32 @@ class Authentik:
         return self._all("core/groups/")
 
     def create_user(self, username: str, name: str, email: str, password: str = "",
-                    groups: Optional[list[str]] = None) -> dict:
+                    groups: Optional[list[str]] = None, active: bool = True) -> dict:
         if not USERNAME_RE.match(username or ""):
             raise AuthentikError("Ungültiger Benutzername")
         user = self.request("POST", "core/users/", {"username": username, "name": name or username,
-                                                    "email": email, "is_active": True, "path": "users"})
+                                                    "email": email, "is_active": bool(active), "path": "users"})
         if password:
             self.request("POST", f"core/users/{int(user['pk'])}/set_password/", {"password": password})
         for gpk in groups or []:
             self.request("POST", f"core/groups/{quote(str(gpk), safe='')}/add_user/", {"pk": user["pk"]})
         return user
+
+    def create_group(self, name: str) -> dict:
+        name = (name or "").strip()
+        if not name or len(name) > 150:
+            raise AuthentikError("Ungültiger Gruppenname")
+        return self.request("POST", "core/groups/", {"name": name, "is_superuser": False, "users": []}) or {}
+
+    def add_group_members(self, group_pk: str, user_pks: set[int]) -> int:
+        """Adds users to a group (one request); returns how many were not members yet."""
+        path = f"core/groups/{quote(str(group_pk), safe='')}/"
+        current = {int(x) for x in (self.request("GET", path, params={"include_users": "false"}) or {})
+                   .get("users") or []}
+        new = {int(x) for x in user_pks} - current
+        if new:
+            self.request("PATCH", path, {"users": sorted(current | new)})
+        return len(new)
 
     def user(self, pk: int) -> dict:
         return self.request("GET", f"core/users/{int(pk)}/") or {}
@@ -185,8 +201,13 @@ class Authentik:
             (keys[0] if keys else None)
         return k.get("pk") if k else None
 
-    def create_oidc_app(self, name: str, slug: str, redirect_uris: list[str], launch_url: str) -> dict:
-        """OAuth2/OIDC provider + application. Returns client_id, client_secret, discovery URL, provider pk."""
+    def create_oidc_app(self, name: str, slug: str, redirect_uris: list[str], launch_url: str,
+                        client_type: str = "confidential") -> dict:
+        """OAuth2/OIDC provider + application. Returns client_id, client_secret, discovery URL, provider pk.
+
+        ``client_type`` "public" for applications that cannot keep a secret and use PKCE (Zammad)."""
+        if client_type not in ("confidential", "public"):
+            raise AuthentikError("Ungültiger Client-Typ")
         if not SLUG_RE.match(slug):
             raise AuthentikError("Ungültiger Slug")
         existing = [a for a in self.applications() if a.get("slug") == slug]
@@ -195,7 +216,7 @@ class Authentik:
         auth_flow = self._flow("authorization", "default-provider-authorization-implicit-consent")
         if not auth_flow:
             raise AuthentikError("Kein Autorisierungs-Flow gefunden")
-        body = {"name": name, "authorization_flow": auth_flow, "client_type": "confidential",
+        body = {"name": name, "authorization_flow": auth_flow, "client_type": client_type,
                 "redirect_uris": [{"matching_mode": "strict", "url": u} for u in redirect_uris],
                 "property_mappings": self._scope_mappings(), "sub_mode": "user_username",
                 "include_claims_in_id_token": True}
