@@ -60,10 +60,11 @@ apt_reason() {
     fi
 }
 
-# packages the given apt-get command would DOWNGRADE, one "package installed offered" per line
+# packages the given apt-get command would DOWNGRADE, one "package installed offered" per line.
+# The simulation allows downgrades: with -y apt would stop at the same error before listing anything.
 apt_downgrades() {
     local p cur new
-    LC_ALL=C apt-get -s "$@" 2>/dev/null \
+    LC_ALL=C apt-get -s "$@" --allow-downgrades 2>/dev/null \
         | sed -n 's/^Inst \([^ ]*\) \[\([^]]*\)\] (\([^ ]*\) .*/\1 \2 \3/p' \
         | while read -r p cur new; do
             if dpkg --compare-versions "$new" lt "$cur"; then

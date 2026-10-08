@@ -2,6 +2,16 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.25.1 – 08.10.2026
+
+### Behoben
+
+- **Updates installieren:** Wollte apt ein Paket auf eine ältere Version zurückstufen (Meldung „Packages
+  were downgraded and -y was used without --allow-downgrades“), brach der Lauf ab, statt nur dieses Paket
+  zu überspringen. Die Vorab-Prüfung, welche Pakete zurückgestuft würden, scheiterte selbst an derselben
+  Meldung. Jetzt werden genau diese Pakete für den Lauf zurückgehalten (mit Ursache, z. B. APT-Pinning),
+  alle anderen Updates werden installiert.
+
 ## 1.25.0 – 08.10.2026
 
 ### Neu

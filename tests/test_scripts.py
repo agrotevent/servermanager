@@ -88,6 +88,9 @@ def test_apt_run_skips_downgrades(tmp_path):
     state = tmp_path / "held"
     (b / "apt-get").write_text(f"""#!/bin/bash
 if [[ " $* " == *" -s "* ]]; then
+  if [[ " $* " == *" -y "* && " $* " != *" --allow-downgrades "* ]]; then
+    echo "E: Packages were downgraded and -y was used without --allow-downgrades."; exit 100   # like real apt
+  fi
   echo "Inst openssl [3.5.1-1] (3.5.2-1 Debian:13/stable [amd64])"
   echo "Inst libfoo [2.0-1] (1.9-3 local-repo [amd64])"
   exit 0
