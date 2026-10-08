@@ -30,6 +30,39 @@
     });
   });
 
+  // ---------------------------------------------------------------- dialogs (overlay)
+  // <button data-dialog-open="#id" data-dialog-values='{"name": "..."}'> fills the fields of the same name and
+  // the [data-dialog-text=key] elements of the <dialog>, then opens it modally.
+  document.addEventListener("click", (e) => {
+    const opener = e.target.closest("[data-dialog-open]");
+    if (opener) {
+      const dlg = document.querySelector(opener.dataset.dialogOpen);
+      if (!dlg || typeof dlg.showModal !== "function") return;
+      e.preventDefault();
+      let values = {};
+      try { values = JSON.parse(opener.dataset.dialogValues || "{}"); } catch (err) { values = {}; }
+      Object.entries(values).forEach(([key, value]) => {
+        dlg.querySelectorAll(`[name="${key}"]`).forEach((el) => { el.value = value; });
+        dlg.querySelectorAll(`[data-dialog-text="${key}"]`).forEach((el) => { el.textContent = value; });
+      });
+      dlg.querySelectorAll("button").forEach((b) => { b.disabled = false; });
+      dlg.showModal();
+      const focus = dlg.querySelector("[autofocus]");
+      if (focus) { focus.focus(); if (focus.select) focus.select(); }
+      return;
+    }
+    if (e.target.closest("[data-dialog-close]")) {
+      const dlg = e.target.closest("dialog");
+      if (dlg) dlg.close();
+      return;
+    }
+    // click on the backdrop closes the dialog
+    if (e.target.tagName === "DIALOG" && e.target.classList.contains("modal")) {
+      const r = e.target.getBoundingClientRect();
+      if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) e.target.close();
+    }
+  });
+
   // ---------------------------------------------------------------- copy to clipboard
   function copyText(text, btn) {
     const done = () => {

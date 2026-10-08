@@ -2,6 +2,14 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.19.1 – 08.10.2026
+
+### Geändert
+
+- Mailcow: Postfächer bearbeitest du jetzt über den Button **Bearbeiten** in der Zeile, neben
+  *Deaktivieren* und *Neues Passwort*. Er öffnet ein Fenster mit der Größe (MB) und dem Namen. Das
+  aufklappbare Formular unter jeder Adresse entfällt.
+
 ## 1.19.0 – 07.10.2026
 
 ### Geändert

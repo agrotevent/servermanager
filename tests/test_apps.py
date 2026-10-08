@@ -629,7 +629,9 @@ def test_mailcow_edit_mailbox_size(app, db, mock, apps):
     make_user(db, "mc-edit-admin", "admin")
     c = login(app, "mc-edit-admin")
     page = c.get(f"/mailcow/{mc.id}?tab=mailboxes").text
-    assert "Bearbeiten: Größe und Name" in page and 'value="1024"' in page  # current size of info@ in MB
+    # "Bearbeiten" in the row opens the dialog, prefilled with the current size of info@ in MB
+    assert 'data-dialog-open="#mb-edit"' in page and '<dialog class="modal" id="mb-edit"' in page
+    assert '"address": "info@example.com"' in page and '"quota": 1024' in page
     assert 'step="256"' not in page  # any whole number of MB is valid in the browser
     r = c.post(f"/mailcow/{mc.id}/do", data={"action": "mb_edit", "address": "info@example.com", "quota": "4096",
                                              "name": "Info-Postfach", "csrf_token": c.csrf}, follow_redirects=True)
@@ -643,7 +645,8 @@ def test_mailcow_edit_mailbox_size(app, db, mock, apps):
     db.add(IntegrationAccess(user_id=u.id, kind="mailcow", obj_id=mc.id, level=LEVEL_OPERATE))
     db.commit()
     op = login(app, "mc-edit-op")
-    assert "Bearbeiten: Größe und Name" not in op.get(f"/mailcow/{mc.id}?tab=mailboxes").text
+    op_page = op.get(f"/mailcow/{mc.id}?tab=mailboxes").text
+    assert 'data-dialog-open="#mb-edit"' not in op_page and 'id="mb-edit"' not in op_page
     assert op.post(f"/mailcow/{mc.id}/do", data={"action": "mb_edit", "address": "info@example.com", "quota": "1",
                                                  "csrf_token": op.csrf}).status_code == 403
     box["quota"], box["name"] = 1073741824, "Info"

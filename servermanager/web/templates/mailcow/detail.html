@@ -28,19 +28,12 @@
         <td class="nowrap"><small>{{ u|bytes }} / {{ q|bytes if q else '∞' }}</small></td>
         <td>{% if active %}<span class="badge success">aktiv</span>{% else %}<span class="badge">inaktiv</span>{% endif %}</td>
         <td class="nowrap text-right">
+          {% if int_can('mailcow', m.id, 'full') %}<button type="button" class="btn xs" data-dialog-open="#mb-edit" data-dialog-values='{{ {"address": b.username, "name": b.name or "", "quota": (q / 1048576)|round|int, "used": u|bytes}|tojson }}'>Bearbeiten</button>{% endif %}
           {% if int_can('mailcow', m.id, 'operate') %}
             {{ act('mb_active', 'Deaktivieren' if active else 'Aktivieren', 'xs', (b.username ~ ' deaktivieren?') if active else '', {'address': b.username, 'active': '0' if active else '1'}) }}
           {% endif %}
           {% if int_can('mailcow', m.id, 'full') %}{{ act('mb_password', 'Neues Passwort', 'xs', 'Neues Passwort für ' ~ b.username ~ ' setzen?', {'address': b.username}) }}{{ act('mb_delete', 'Löschen', 'xs danger-outline', 'Postfach ' ~ b.username ~ ' mit allen Mails löschen?', {'address': b.username}) }}{% endif %}
         </td></tr>
-      {% if int_can('mailcow', m.id, 'full') %}
-      <tr class="edit-row"><td colspan="5"><details><summary><small>Bearbeiten: Größe und Name</small></summary>
-        <form method="post" action="{{ url_for('mailcow.do', mc_id=m.id) }}" class="inline-form mt-1">{{ csrf() }}<input type="hidden" name="action" value="mb_edit"><input type="hidden" name="address" value="{{ b.username }}">
-          <div class="field"><label>Name</label><input type="text" name="name" value="{{ b.name or '' }}" maxlength="100" style="max-width:220px"></div>
-          <div class="field"><label>Größe (MB)</label><input type="number" name="quota" value="{{ (q / 1048576)|round|int }}" min="0" step="1" style="max-width:120px" title="0 = unbegrenzt (wenn die Domain es zulässt)"></div>
-          <button class="btn xs">Speichern</button> <small class="muted">belegt {{ u|bytes }}; 0 = unbegrenzt, sofern die Domain es zulässt</small>
-        </form></details></td></tr>
-      {% endif %}
     {% else %}<tr><td colspan="5" class="muted">Keine Postfächer.</td></tr>{% endfor %}</tbody></table></div>
   {% if int_can('mailcow', m.id, 'full') %}
   <div class="card-body"><h4>Postfach anlegen</h4>
@@ -54,6 +47,18 @@
       <button class="btn primary">Anlegen</button></form>
     {% if sso %}<small class="muted">Mit SSO melden sich Benutzer über authentik an; für IMAP/SMTP-Programme bleibt das Postfach-Passwort bzw. App-Passwort nötig.</small>{% endif %}
   </div>
+  <dialog class="modal" id="mb-edit" aria-labelledby="mb-edit-title">
+    <form method="post" action="{{ url_for('mailcow.do', mc_id=m.id) }}">{{ csrf() }}<input type="hidden" name="action" value="mb_edit"><input type="hidden" name="address" value="">
+      <div class="modal-head"><h3 id="mb-edit-title">Postfach bearbeiten</h3><button type="button" class="btn ghost xs" data-dialog-close aria-label="Schließen">✕</button></div>
+      <div class="modal-body">
+        <p class="mono" data-dialog-text="address"></p>
+        <div class="field"><label for="mb-edit-quota">Größe (MB)</label><input type="number" id="mb-edit-quota" name="quota" value="" min="0" step="1" required autofocus>
+          <span class="help">Belegt: <span data-dialog-text="used"></span>. 0 = unbegrenzt, sofern die Domain es zulässt.</span></div>
+        <div class="field"><label for="mb-edit-name">Name</label><input type="text" id="mb-edit-name" name="name" value="" maxlength="100"></div>
+      </div>
+      <div class="modal-foot"><button type="button" class="btn" data-dialog-close>Abbrechen</button><button class="btn primary">Speichern</button></div>
+    </form>
+  </dialog>
   {% endif %}
 </div>
 

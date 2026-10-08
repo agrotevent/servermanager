@@ -52,7 +52,8 @@ Auf der System-Seite im Reiter *Nextcloud* → **Benutzer verwalten** (per SSH m
 Reiter:
 
 - **Postfächer:** anlegen (Adresse, Domain, Name, Quota, Passwort bzw. Zufallspasswort, das einmal
-  angezeigt wird), aktivieren/deaktivieren, neues Passwort, löschen.
+  angezeigt wird), aktivieren/deaktivieren, neues Passwort, löschen. *Bearbeiten* in der Zeile öffnet
+  ein Fenster, in dem du die Größe (MB) und den Namen des Postfachs änderst.
 - **Aliase:** anlegen, löschen.
 - **Domains:** Übersicht.
 - **Mail-IP & Veröffentlichung:** Konfiguration, Veröffentlichung über Pangolin, SSO-Status.

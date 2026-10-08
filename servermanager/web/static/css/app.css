@@ -491,3 +491,16 @@ h4 { font-size: 15px; }
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); outline-offset: 0; }
 .danger-zone .card-head h2 { color: inherit; }
 .brand picture { display: block; }
+
+/* ------------------------------------------------------------------ dialogs (overlay) */
+dialog.modal { width: min(440px, calc(100vw - 32px)); padding: 0; border: 1px solid var(--border);
+               border-top: 4px solid var(--primary); border-radius: var(--radius); background: var(--surface);
+               color: var(--text); }
+dialog.modal::backdrop { background: rgba(14, 58, 82, .55); }
+dialog.modal .modal-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px;
+                           border-bottom: 1px solid var(--border); }
+dialog.modal .modal-head h3 { margin: 0; flex: 1; }
+dialog.modal .modal-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 14px; }
+dialog.modal .modal-body p { margin: 0; }
+dialog.modal .modal-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px;
+                           border-top: 1px solid var(--border); background: var(--surface-2); }
