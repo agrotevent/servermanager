@@ -2,6 +2,16 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.27.3 – 08.10.2026
+
+### Behoben
+
+- **Updates: „Packages were downgraded“ bei gleicher Version:** apt 3 (Debian 13) meldet es auch als
+  Rückstufung, wenn eine Paketquelle mit hoher Priorität einen anderen Build *derselben* Version anbietet,
+  z. B. `sgml-base 1.31+nmu1` aus einer Hersteller-Quelle statt aus Debian. Der Servermanager hielt nur
+  echte ältere Versionen zurück und brach deshalb weiter ab. Jetzt zählt die Liste von apt selbst. Das
+  Protokoll nennt solche Pakete als „anderen Build derselben Version“ mit Quelle und Priorität.
+
 ## 1.27.2 – 08.10.2026
 
 ### Behoben

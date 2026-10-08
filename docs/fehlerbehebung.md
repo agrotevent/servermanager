@@ -57,8 +57,11 @@ zwei häufige Fälle selbst und versucht es dann noch einmal:
     (ab 1.27.2, auch mit apt 3 unter Debian 13).
   - Im Protokoll steht je Paket, von welcher auf welche Version es zurückgestuft würde und warum, etwa
     die Pin-Datei unter `/etc/apt/preferences.d/` oder Priorität und Quelle der älteren Version.
-  - Dauerhaft lösen: die Pin-Datei anpassen oder entfernen. Ist die ältere Version gewollt, einmal von
-    Hand `apt-get install <paket>=<version>` ausführen.
+  - Das gilt auch für einen **anderen Build derselben Version** aus einer Quelle mit hoher Priorität
+    (apt 3 meldet ihn ebenfalls als Rückstufung, ab 1.27.3), z. B. `sgml-base` aus einer
+    Hersteller-Quelle.
+  - Dauerhaft lösen: die Pin-Datei anpassen oder entfernen. Ist die angebotene Version gewollt, einmal von
+    Hand `apt-get install --allow-downgrades <paket>` ausführen.
 
 Bleibt der Fehler, auf dem System als root prüfen:
 

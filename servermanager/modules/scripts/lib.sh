@@ -279,22 +279,29 @@ apt_downgrades() {
 
 # why apt offers an older version: an APT pin naming the package, else priority and source of that version
 apt_downgrade_cause() {
-    local p="$1" new="$2" files src
+    local p="$1" new="$2" files src pol
     files="$(grep -lsE "^Package:.*(^|[ :*])${p}([ *]|\$)" /etc/apt/preferences /etc/apt/preferences.d/* 2>/dev/null \
              | tr '\n' ' ' | sed 's/ $//')"
     if [ -n "$files" ]; then
         printf 'APT-Pinning in %s' "$files"
         return
     fi
-    src="$(LC_ALL=C apt-cache policy "$p" 2>/dev/null | awk -v v="$new" '
-        ($1 == v) || ($1 == "***" && $2 == v) { prio = ($1 == "***") ? $3 : $2; found = 1; next }
+    pol="$(LC_ALL=C apt-cache policy "$p" 2>/dev/null)"
+    # the offered version not installed (same version string, other build: the source it would come from)
+    src="$(printf '%s\n' "$pol" | awk -v v="$new" '
+        $1 == v { prio = $2; found = 1; next }
+        found && NF { print "Priorität " prio " aus " $2 " " $3; exit }')"
+    [ -n "$src" ] || src="$(printf '%s\n' "$pol" | awk -v v="$new" '
+        $1 == "***" && $2 == v { prio = $3; found = 1; next }
         found && NF { print "Priorität " prio " aus " $2 " " $3; exit }')"
     printf '%s' "${src:-Quelle unbekannt}"
 }
 
 # the same from the output of the refused run itself ("The following packages will be DOWNGRADED:", with
 # apt 3 also "DOWNGRADING:"): installed version from dpkg, offered one from the policy. Does not depend on a
-# dry run, whose plan can differ (apt 3 solver).
+# dry run, whose plan can differ (apt 3 solver). apt's own list counts, also for the same version string
+# from another source (another build, e.g. a vendor repository with high priority), which apt treats as a
+# downgrade as well.
 apt_downgrades_from_output() {
     local p cur new
     printf '%s\n' "$1" | awk '
@@ -304,7 +311,7 @@ apt_downgrades_from_output() {
             cur="$(dpkg-query -W -f='${Version}' "$p" 2>/dev/null)" || continue
             [ -n "$cur" ] || continue
             new="$(LC_ALL=C apt-cache policy "$p" 2>/dev/null | awk '$1 == "Candidate:" { print $2; exit }')"
-            if [ -n "$new" ] && [ "$new" != "(none)" ] && dpkg --compare-versions "$new" lt "$cur"; then
+            if [ -n "$new" ] && [ "$new" != "(none)" ] && dpkg --compare-versions "$new" le "$cur"; then
                 printf '%s %s %s\n' "$p" "$cur" "$new"
             fi
         done
@@ -324,7 +331,11 @@ apt_skip_downgrades() {
     held="$(apt-mark showhold 2>/dev/null | tr '\n' ' ')"
     pkgs=""
     while read -r p cur new; do
-        warn "Nicht aktualisiert: $p – apt würde von $cur auf die ältere Version $new zurückstufen ($(apt_downgrade_cause "$p" "$new"))"
+        if [ "$cur" = "$new" ]; then
+            warn "Nicht aktualisiert: $p – apt würde $cur durch einen anderen Build derselben Version ersetzen ($(apt_downgrade_cause "$p" "$new"))"
+        else
+            warn "Nicht aktualisiert: $p – apt würde von $cur auf die ältere Version $new zurückstufen ($(apt_downgrade_cause "$p" "$new"))"
+        fi
         case " $held " in *" $p "*) ;; *) pkgs="$pkgs $p" ;; esac
     done <<< "$downs"
     # shellcheck disable=SC2086 # word splitting of the package list is intended

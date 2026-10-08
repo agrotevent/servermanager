@@ -290,3 +290,54 @@ def test_apt_update_ignores_errors_apt_recovered_from(tmp_path):
     lib = ROOT / "servermanager" / "modules" / "scripts" / "lib.sh"
     res = subprocess.run(["bash", "-c", f"source {lib}; apt_failed_repos {out}"], capture_output=True, text=True)
     assert res.stdout == "http://nginx.org/packages/mainline/debian trixie\tMissing key ABC\n"
+
+
+def test_apt_run_holds_same_version_from_other_source(tmp_path):
+    """Report from Debian 13: apt 3 lists sgml-base as DOWNGRADED although the version string is the same - the
+    candidate is another build from a vendor repository with high priority (CloudPanel's CloudFront source)."""
+    import os
+    b = tmp_path / "bin"
+    b.mkdir()
+    state = tmp_path / "held"
+    (b / "apt-get").write_text(f"""#!/bin/bash
+if [[ " $* " == *" -s "* ]]; then
+  echo "Inst liblzma5 [5.8.1-1+deb13u1] (5.8.1-1+deb13u2 Debian-Security:13/stable-security [amd64])"
+  echo "Inst sgml-base [1.31+nmu1] (1.31+nmu1 d17k9fuiwb52nc.cloudfront.net [all])"
+  exit 0
+fi
+if grep -q sgml-base {state} 2>/dev/null; then echo "upgraded rest"; exit 0; fi
+cat <<'OUT'
+The following packages will be upgraded:
+  liblzma5 redis-server redis-tools xz-utils
+The following packages will be DOWNGRADED:
+  sgml-base
+4 upgraded, 0 newly installed, 1 downgraded, 0 to remove and 0 not upgraded.
+E: Packages were downgraded and -y was used without --allow-downgrades.
+OUT
+exit 100
+""")
+    (b / "dpkg-query").write_text("#!/bin/bash\n[ \"${@: -1}\" = sgml-base ] && printf '1.31+nmu1' && exit 0\nexit 1\n")
+    (b / "apt-cache").write_text("#!/bin/bash\nprintf 'sgml-base:\\n  Installed: 1.31+nmu1\\n  Candidate: 1.31+nmu1\\n"
+                                 "  Version table:\\n     1.31+nmu1 1001\\n"
+                                 "       1001 https://d17k9fuiwb52nc.cloudfront.net trixie/main amd64 Packages\\n"
+                                 " *** 1.31+nmu1 500\\n        500 http://deb.debian.org/debian trixie/main amd64 Packages\\n"
+                                 "        100 /var/lib/dpkg/status\\n'\n")
+    (b / "apt-mark").write_text(f"""#!/bin/bash
+case "$1" in
+  showhold) cat {state} 2>/dev/null ;;
+  hold) shift; printf '%s\\n' "$@" >> {state} ;;
+  unhold) shift; for p in "$@"; do sed -i "/^$p$/d" {state}; done ;;
+esac
+""")
+    for f in b.iterdir():
+        f.chmod(0o755)
+    env = {**os.environ, "PATH": f"{b}:{os.environ['PATH']}"}
+    lib = ROOT / "servermanager" / "modules" / "scripts" / "lib.sh"
+    res = subprocess.run(["bash", "-c", f"set -o pipefail; source {lib}; apt_run -y --with-new-pkgs upgrade || "
+                                        "apt_fail 'apt-get upgrade fehlgeschlagen'; echo SKIPPED=$APT_SKIPPED"],
+                         capture_output=True, text=True, env=env)
+    out = res.stdout
+    assert res.returncode == 0, out + res.stderr
+    assert ("Nicht aktualisiert: sgml-base – apt würde 1.31+nmu1 durch einen anderen Build derselben Version "
+            "ersetzen (Priorität 1001 aus https://d17k9fuiwb52nc.cloudfront.net trixie/main)") in out
+    assert "upgraded rest" in out and "SKIPPED=sgml-base" in out and state.read_text().strip() == ""
