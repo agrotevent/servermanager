@@ -2,6 +2,18 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.26.0 – 08.10.2026
+
+### Neu
+
+- **Zammad mit dem eigenen Konto:** Im Servermanager arbeitet jede Person in Zammad mit ihrem eigenen
+  Zammad-Konto und dessen Rechten. Das betrifft Übernehmen (Besitzer), Notizen, Schließen und Wieder
+  öffnen. Zugeordnet wird über den authentik-Benutzernamen oder die E-Mail-Adresse.
+  - Neuer Reiter **Meine Tickets**: zugewiesene und offene Tickets ohne Besitzer, so wie Zammad sie
+    dieser Person zeigt.
+  - Neuer Reiter **Benutzer**: Zuordnung prüfen und von Hand festlegen (Administratoren).
+  - Das API-Token braucht dafür zusätzlich `admin.user`. Abschaltbar in der Zammad-Verbindung.
+
 ## 1.25.2 – 08.10.2026
 
 ### Behoben

@@ -13,7 +13,7 @@
   </div>
 </div>
 {{ alerts_box(z) }}
-<nav class="tabs">{% for k, v in tabs.items() %}<a href="?tab={{ k }}" class="{{ 'active' if tab == k }}">{{ v }}</a>{% endfor %}</nav>
+<nav class="tabs">{% for k, v in tabs.items() if k != 'users' or int_can('zammad', z.id, 'full') %}<a href="?tab={{ k }}" class="{{ 'active' if tab == k }}">{{ v }}</a>{% endfor %}</nav>
 
 {% if tab == 'overview' %}
 <div class="stats">
@@ -26,7 +26,44 @@
   <div class="card-body"><ul class="list-plain">{% for t in pending %}<li><a href="{{ url_for('tickets.detail', ticket_id=t.id) }}">#{{ t.id }} {{ t.title }}</a> <small class="muted">{{ t.zammad_error }}</small></li>{% endfor %}</ul></div>
   <div class="card-body"><small class="muted">Wird beim nächsten Abgleich erneut versucht.</small></div></div>
 {% endif %}
-{% if not zabbix %}<div class="alert info">Noch keine Zabbix-Verbindung zugeordnet – unter „Bearbeiten“ auswählen, aus welchen Zabbix-Servern Tickets in Zammad angelegt werden.</div>{% endif %}
+{% if not zabbix and not zabbix_hidden %}<div class="alert info">Noch keine Zabbix-Verbindung zugeordnet – unter „Bearbeiten“ auswählen, aus welchen Zabbix-Servern Tickets in Zammad angelegt werden.</div>{% endif %}
+<div class="card"><div class="card-head"><h2>Anmeldung und Benutzer</h2></div><div class="card-body">
+  <dl class="kv">
+    <dt>Anmeldung über authentik</dt><dd>{% if sso_client %}<span class="badge success">verbunden</span> <a href="{{ url_for('sso.detail', sso_id=sso_client.sso_id) }}">SSO-Verbindung</a>{% else %}<span class="badge">nicht verbunden</span> <small class="muted">unter <a href="{{ url_for('sso.index') }}">SSO</a> → Anwendungen → Zammad verbinden</small>{% endif %}</dd>
+    <dt>Im Namen der Benutzer</dt><dd>{% if z.on_behalf %}<span class="badge success">an</span> <small class="muted">Notizen, Übernahmen und „Meine Tickets“ laufen als das eigene Zammad-Konto der angemeldeten Person.</small>{% else %}<span class="badge">aus</span> <small class="muted">alles läuft über das Konto des API-Tokens</small>{% endif %}</dd>
+  </dl>
+</div></div>
+
+{% elif tab == 'mine' %}
+{% if not z.on_behalf %}<div class="alert info">„Im Namen des angemeldeten Benutzers arbeiten“ ist für diese Verbindung ausgeschaltet{% if user.is_admin %} – unter <a href="{{ url_for('zammad.edit', zid=z.id) }}">Bearbeiten</a> einschalten{% endif %}.</div>
+{% elif error %}<div class="alert danger">{{ error }}</div>
+{% elif not link or not link.zammad_user_id %}<div class="alert warning"><div>Für dein Konto ({{ user.username }}{% if user.email %}, {{ user.email }}{% endif %}) gibt es in Zammad kein passendes Konto. Melde dich einmal über authentik bei <a href="{{ web }}" target="_blank" rel="noopener">Zammad</a> an – das Konto wird dann angelegt bzw. verknüpft –, oder bitte einen Administrator, es unter „Benutzer“ zuzuordnen.</div></div>
+{% else %}
+<p class="muted">Angemeldet in Zammad als <strong>{{ link.login }}</strong>{% if link.name %} ({{ link.name }}){% endif %}{% if not link.agent %} <span class="badge warning">kein Agent – Zammad zeigt nur eigene Anfragen</span>{% endif %}. Zammad zeigt hier nur, was dieses Konto sehen darf.</p>
+{% for key, title in (('mine', 'Mir zugewiesen, offen'), ('unassigned', 'Offen, niemandem zugewiesen')) %}
+<div class="card"><div class="card-head"><h2>{{ title }}</h2><span class="badge">{{ mine[key]|length }}</span></div><div class="table-wrap"><table class="table compact"><thead><tr><th>Nummer</th><th>Titel</th><th>Gruppe</th><th>Status</th><th>Geändert</th></tr></thead><tbody>
+  {% for t in mine[key] %}<tr><td><a class="mono" href="{{ web }}/#ticket/zoom/{{ t.id }}" target="_blank" rel="noopener">#{{ t.number }}</a></td><td>{{ t.title }}</td><td><small>{{ t.group or '' }}</small></td><td><small>{{ t.state or '' }}</small></td><td><small>{{ (t.updated_at or '')[:16]|replace('T', ' ') }}</small></td></tr>
+  {% else %}<tr><td colspan="5" class="muted">Keine Tickets.</td></tr>{% endfor %}</tbody></table></div></div>
+{% endfor %}
+<p><small class="muted">Die Links öffnen Zammad; dort meldest du dich über authentik an.</small></p>
+{% endif %}
+
+{% elif tab == 'users' %}
+<div class="card"><div class="card-head"><h2>Servermanager-Benutzer und ihre Zammad-Konten</h2>
+  <form method="post" action="{{ url_for('zammad.user_links', zid=z.id) }}" class="inline">{{ csrf() }}<input type="hidden" name="action" value="refresh"><button class="btn sm">Alle neu zuordnen</button></form></div>
+  <div class="card-body"><small class="muted">Gefunden wird das Zammad-Konto über den Benutzernamen (bei Anmeldung über authentik = authentik-Benutzername) oder die E-Mail-Adresse. Eine Zuordnung von Hand ändern nur Administratoren{% if not z.on_behalf %}; „Im Namen des angemeldeten Benutzers“ ist ausgeschaltet, die Zuordnung wird erst damit genutzt{% endif %}.</small></div>
+  <div class="table-wrap"><table class="table compact"><thead><tr><th>Servermanager</th><th>Zammad-Konto</th><th>Zuordnung</th>{% if user.is_admin %}<th></th>{% endif %}</tr></thead><tbody>
+  {% for u in users %}{% set r = links.get(u.id) %}
+    <tr><td><strong>{{ u.username }}</strong><span class="sub">{{ u.label }}{% if u.email %} · {{ u.email }}{% endif %}</span></td>
+      <td>{% if r and r.zammad_user_id %}{{ r.login }}{% if r.name %}<span class="sub">{{ r.name }}{% if r.email %} · {{ r.email }}{% endif %}</span>{% endif %}{% if not r.agent %} <span class="badge warning">kein Agent</span>{% endif %}{% elif r %}<span class="muted">keins</span>{% else %}<span class="muted">noch nicht gesucht</span>{% endif %}</td>
+      <td>{% if r %}<span class="badge{{ ' info' if r.how == 'manual' }}">{{ {'login': 'Benutzername', 'email': 'E-Mail', 'manual': 'von Hand', 'none': 'ohne Konto (fest)'}.get(r.how, 'nicht gefunden') }}</span>{% endif %}</td>
+      {% if user.is_admin %}<td><form method="post" action="{{ url_for('zammad.user_links', zid=z.id) }}" class="flex" style="gap:6px;flex-wrap:wrap">{{ csrf() }}<input type="hidden" name="user_id" value="{{ u.id }}">
+        <input type="text" name="value" placeholder="Login oder E-Mail in Zammad" maxlength="255" style="max-width:220px" aria-label="Zammad-Konto">
+        <button class="btn sm" name="action" value="manual">Zuordnen</button>
+        <button class="btn sm ghost" name="action" value="auto">Automatisch</button>
+        <button class="btn sm ghost" name="action" value="none">Ohne Konto</button></form></td>{% endif %}</tr>
+  {% else %}<tr><td colspan="4" class="muted">Keine Benutzer.</td></tr>{% endfor %}</tbody></table></div>
+</div>
 
 {% elif tab == 'tickets' %}
 <div class="card"><div class="table-wrap"><table class="table compact"><thead><tr><th>Servermanager</th><th>Zammad</th><th>Titel</th><th>Status</th><th>Geöffnet</th></tr></thead><tbody>

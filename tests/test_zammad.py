@@ -211,3 +211,71 @@ def test_migration_v4_to_v5(tmp_path):
     assert "zammad_servers" in insp.get_table_names()
     with eng.connect() as conn:
         assert conn.execute(text("SELECT zammad_number, zammad_error FROM tickets")).one() == ("", "")
+
+
+def test_actions_as_the_users_own_zammad_account(app, db, mock, env):
+    from servermanager.models import KIND_ZAMMAD, LEVEL_FULL, IntegrationAccess, Ticket, ZammadUserLink
+    zam, zs = mock.state.zam, env["zs"]
+    assert zs.on_behalf   # on by default
+    u = make_user(db, "zm-anna", "admin")
+    u.email = "anna@example.com"   # Zammad login is anna.b: found through the e-mail address
+    db.commit()
+    c = login(app, "zm-anna")
+    _event(app, env["zbx"], event_id="8010")
+    t = db.query(Ticket).filter_by(event_id="8010").one()
+    zt = zam["tickets"][t.zammad_ticket_id]
+    zam["on_behalf"].clear()
+    c.post(f"/tickets/{t.id}", data={"op": "take", "csrf_token": c.csrf})
+    assert zt["owner_id"] == 7 and ("PUT", f"tickets/{t.zammad_ticket_id}", 7) in zam["on_behalf"]
+    c.post(f"/tickets/{t.id}", data={"op": "comment", "text": "schaue ich mir an", "to_zammad": "1",
+                                     "csrf_token": c.csrf})
+    assert zam["articles"][-1]["created_by_id"] == 7 and tickets.OWN_PREFIX in zam["articles"][-1]["body"]
+    assert "anna.b" in c.get(f"/tickets/{t.id}").text
+    # my tickets: as Zammad shows them to anna.b
+    page = c.get(f"/zammad/{zs.id}?tab=mine").text
+    assert "Angemeldet in Zammad als <strong>anna.b</strong>" in page and f"#{t.zammad_number}" in page
+    assert ("POST", "tickets/search", 7) in zam["on_behalf"]
+    page = c.get(f"/zammad/{zs.id}?tab=users").text
+    assert "zm-anna" in page and "anna.b" in page and ">E-Mail<" in page
+    # set by hand: a customer account (no agent); "without account" falls back to the API account
+    c.post(f"/zammad/{zs.id}/users", data={"action": "manual", "user_id": u.id, "value": "kunde", "csrf_token": c.csrf})
+    link = db.query(ZammadUserLink).filter_by(zammad_id=zs.id, user_id=u.id).one()
+    assert link.zammad_user_id == 8 and link.how == "manual" and not link.agent
+    assert "kein Agent" in c.get(f"/zammad/{zs.id}?tab=mine").text
+    r = c.post(f"/zammad/{zs.id}/users", data={"action": "manual", "user_id": u.id, "value": "gibtsnicht",
+                                                "csrf_token": c.csrf}, follow_redirects=True)
+    assert "keinen aktiven Benutzer" in r.text
+    c.post(f"/zammad/{zs.id}/users", data={"action": "none", "user_id": u.id, "csrf_token": c.csrf})
+    zam["on_behalf"].clear()
+    c.post(f"/tickets/{t.id}", data={"op": "reopen", "csrf_token": c.csrf})
+    assert zam["on_behalf"] == [] and "kein Zammad-Konto" in c.get(f"/tickets/{t.id}").text
+    c.post(f"/zammad/{zs.id}/users", data={"action": "auto", "user_id": u.id, "csrf_token": c.csrf})
+    db.expire_all()
+    assert db.query(ZammadUserLink).filter_by(zammad_id=zs.id, user_id=u.id).one().zammad_user_id == 7
+    # the token lacks admin.user: a clear message
+    zam["no_admin_user"] = True
+    r = c.post(f"/tickets/{t.id}", data={"op": "comment", "text": "x", "to_zammad": "1", "csrf_token": c.csrf},
+               follow_redirects=True)
+    assert "admin.user" in r.text
+    zam["no_admin_user"] = False
+    # switched off: everything runs as the API account
+    zs.on_behalf = False
+    db.commit()
+    zam["on_behalf"].clear()
+    c.post(f"/tickets/{t.id}", data={"op": "comment", "text": "y", "to_zammad": "1", "csrf_token": c.csrf})
+    assert zam["on_behalf"] == [] and zam["articles"][-1]["created_by_id"] == 3
+    assert "ausgeschaltet" in c.get(f"/zammad/{zs.id}?tab=mine").text
+    zs.on_behalf = True
+    db.commit()
+    # full access without being administrator: look up again yes, decide by hand no
+    op = make_user(db, "zm-op")
+    db.add(IntegrationAccess(user_id=op.id, kind=KIND_ZAMMAD, obj_id=zs.id, level=LEVEL_FULL))
+    db.commit()
+    c2 = login(app, "zm-op")
+    assert c2.post(f"/zammad/{zs.id}/users", data={"action": "manual", "user_id": u.id, "value": "kunde",
+                                                    "csrf_token": c2.csrf}).status_code == 403
+    r = c2.post(f"/zammad/{zs.id}/users", data={"action": "refresh", "csrf_token": c2.csrf}, follow_redirects=True)
+    assert "haben ein Zammad-Konto" in r.text
+    db.query(IntegrationAccess).filter_by(user_id=op.id).delete()
+    db.query(ZammadUserLink).delete()
+    db.commit()

@@ -1,6 +1,7 @@
 """Zammad REST API (token auth): tickets, articles, tags, webhook + trigger for updates back."""
 from __future__ import annotations
 
+import copy
 import hashlib
 import hmac
 import re
@@ -61,6 +62,7 @@ class Zammad:
         if not token:
             raise ZammadError("Kein API-Token hinterlegt")
         self.timeout = timeout
+        self.on_behalf_of = ""   # Zammad user id: requests run as this user (header X-On-Behalf-Of)
         self.session = requests.Session()
         self.session.trust_env = False
         self.session.verify = verify_ca
@@ -82,12 +84,20 @@ class Zammad:
     def ticket_url(self, ticket_id: Any) -> str:
         return f"{self.base}/#ticket/zoom/{ticket_id}"
 
+    def as_user(self, zammad_user_id: int) -> "Zammad":
+        """Same connection, but Zammad carries out each request as this user, with that user's permissions.
+        The API token needs the permission admin.user for this."""
+        other = copy.copy(self)
+        other.on_behalf_of = str(int(zammad_user_id))
+        return other
+
     # ------------------------------------------------------------------ raw
     def request(self, method: str, path: str, body: Optional[dict] = None, params: Optional[dict] = None) -> Any:
         url = f"{self.base}/api/v1/{path.lstrip('/')}"
         try:
             r = self.session.request(method, url, json=body, params=params, timeout=self.timeout,
-                                     allow_redirects=False)
+                                     allow_redirects=False,
+                                     headers={"X-On-Behalf-Of": self.on_behalf_of} if self.on_behalf_of else None)
         except requests.exceptions.SSLError as exc:
             raise ZammadError(tlspin.tls_message(self.base, exc)) from exc
         except requests.RequestException as exc:
@@ -99,7 +109,10 @@ class Zammad:
         if r.status_code >= 400:
             msg = (j.get("error_human") or j.get("error")) if isinstance(j, dict) else ""
             msg = msg or r.reason or f"HTTP {r.status_code}"
-            if r.status_code == 401:
+            if self.on_behalf_of and r.status_code in (401, 403):
+                msg = f"Keine Berechtigung im Namen des Zammad-Benutzers #{self.on_behalf_of} ({msg}) – dem Token " \
+                      "fehlt admin.user oder dem Benutzer das Recht in Zammad (Agent in der Gruppe?)"
+            elif r.status_code == 401:
                 msg = f"Anmeldung fehlgeschlagen ({msg}) – API-Token prüfen (Profil → Token-Zugriff)"
             elif r.status_code == 403:
                 msg = f"Keine Berechtigung ({msg}) – Rechte des Tokens prüfen (ticket.agent, für die Einrichtung " \
@@ -121,6 +134,28 @@ class Zammad:
 
     def ticket(self, ticket_id: int) -> dict:
         return self.request("GET", f"tickets/{int(ticket_id)}", params={"expand": "true"}) or {}
+
+    def find_user(self, login: str = "", email: str = "") -> tuple[Optional[dict], str]:
+        """Active Zammad user with exactly this login, otherwise this e-mail address: (user, "login"|"email")."""
+        for value, field in ((login, "login"), (email, "email")):
+            value = (value or "").strip()
+            if not value:
+                continue
+            for u in self.request("GET", "users/search", params={"query": value, "limit": 10, "expand": "true"}) or []:
+                if str(u.get(field) or "").lower() == value.lower() and u.get("active", True):
+                    return u, field
+        return None, ""
+
+    def tickets_where(self, condition: dict, limit: int = 50) -> list[dict]:
+        """Tickets matching a Zammad condition (database search, no Elasticsearch needed), newest change first;
+        only those the (acting) user may read."""
+        data = self.request("POST", "tickets/search", {"condition": condition, "limit": limit, "sort_by": "updated_at",
+                                                       "order_by": "desc"}, params={"expand": "true"})
+        if isinstance(data, dict):   # without expand: ids plus assets
+            assets = (data.get("assets") or {}).get("Ticket") or {}
+            return [assets.get(str(i)) or assets.get(i) for i in data.get("tickets") or []
+                    if assets.get(str(i)) or assets.get(i)]
+        return [t for t in data or [] if isinstance(t, dict)]
 
     def find_agent(self, email: str) -> Optional[int]:
         if not email:

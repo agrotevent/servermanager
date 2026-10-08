@@ -9,14 +9,15 @@ from sqlalchemy import select
 
 from ... import access, integrations, security, settings, tickets
 from ...core import audit
-from ...models import (KIND_ZAMMAD, LEVEL_FULL, LEVEL_OPERATE, LEVEL_VIEW, TICKET_STATUSES, Ticket, ZabbixServer,
-                       ZammadServer)
+from ...models import (KIND_ZAMMAD, LEVEL_FULL, LEVEL_OPERATE, LEVEL_VIEW, TICKET_STATUSES, SsoClient, Ticket, User,
+                       ZabbixServer, ZammadServer, ZammadUserLink)
 from ...zammad import ZammadError, normalize_url, signature_ok
 from ..auth import admin_required, client_ip, login_required, record_failure, throttled
 from . import _integration as common
 
 bp = Blueprint("zammad", __name__)
-TABS = {"overview": "Übersicht", "tickets": "Tickets", "setup": "Rückmeldung (Webhook)"}
+TABS = {"overview": "Übersicht", "mine": "Meine Tickets", "tickets": "Servermanager-Tickets", "users": "Benutzer",
+        "setup": "Rückmeldung (Webhook)"}
 
 
 def _get(zid: int, level: str) -> ZammadServer:
@@ -54,6 +55,7 @@ def _save(z: ZammadServer) -> list[str]:
         errors.append("Kunde der Tickets: E-Mail-Adresse angeben (wird in Zammad bei Bedarf angelegt).")
     z.customer = customer
     z.close_on_resolve = bool(f.get("close_on_resolve"))
+    z.on_behalf = bool(f.get("on_behalf"))
     return errors
 
 
@@ -150,13 +152,88 @@ def detail(zid: int):
     if tab == "tickets":
         rows = g.db.execute(select(Ticket).where(Ticket.zammad_server_id == z.id)
                             .order_by(Ticket.id.desc()).limit(200)).scalars().all()
+    if tab == "users" and not common.can(KIND_ZAMMAD, z.id, LEVEL_FULL):
+        tab = "overview"
     zabbix = g.db.execute(select(ZabbixServer).where(ZabbixServer.zammad_id == z.id)).scalars().all()
     pending = g.db.execute(select(Ticket).where(Ticket.zabbix_id.in_([x.id for x in zabbix]),
                                                 Ticket.zammad_ticket_id.is_(None), Ticket.zammad_error != "")
                            ).scalars().all() if zabbix else []
+    ctx = {"mine": None, "link": None, "error": None, "users": [], "links": {}}
+    if tab == "mine" and z.on_behalf:
+        ctx.update(_mine(z))
+    elif tab == "users":
+        ctx["users"] = g.db.execute(select(User).where(User.active.is_(True)).order_by(User.username)).scalars().all()
+        ctx["links"] = {r.user_id: r for r in g.db.execute(select(ZammadUserLink).where(
+            ZammadUserLink.zammad_id == z.id)).scalars()}
+    sso_client = g.db.execute(select(SsoClient).where(SsoClient.target_kind == "zammad",
+                                                      SsoClient.target_id == z.id)).scalars().first()
     return render_template("zammad/detail.html", z=z, tab=tab, tabs=TABS, rows=rows, zabbix=zabbix,
                            pending=pending, statuses=TICKET_STATUSES, webhook_url=webhook_url(z),
-                           web=normalize_url(z.api_url) if z.api_url else "")
+                           web=normalize_url(z.api_url) if z.api_url else "", sso_client=sso_client,
+                           zabbix_hidden="zabbix" in settings.hidden_modules(g.db), **ctx)
+
+
+def _mine(z: ZammadServer) -> dict:
+    """Tickets of the user's own Zammad account, with that account's permissions."""
+    from ... import zammad_users
+    out: dict = {}
+    try:
+        client = integrations.zammad_client(z)
+        link = zammad_users.link_for(g.db, z, g.user, client)
+        g.db.commit()
+        out["link"] = link
+        if link is not None and link.zammad_user_id:
+            out["mine"] = zammad_users.my_tickets(client.as_user(link.zammad_user_id), link.zammad_user_id)
+    except (ZammadError, ValueError) as exc:
+        out["error"] = str(exc)
+    return out
+
+
+@bp.post("/zammad/<int:zid>/users")
+@login_required
+def user_links(zid: int):
+    """Servermanager users <-> Zammad accounts: look up again (full access), set by hand (administrators)."""
+    from ... import zammad_users
+    z = _get(zid, LEVEL_FULL)
+    action = request.form.get("action", "")
+    if action not in ("refresh", "manual", "none", "auto"):
+        abort(400)
+    if action != "refresh" and not g.user.is_admin:
+        abort(403)   # deciding as whom someone acts in Zammad is for administrators
+    back = redirect(url_for("zammad.detail", zid=zid, tab="users"))
+    try:
+        client = integrations.zammad_client(z)
+        if action == "refresh":
+            users = g.db.execute(select(User).where(User.active.is_(True)).order_by(User.id).limit(300)).scalars().all()
+            found = sum(1 for u in users if (r := zammad_users.link_for(g.db, z, u, client, refresh=True))
+                        and r.zammad_user_id)
+            msg = f"{found} von {len(users)} Benutzern haben ein Zammad-Konto."
+        else:
+            raw = request.form.get("user_id", "")
+            user = g.db.get(User, int(raw)) if raw.isdigit() else None
+            if user is None:
+                abort(404)
+            if action == "manual":
+                value = (request.form.get("value") or "").strip()[:255]
+                if not value:
+                    raise ZammadError("Login oder E-Mail-Adresse des Zammad-Kontos angeben")
+                row = zammad_users.set_manual(g.db, z, user, client, value)
+                msg = f"{user.username} arbeitet in Zammad als {row.login}."
+            elif action == "none":
+                zammad_users.set_manual(g.db, z, user, client, "")
+                msg = f"{user.username}: ohne Zammad-Konto (Änderungen über das Konto des Servermanagers)."
+            else:
+                zammad_users.reset(g.db, z, user)
+                row = zammad_users.link_for(g.db, z, user, client, refresh=True)
+                msg = f"{user.username}: " + (f"automatisch {row.login}." if row and row.zammad_user_id
+                                              else "kein Zammad-Konto gefunden.")
+            audit(g.db, g.user, "zammad.user_link", z.name, f"{action} {user.username}", ip=client_ip())
+        g.db.commit()
+        flash(msg, "success")
+    except (ZammadError, ValueError) as exc:
+        g.db.rollback()
+        flash(f"Fehlgeschlagen: {exc}", "danger")
+    return back
 
 
 @bp.post("/zammad/<int:zid>/sync")

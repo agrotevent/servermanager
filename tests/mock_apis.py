@@ -551,19 +551,34 @@ class MockApp:
         s = self.s
         z = s.__dict__.setdefault("zam", {
             "seq": 100, "tickets": {}, "articles": [], "tags": [], "webhooks": [], "triggers": [],
-            "users": [{"id": 3, "login": "servermanager-api", "email": "api@example.com", "active": True},
-                      {"id": 5, "login": "tk-admin", "email": "tk-admin@example.com", "active": True}],
+            "users": [{"id": 3, "login": "servermanager-api", "email": "api@example.com", "active": True,
+                       "roles": ["Admin", "Agent"]},
+                      {"id": 5, "login": "tk-admin", "email": "tk-admin@example.com", "active": True,
+                       "firstname": "Tanja", "lastname": "Kraus", "roles": ["Agent"]},
+                      {"id": 7, "login": "anna.b", "email": "anna@example.com", "active": True, "firstname": "Anna",
+                       "roles": ["Agent"]},
+                      {"id": 8, "login": "kunde", "email": "kunde@example.com", "active": True, "roles": ["Customer"]}],
+            "on_behalf": [],
             "states": [{"id": 1, "name": "new"}, {"id": 2, "name": "open"}, {"id": 4, "name": "closed"}]})
         if req.headers.get("Authorization") != f"Token token={ZAM_TOKEN}":
             return _json({"error": "Invalid token!"}, 401)
         body = req.get_json(silent=True) or {}
         path = path.strip("/")
+        acting = z["users"][0]
+        if req.headers.get("X-On-Behalf-Of"):
+            if z.get("no_admin_user"):
+                return _json({"error": "Not authorized (admin.user)!"}, 403)
+            ob = req.headers["X-On-Behalf-Of"]
+            acting = next((u for u in z["users"] if str(u["id"]) == ob or u["login"] == ob), None)
+            if acting is None:
+                return _json({"error": f"No such user '{ob}'"}, 401)
+            z["on_behalf"].append((req.method, path, acting["id"]))
 
         def new_id() -> int:
             z["seq"] += 1
             return z["seq"]
         if path == "users/me":
-            return _json(z["users"][0])
+            return _json(acting)
         settings = z.setdefault("settings", [
             {"id": 1, "name": "fqdn", "state_current": {"value": "support.example.com"}},
             {"id": 2, "name": "http_type", "state_current": {"value": "https"}},
@@ -582,8 +597,26 @@ class MockApp:
             row["state_current"] = body["state_current"]
             return _json(row)
         if path == "users/search":
-            q = req.args.get("query", "")
-            return _json([u for u in z["users"] if q and q in u["email"]])
+            q = req.args.get("query", "").lower()
+            return _json([u for u in z["users"] if q and (q in u["email"].lower() or q in u["login"].lower())])
+        if path == "tickets/search" and req.method == "POST":
+            cond = body.get("condition") or {}
+            owner = (cond.get("ticket.owner_id") or {}).get("pre_condition")
+            closed = {int(x) for x in (cond.get("ticket.state_id") or {}).get("value", [])}
+            names = {x["id"]: x["name"] for x in z["states"]}
+            rows = []
+            for t in z["tickets"].values():
+                if t.get("group") == "Technik" and "Agent" not in acting.get("roles", []):
+                    continue   # customers do not see the group's tickets
+                sid = next((i for i, n in names.items() if n == t["state"]), 0)
+                if sid in closed:
+                    continue
+                if owner == "current_user.id" and t.get("owner_id") != acting["id"]:
+                    continue
+                if owner == "not_set" and t.get("owner_id") not in (None, 1):
+                    continue
+                rows.append(dict(t, state_id=sid, updated_at="2026-10-08T10:00:00Z"))
+            return _json(rows)
         if path == "groups":
             return _json([{"id": 1, "name": "Users", "active": True}, {"id": 2, "name": "Technik", "active": True}])
         if path == "ticket_states":
@@ -606,8 +639,8 @@ class MockApp:
                 z["tickets"][tid].update(body)
             return _json(z["tickets"][tid])
         if path == "ticket_articles":
-            z["articles"].append(body)
-            return _json(dict(body, id=new_id()), 201)
+            z["articles"].append(dict(body, created_by_id=acting["id"]))
+            return _json(dict(body, id=new_id(), created_by_id=acting["id"]), 201)
         if path == "tags/add":
             z["tags"].append((body["o_id"], body["item"]))
             return _json(True, 201)

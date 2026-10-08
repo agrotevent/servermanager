@@ -33,7 +33,8 @@
       {% if t.closed_at %}<dt>Geschlossen</dt><dd>{{ t.closed_at|dt }}</dd>{% endif %}
       <dt>Bearbeiter</dt><dd>{{ t.assignee.label if t.assignee else '–' }}</dd>
       {% if t.opdata %}<dt>Messwerte</dt><dd class="mono">{{ t.opdata }}</dd>{% endif %}
-      {% if zs %}<dt>Zammad</dt><dd>{% if t.zammad_ticket_id %}<a href="{{ zammad_url }}" target="_blank" rel="noopener">#{{ t.zammad_number }}</a> <small class="muted">({{ zs.name }})</small>{% elif t.zammad_error %}<span class="badge danger">nicht übergeben</span> <small class="muted">{{ t.zammad_error }}</small>{% else %}<span class="muted">wird übergeben</span>{% endif %}</dd>{% endif %}
+      {% if zs %}<dt>Zammad</dt><dd>{% if t.zammad_ticket_id %}<a href="{{ zammad_url }}" target="_blank" rel="noopener">#{{ t.zammad_number }}</a> <small class="muted">({{ zs.name }})</small>{% elif t.zammad_error %}<span class="badge danger">nicht übergeben</span> <small class="muted">{{ t.zammad_error }}</small>{% else %}<span class="muted">wird übergeben</span>{% endif %}</dd>
+        {% if zs.on_behalf %}<dt>Du in Zammad</dt><dd>{% if zlink and zlink.zammad_user_id %}{{ zlink.login }}{% if not zlink.agent %} <span class="badge warning">kein Agent</span>{% endif %}{% elif zlink %}<span class="badge warning">kein Zammad-Konto</span> <small class="muted">Änderungen gehen über das Konto des Servermanagers</small>{% else %}<small class="muted">wird bei der ersten Änderung gesucht</small>{% endif %}</dd>{% endif %}{% endif %}
     </dl>
     {% if can_edit %}
     <div class="flex mt-2" style="gap:8px;flex-wrap:wrap">

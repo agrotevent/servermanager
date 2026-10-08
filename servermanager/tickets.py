@@ -235,13 +235,16 @@ def _tag(host: str) -> str:
     return re.sub(r"[^a-z0-9._-]", "-", (host or "").lower())[:60]
 
 
-def zammad_note(db: Session, t: Ticket, text: str, internal: bool = True, **fields) -> str:
-    """Article (and optional ticket fields) in Zammad; returns an error text or ''."""
+def zammad_note(db: Session, t: Ticket, text: str, internal: bool = True, user: Optional[User] = None,
+                **fields) -> str:
+    """Article (and optional ticket fields) in Zammad, written as the user's own Zammad account when linked;
+    returns an error text or ''."""
     zs = zammad_of(db, t)
     if zs is None or not t.zammad_ticket_id:
         return ""
     try:
-        client = zammad_client(zs)
+        from . import zammad_users
+        client, _link = zammad_users.acting(db, zs, zammad_client(zs), user)
         if text:
             client.add_note(t.zammad_ticket_id, f"{OWN_PREFIX} {text}", internal=internal)
         if fields:
@@ -252,14 +255,19 @@ def zammad_note(db: Session, t: Ticket, text: str, internal: bool = True, **fiel
 
 
 def zammad_owner(db: Session, t: Ticket, user: Optional[User]) -> str:
-    """Set the Zammad owner to the agent with the user's e-mail (if there is one) and open the ticket."""
+    """Make the user's Zammad account (linked, otherwise the agent with the user's e-mail) the owner and open
+    the ticket."""
     zs = zammad_of(db, t)
     if zs is None or not t.zammad_ticket_id:
         return ""
     try:
-        client = zammad_client(zs)
+        from . import zammad_users
+        client, link = zammad_users.acting(db, zs, zammad_client(zs), user)
         fields: dict = {"state": "open"}
-        agent = client.find_agent(user.email) if user is not None and user.email else None
+        if link is not None:
+            agent = link.zammad_user_id
+        else:
+            agent = client.find_agent(user.email) if user is not None and user.email else None
         if agent:
             fields["owner_id"] = agent
         client.update_ticket(t.zammad_ticket_id, **fields)

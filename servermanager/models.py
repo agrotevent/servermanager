@@ -606,6 +606,25 @@ class ZammadServer(IntegrationMixin, Base):
     webhook_secret_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     agent_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # Zammad user of the API token
     setup: Mapped[Optional[dict]] = mapped_column(JSONText, default=dict)
+    on_behalf: Mapped[bool] = mapped_column(Boolean, default=True)   # act as the user's own Zammad account
+
+
+class ZammadUserLink(Base):
+    """Servermanager user <-> Zammad user: requests of this user run as that Zammad user (X-On-Behalf-Of)."""
+
+    __tablename__ = "zammad_user_links"
+    __table_args__ = (UniqueConstraint("zammad_id", "user_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    zammad_id: Mapped[int] = mapped_column(ForeignKey("zammad_servers.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    zammad_user_id: Mapped[int] = mapped_column(Integer, default=0)      # 0: no Zammad account
+    login: Mapped[str] = mapped_column(String(255), default="")
+    email: Mapped[str] = mapped_column(String(255), default="")
+    name: Mapped[str] = mapped_column(String(255), default="")
+    agent: Mapped[bool] = mapped_column(Boolean, default=False)
+    how: Mapped[str] = mapped_column(String(16), default="")             # login | email | manual | none | ""
+    checked_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class EasybellAccount(IntegrationMixin, Base):

@@ -16,6 +16,8 @@
     {{ field('Gruppe', 'group_name', z.group_name or 'Users', help='Zammad-Gruppe, in der die Tickets landen') }}
     {{ field('Kunde der Tickets (E-Mail)', 'customer', z.customer, placeholder='monitoring@example.com', help='wird in Zammad angelegt, falls es ihn nicht gibt') }}
     <div class="full">{{ checkbox('Tickets in Zammad automatisch schließen, wenn Zabbix das Problem als behoben meldet', 'close_on_resolve', z.close_on_resolve) }}</div>
+    <div class="full">{{ checkbox('Im Namen des angemeldeten Benutzers arbeiten (eigenes Zammad-Konto, eigene Rechte)', 'on_behalf', z.on_behalf if z.id else True) }}
+      <small class="muted">Notizen, Übernahmen und „Meine Tickets“ laufen dann als das Zammad-Konto des jeweiligen Benutzers. Gefunden wird es über den Benutzernamen (= authentik-Benutzername) oder die E-Mail-Adresse. Das API-Token braucht dafür zusätzlich die Berechtigung <code>admin.user</code>.</small></div>
     <div class="field full"><label>Probleme dieser Zabbix-Server hier anlegen</label>
       {% for x in zabbix %}<label class="check"><input type="checkbox" name="zabbix" value="{{ x.id }}" {% if x.zammad_id == z.id and z.id %}checked{% endif %}> {{ x.name }}</label>{% else %}<span class="muted">Noch keine Zabbix-Verbindung.</span>{% endfor %}</div>
   </div></div></div>

@@ -123,6 +123,12 @@ def _v13(conn: Connection) -> None:
         add_column_if_missing(conn, "pangolin_servers", "role_map", "TEXT")
 
 
+def _v14(conn: Connection) -> None:
+    # Zammad: requests on behalf of the user's own Zammad account (table zammad_user_links via create_all)
+    if "zammad_servers" in inspect(conn).get_table_names():
+        add_column_if_missing(conn, "zammad_servers", "on_behalf", "BOOLEAN NOT NULL DEFAULT 1")
+
+
 MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     1: lambda conn: None,  # initial schema
     2: _v2,
@@ -137,6 +143,7 @@ MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     11: _v11,
     12: _v12,
     13: _v13,
+    14: _v14,
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 
