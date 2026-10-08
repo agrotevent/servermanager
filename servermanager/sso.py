@@ -83,7 +83,10 @@ def _connect_pangolin(au: Authentik, sso: SsoServer, target, app_url: str, slug:
                                  app["token"])
         log(f"Pangolin: neue Benutzer automatisch der Organisation „{pangolin.org}“ zuordnen (Rolle Member) ...")
         try:
-            pangolin.set_idp_org_policy(idp_id)
+            from .pangolin import role_mapping_expression
+            rm = getattr(target, "role_map", None) or {}
+            pangolin.set_idp_org_policy(idp_id, role_mapping_expression(rm.get("rules") or [],
+                                                                        rm.get("default") or "Member"))
         except PangolinError as exc:
             log(f"Hinweis: Organisations-Zuordnung nicht gesetzt ({exc}) – in Pangolin unter Server-Admin → "
                 "Identity Provider → Organisationsrichtlinien nachtragen")

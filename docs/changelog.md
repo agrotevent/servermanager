@@ -2,6 +2,16 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.24.0 – 08.10.2026
+
+### Neu
+
+- **Pangolin mit authentik-Gruppen:** Auf der Seite der Pangolin-Verbindung ordnest du authentik-Gruppen
+  Pangolin-Rollen zu, mit Standardrolle für alle anderen. Der Servermanager setzt daraus die
+  Organisationsrichtlinie des Identity Providers. Neue Rollen lassen sich dort direkt anlegen.
+- **Zugriff je Dienst:** Auf der Seite eines veröffentlichten Dienstes wählst du die Rollen, die ihn
+  öffnen dürfen.
+
 ## 1.23.1 – 08.10.2026
 
 ### Behoben

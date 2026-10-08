@@ -36,4 +36,28 @@
     {% endfor %}</tbody></table></div>
   {% else %}<div class="card-body">{{ empty('Noch keine Dienste veröffentlicht.', 'i-cloud') }}</div>{% endif %}
 </div>
+{% if sso_client %}
+<div class="card" id="sso"><div class="card-head"><h2>Anmeldung über authentik</h2><span class="badge success">verbunden mit {{ sso_server.name if sso_server else 'authentik' }}</span></div>
+  <div class="card-body"><small class="muted">Wer sich über authentik anmeldet, kommt in die Organisation {{ p.org_id }}. Welche Pangolin-Rolle jemand bekommt, entscheiden die eigenen authentik-Gruppen: die erste passende Regel von oben, sonst die Standardrolle. Welche Rollen einen Dienst öffnen dürfen, legst du auf der Seite des Dienstes fest (bei aktivierter Pangolin-Anmeldung).</small></div>
+  {% if int_can('pangolin', p.id, 'full') and pg_roles %}
+  {% set rules = role_map.rules or [] %}
+  <form method="post" action="{{ url_for('pangolin.role_map', pg_id=p.id) }}" class="card-body">{{ csrf() }}<input type="hidden" name="count" value="{{ rules|length + 3 }}">
+    <datalist id="ak-groups">{% for n in ak_groups %}<option value="{{ n }}">{% endfor %}</datalist>
+    <div class="table-wrap"><table class="table compact"><thead><tr><th>authentik-Gruppe</th><th>Pangolin-Rolle</th></tr></thead><tbody>
+    {% for i in range(rules|length + 3) %}{% set r = rules[i] if i < rules|length else {} %}
+      <tr><td><input type="text" name="group_{{ i }}" value="{{ r.group or '' }}" list="ak-groups" maxlength="150" placeholder="{{ 'z. B. pangolin-technik' if i == rules|length else '' }}"></td>
+        <td><select name="role_{{ i }}"><option value="">–</option>{% for ro in pg_roles %}<option {{ 'selected' if r.role == ro.name }}>{{ ro.name }}</option>{% endfor %}</select></td></tr>
+    {% endfor %}</tbody></table></div>
+    <div class="flex mt-1" style="gap:12px;align-items:flex-end;flex-wrap:wrap">
+      <div class="field"><label for="f-default-role">Standardrolle</label><select id="f-default-role" name="default">{% for ro in pg_roles if not ro.isAdmin %}<option {{ 'selected' if (role_map.default or 'Member') == ro.name }}>{{ ro.name }}</option>{% endfor %}</select></div>
+      <button class="btn primary">Zuordnung speichern</button></div>
+    <p class="mt-1"><small class="muted">Die Rolle „Admin“ gibt volle Rechte in der Organisation. Pangolin ohne Lizenz vergibt nur eine Rolle je Benutzer – die erste passende Regel zählt.</small></p>
+  </form>
+  <form method="post" action="{{ url_for('pangolin.role_new', pg_id=p.id) }}" class="card-body flex" style="gap:12px;align-items:flex-end;flex-wrap:wrap">{{ csrf() }}
+    <div class="field"><label for="f-role-name">Neue Rolle</label><input id="f-role-name" type="text" name="name" maxlength="60" required placeholder="z. B. Technik"></div>
+    <div class="field"><label for="f-role-desc">Beschreibung</label><input id="f-role-desc" type="text" name="description" maxlength="200"></div>
+    <button class="btn">Rolle anlegen</button></form>
+  {% elif roles_error %}<div class="card-body"><div class="alert warning"><div>Rollen nicht abrufbar: {{ roles_error }}</div></div></div>{% endif %}
+</div>
+{% endif %}
 {% endblock %}

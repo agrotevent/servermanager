@@ -850,3 +850,59 @@ def test_sso_user_edit_and_groups(app, db, mock, apps):
     finally:
         st.ak_groups[:] = groups_before
         st.ak_users[:] = [x for x in st.ak_users if x["pk"] != 77]
+
+
+def test_pangolin_roles_from_authentik_groups(app, db, mock, apps):
+    from servermanager import integrations
+    from servermanager.jobs import enqueue
+    from servermanager.models import SsoClient
+    from tests.test_web import login, make_user
+    pg, st = apps["pg"], mock.state
+    job = enqueue(db, kind="sso_connect", title="sso", payload={"sso_id": apps["ak"].id, "kind": "pangolin",
+                                                                "target_id": pg.id, "app_url": "https://pangolin.example.com"})
+    db.commit()
+    _run(job.id)
+    db.expire_all()
+    client = db.query(SsoClient).filter_by(target_kind="pangolin", target_id=pg.id).one()
+    iid = int(client.target_ref)
+    try:
+        make_user(db, "pg-role-admin", "admin")
+        c = login(app, "pg-role-admin")
+        page = c.get(f"/pangolin/{pg.id}").text
+        assert "Anmeldung über authentik" in page and ">Technik<" in page and "Fremd" not in page  # other org
+        r = c.post(f"/pangolin/{pg.id}/role-map", data={
+            "count": "3", "group_0": "pangolin-admins", "role_0": "Admin", "group_1": "technik", "role_1": "Technik",
+            "default": "Member", "csrf_token": c.csrf}, follow_redirects=True)
+        assert "2 Regel(n), sonst Member" in r.text
+        expr = st.pg_idp_policies[(iid, m.PG_ORG)]["roleMapping"]
+        assert "contains(groups || `[]`, 'technik') && ['Technik']" in expr and expr.endswith("['Member']][]")
+        db.expire_all()
+        assert db.get(type(pg), pg.id).role_map["rules"][1] == {"group": "technik", "role": "Technik"}
+        try:
+            import jmespath
+            assert jmespath.search(expr, {"groups": ["technik"]})[0] == "Technik"
+            assert jmespath.search(expr, {})[0] == "Member"
+        except ImportError:
+            pass
+        r = c.post(f"/pangolin/{pg.id}/role", data={"name": "Vertrieb", "csrf_token": c.csrf}, follow_redirects=True)
+        assert "Rolle „Vertrieb“ angelegt" in r.text and st.pg_roles[-1]["name"] == "Vertrieb"
+        assert "Fehlgeschlagen" in c.post(f"/pangolin/{pg.id}/role", data={"name": "Vertrieb", "csrf_token": c.csrf},
+                                          follow_redirects=True).text
+        st.pg_roles.pop()
+        r = c.post(f"/pangolin/{pg.id}/role-map", data={"count": "1", "group_0": "x", "role_0": "Gibtsnicht",
+                                                        "default": "Member", "csrf_token": c.csrf}, follow_redirects=True)
+        assert "vorhandene Rolle" in r.text
+        # access per published service
+        res = integrations.pangolin_client(pg).publish("wiki", "http", 1, "10.20.0.50", 80, "http", "wiki", "dom1")
+        rid = res["resourceId"]
+        page = c.get(f"/pangolin/{pg.id}/resource/{rid}").text
+        assert "Zugriff (Rollen)" in page and 'name="roles" value="1"' not in page and 'name="roles" value="3"' in page
+        r = c.post(f"/pangolin/{pg.id}/resource/{rid}/do", data={"action": "roles", "roles": ["3", "1", "9"],
+                                                                 "csrf_token": c.csrf}, follow_redirects=True)
+        assert "1 Rolle(n)" in r.text and st.pg_resource_roles[rid] == [3]
+    finally:
+        db.query(SsoClient).filter_by(id=client.id).delete()
+        st.pg_idps.pop(iid, None)
+        st.ak_apps.pop(client.slug, None)
+        pg.role_map = {}
+        db.commit()

@@ -36,6 +36,15 @@
     <small class="muted">Mehrere Ziele werden reihum angesprochen (Lastverteilung).</small></div>
   {% endif %}
 </div>
+{% if roles %}
+<div class="card"><div class="card-head"><h2>Zugriff (Rollen)</h2>{% if not res.sso %}<span class="badge warning">Pangolin-Anmeldung ist aus – der Dienst ist öffentlich</span>{% endif %}</div><div class="card-body">
+  <form method="post" action="{{ url_for('pangolin.resource_do', pg_id=p.id, rid=res.resourceId) }}">{{ csrf() }}<input type="hidden" name="action" value="roles">
+    <div class="flex" style="gap:14px;flex-wrap:wrap">{% for ro in roles %}<label class="check"><input type="checkbox" name="roles" value="{{ ro.roleId }}" {{ 'checked' if ro.roleId in current_roles }} {{ 'disabled' if not int_can('pangolin', p.id, 'full') }}> {{ ro.name }}</label>{% endfor %}</div>
+    {% if int_can('pangolin', p.id, 'full') %}<button class="btn mt-1">Zugriff speichern</button>{% endif %}
+  </form>
+  <p class="mt-1"><small class="muted">Mitglieder dieser Rollen dürfen den Dienst nach der Anmeldung öffnen, Administratoren immer. Die Rolle bekommt man bei Anmeldung über authentik aus den authentik-Gruppen (Zuordnung auf der Seite der Pangolin-Verbindung).</small></p>
+</div></div>
+{% endif %}
 {% if systems %}<div class="card"><div class="card-head"><h2>Zugehörige Systeme</h2></div><div class="card-body">
   {% for s in systems %}<a class="btn sm" href="{{ url_for('systems.detail', system_id=s.id) }}"><svg class="icon"><use href="#i-server"/></svg>{{ s.name }} ({{ s.host }})</a> {% endfor %}</div></div>{% endif %}
 {% endblock %}

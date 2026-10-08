@@ -202,7 +202,90 @@ def detail(pg_id: int):
     integrations.poll(g.db, pg)
     g.db.commit()
     ctx["tunnel"] = g.db.get(System, pg.tunnel_system_id) if pg.tunnel_system_id else None
+    ctx.update(_sso_ctx(pg, ctx["error"] is None))
     return render_template("pangolin/detail.html", **ctx)
+
+
+def _sso_link(pg: PangolinServer):
+    from ...models import SsoClient, SsoServer
+    c = g.db.execute(select(SsoClient).where(SsoClient.target_kind == "pangolin",
+                                             SsoClient.target_id == pg.id)).scalars().first()
+    return (c, g.db.get(SsoServer, c.sso_id)) if c else (None, None)
+
+
+def _sso_ctx(pg: PangolinServer, reachable: bool) -> dict:
+    """authentik login of this Pangolin: roles from groups (only for full access)."""
+    client_row, sso = _sso_link(pg)
+    out = {"sso_client": client_row, "sso_server": sso, "pg_roles": [], "ak_groups": [], "role_map": pg.role_map or {}}
+    if client_row is None or not reachable or not common.can(KIND_PANGOLIN, pg.id, LEVEL_FULL):
+        return out
+    try:
+        out["pg_roles"] = _client(pg).roles()
+    except PangolinError as exc:
+        out["roles_error"] = str(exc)
+    try:
+        out["ak_groups"] = sorted({str(x.get("name") or "") for x in integrations.sso_client(sso, timeout=8).groups()}
+                                  - {""}, key=str.lower)
+    except integrations.ApiError:
+        pass
+    return out
+
+
+@bp.post("/<int:pg_id>/role-map")
+@login_required
+def role_map(pg_id: int):
+    """authentik group -> Pangolin role (organization policy of the authentik identity provider)."""
+    from ...pangolin import role_mapping_expression
+    pg = _get(pg_id, LEVEL_FULL)
+    client_row, _sso = _sso_link(pg)
+    if client_row is None or not (client_row.target_ref or "").isdigit():
+        flash("authentik ist mit diesem Pangolin noch nicht verbunden (SSO → Anwendungen → Pangolin verbinden).",
+              "danger")
+        return redirect(url_for("pangolin.detail", pg_id=pg_id))
+    f = request.form
+    client = _client(pg)
+    try:
+        names = {r.get("name") for r in client.roles()}
+        rules = []
+        for i in range(min(int(f.get("count") or 0), 30)):
+            grp, role = (f.get(f"group_{i}") or "").strip(), (f.get(f"role_{i}") or "").strip()
+            if not grp and not role:
+                continue
+            if not grp or role not in names or len(grp) > 150:
+                raise PangolinError(f"Zeile {i + 1}: Gruppe und eine vorhandene Rolle angeben")
+            rules.append({"group": grp, "role": role})
+        default = (f.get("default") or "Member").strip()
+        if default not in names:
+            raise PangolinError(f"Die Rolle „{default}“ gibt es in der Organisation nicht")
+        expr = role_mapping_expression(rules, default)
+        client.set_idp_org_policy(int(client_row.target_ref), expr)
+        pg.role_map = {"rules": rules, "default": default}
+        audit(g.db, g.user, "pangolin.role_map", pg.name, expr[:500], ip=client_ip())
+        g.db.commit()
+        flash(f"Rollen-Zuordnung gespeichert ({len(rules)} Regel(n), sonst {default}). Sie gilt ab der nächsten "
+              "Anmeldung über authentik.", "success")
+    except (PangolinError, ValueError) as exc:
+        flash(f"Fehlgeschlagen: {exc}", "danger")
+    return redirect(url_for("pangolin.detail", pg_id=pg_id) + "#sso")
+
+
+@bp.post("/<int:pg_id>/role")
+@login_required
+def role_new(pg_id: int):
+    """New role in the organization, e.g. for an authentik group."""
+    pg = _get(pg_id, LEVEL_FULL)
+    name = " ".join((request.form.get("name") or "").split())
+    if not name or len(name) > 60 or name.lower() == "admin":
+        flash("Name der Rolle angeben (höchstens 60 Zeichen, nicht „Admin“).", "danger")
+        return redirect(url_for("pangolin.detail", pg_id=pg_id) + "#sso")
+    try:
+        _client(pg).create_role(name, (request.form.get("description") or "").strip()[:200])
+        audit(g.db, g.user, "pangolin.role_new", pg.name, name, ip=client_ip())
+        g.db.commit()
+        flash(f"Rolle „{name}“ angelegt.", "success")
+    except PangolinError as exc:
+        flash(f"Fehlgeschlagen: {exc}", "danger")
+    return redirect(url_for("pangolin.detail", pg_id=pg_id) + "#sso")
 
 
 @bp.get("/<int:pg_id>/resource/<int:rid>")
@@ -221,7 +304,15 @@ def resource(pg_id: int, rid: int):
     ips = {t.get("ip") for t in targets}
     systems = [s for s in g.db.query(System).filter(System.host.in_(ips)).all()
                if access.system_level(g.db, g.user, s.id)] if ips else []
-    return render_template("pangolin/resource.html", p=pg, res=res, targets=targets, systems=systems)
+    roles, current = [], set()
+    if res.get("http") and common.can(KIND_PANGOLIN, pg.id, LEVEL_VIEW):
+        try:
+            roles = [r for r in client.roles() if not r.get("isAdmin")]
+            current = {r.get("roleId") for r in client.resource_roles(rid)}
+        except PangolinError:
+            roles = []
+    return render_template("pangolin/resource.html", p=pg, res=res, targets=targets, systems=systems, roles=roles,
+                           current_roles=current)
 
 
 @bp.post("/<int:pg_id>/resource/<int:rid>/do")
@@ -229,7 +320,7 @@ def resource(pg_id: int, rid: int):
 def resource_do(pg_id: int, rid: int):
     action = request.form.get("action", "")
     levels = {"toggle": LEVEL_OPERATE, "sso": LEVEL_FULL, "delete": LEVEL_FULL, "add_target": LEVEL_FULL,
-              "delete_target": LEVEL_FULL}
+              "delete_target": LEVEL_FULL, "roles": LEVEL_FULL}
     if action not in levels:
         abort(400)
     pg = _get(pg_id, levels[action])
@@ -243,6 +334,11 @@ def resource_do(pg_id: int, rid: int):
             sso = request.form.get("sso") == "1"
             client.update_resource(rid, sso=sso)
             msg = "Pangolin-Anmeldung aktiviert." if sso else "Pangolin-Anmeldung deaktiviert – der Dienst ist öffentlich."
+        elif action == "roles":
+            allowed = {int(r["roleId"]) for r in client.roles() if not r.get("isAdmin") and r.get("roleId")}
+            ids = [int(x) for x in request.form.getlist("roles") if x.isdigit() and int(x) in allowed]
+            client.set_resource_roles(rid, ids)
+            msg = f"Zugriff gespeichert ({len(ids)} Rolle(n); Administratoren dürfen immer)."
         elif action == "delete":
             client.delete_resource(rid)
             msg = "Veröffentlichung entfernt."

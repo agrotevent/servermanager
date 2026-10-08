@@ -474,6 +474,7 @@ class PangolinServer(IntegrationMixin, Base):
     # backup role: primary base domain -> {"domain_id": backup domain, "template": "{sub}"}
     domain_map: Mapped[Optional[dict]] = mapped_column(JSONText, default=dict)
     dns_target: Mapped[str] = mapped_column(String(255), default="")   # DNS target of published hosts (host or IP)
+    role_map: Mapped[Optional[dict]] = mapped_column(JSONText, default=dict)  # authentik group -> Pangolin role
 
     @property
     def role_label(self) -> str:

@@ -128,6 +128,11 @@ class State:
         self.pg_idps: dict[int, dict] = {}
         self.pg_idp_policies: dict[tuple[int, str], dict] = {}
         self.pg_idp_forbidden = False
+        self.pg_roles = [{"roleId": 1, "orgId": PG_ORG, "name": "Admin", "isAdmin": True},
+                         {"roleId": 2, "orgId": PG_ORG, "name": "Member", "isAdmin": False},
+                         {"roleId": 3, "orgId": PG_ORG, "name": "Technik", "isAdmin": False},
+                         {"roleId": 9, "orgId": "other-org", "name": "Fremd", "isAdmin": False}]
+        self.pg_resource_roles: dict[int, list[int]] = {}
         # ---------------- mailcow
         self.mc_domains = [{"domain_name": "example.com", "active": 1, "mboxes_in_domain": 1, "aliases_in_domain": 0}]
         self.mc_mailboxes = [{"username": "info@example.com", "name": "Info", "domain": "example.com",
@@ -1108,6 +1113,15 @@ class MockApp:
                 return ok({"domains": s.domains, "pagination": {"total": len(s.domains)}})
             if rest == ["resources"]:
                 return ok({"resources": list(s.resources.values()), "pagination": {"total": len(s.resources)}})
+            if rest == ["roles"]:
+                return ok({"roles": s.pg_roles, "pagination": {"total": len(s.pg_roles)}})
+            if rest == ["role"] and req.method == "PUT":
+                if any(r["name"] == body.get("name") and r["orgId"] == PG_ORG for r in s.pg_roles):
+                    return err("Role with that name already exists", 409)
+                role = {"roleId": max(r["roleId"] for r in s.pg_roles) + 1, "orgId": PG_ORG,
+                        "name": body.get("name"), "description": body.get("description"), "isAdmin": False}
+                s.pg_roles.append(role)
+                return ok(role, 201)
             if rest == ["resource"] and req.method == "PUT":
                 if s.legacy_pangolin:
                     return err("Not Found", 404)
@@ -1140,6 +1154,14 @@ class MockApp:
                 return ok(s.targets[tid], 201)
             if p[2:] == ["targets"]:
                 return ok({"targets": [t for t in s.targets.values() if t["resourceId"] == rid]})
+            if p[2:] == ["roles"]:
+                if req.method == "POST":
+                    if any(r["isAdmin"] for r in s.pg_roles if r["roleId"] in body.get("roleIds", [])):
+                        return err("Admin role cannot be assigned to resources")
+                    s.pg_resource_roles[rid] = list(body.get("roleIds", []))
+                    return ok({})
+                ids = s.pg_resource_roles.get(rid, [])
+                return ok({"roles": [{"roleId": r["roleId"], "name": r["name"]} for r in s.pg_roles if r["roleId"] in ids]})
         if p[0] == "idp":
             if s.pg_idp_forbidden:
                 return err("Key does not have permission", 403)

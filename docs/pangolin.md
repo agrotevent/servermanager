@@ -102,6 +102,25 @@ Unter *Infrastruktur → SSO → (authentik) → Anwendungen → Pangolin verbin
 als Identity Provider in Pangolin eingerichtet – Details unter [Anwendungen](apps.md#sso-mit-authentik).
 Dafür braucht die Pangolin-Verbindung einen Server-Admin-API-Schlüssel.
 
+Ist authentik verbunden, zeigt die Detailseite der Pangolin-Verbindung die Karte **Anmeldung über
+authentik** (Vollzugriff):
+
+- **authentik-Gruppen → Pangolin-Rollen:** In einer Tabelle ordnest du jeder authentik-Gruppe eine
+  Rolle der Organisation zu. Es zählt die erste passende Zeile von oben. Wer in keiner der Gruppen ist,
+  bekommt die **Standardrolle** (vorgegeben: *Member*). Der Servermanager schreibt daraus die
+  Organisationsrichtlinie des Identity Providers (*Server-Admin → Identity Provider →
+  Organisationsrichtlinien*) als JMESPath-Ausdruck. Die Zuordnung gilt ab der nächsten Anmeldung über
+  authentik. Sie bleibt im Servermanager gespeichert und wird beim erneuten Verbinden wieder gesetzt.
+- **Rolle anlegen:** neue Rolle der Organisation, z. B. passend zu einer authentik-Gruppe.
+- Pangolin **ohne Lizenz** vergibt je Benutzer nur eine Rolle, also die der ersten passenden Zeile.
+  Die Rolle *Admin* gibt volle Rechte in der Organisation.
+
+Auf der Seite eines veröffentlichten Dienstes legt die Karte **Zugriff (Rollen)** fest, welche Rollen
+den Dienst nach der Pangolin-Anmeldung öffnen dürfen (Vollzugriff). Administratoren dürfen immer. Das
+wirkt nur bei eingeschalteter Pangolin-Anmeldung, sonst ist der Dienst öffentlich (die Karte warnt
+dann). So bekommt z. B. die authentik-Gruppe `technik` über die Rolle *Technik* nur die
+Technik-Dienste.
+
 ## Zwei Pangolin-Server: primärer und Backup-Weg
 
 Es können mehrere Pangolin-Server eingebunden werden. Jeder bekommt eine **Rolle**:

@@ -163,8 +163,9 @@ Im Reiter *Anwendungen*:
   API-Adresse, ohne `api.` und Port). Der Servermanager legt in Pangolin einen OIDC-Identity-Provider
   an, in authentik die Anwendung mit der Rückruf-Adresse von Pangolin
   (`…/auth/idp/<ID>/oidc/callback`) und trägt danach Client-ID und Geheimnis in Pangolin ein. Neue
-  Benutzer werden beim ersten Login automatisch angelegt und der Organisation als *Member* zugeordnet
-  (Rolle in Pangolin unter *Server-Admin → Identity Provider → Organisationsrichtlinien* änderbar).
+  Benutzer werden beim ersten Login automatisch angelegt und der Organisation zugeordnet, als *Member*
+  oder mit der Rolle aus ihren authentik-Gruppen
+  ([Gruppen → Rollen](pangolin.md#anmeldung-uber-authentik-sso)).
   Der authentik-Login erscheint auf der Anmeldeseite von Pangolin und damit auch vor jedem Dienst mit
   aktivierter Pangolin-Anmeldung. **Voraussetzung:** Die Pangolin-Verbindung nutzt einen
   **Server-Admin-API-Schlüssel** mit Rechten für Identity Provider – ein Organisations-Schlüssel darf

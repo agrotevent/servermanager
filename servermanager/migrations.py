@@ -117,6 +117,12 @@ def _v12(conn: Connection) -> None:
     conn.execute(text("DELETE FROM group_access"))
 
 
+def _v13(conn: Connection) -> None:
+    # Pangolin: roles from authentik groups
+    if "pangolin_servers" in inspect(conn).get_table_names():
+        add_column_if_missing(conn, "pangolin_servers", "role_map", "TEXT")
+
+
 MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     1: lambda conn: None,  # initial schema
     2: _v2,
@@ -130,6 +136,7 @@ MIGRATIONS: dict[int, Callable[[Connection], None]] = {
     10: _v10,
     11: _v11,
     12: _v12,
+    13: _v13,
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 

@@ -313,6 +313,23 @@ class Pangolin:
     def delete_idp(self, idp_id: int) -> None:
         self._idp_request("DELETE", f"idp/{int(idp_id)}")
 
+    # ------------------------------------------------------------------ roles
+    def roles(self) -> list[dict]:
+        data = self.request("GET", f"org/{_seg(self.org)}/roles", params={"limit": 1000, "offset": 0}) or {}
+        rows = data.get("roles", []) if isinstance(data, dict) else (data or [])
+        return [r for r in rows if isinstance(r, dict) and r.get("orgId") in (None, self.org)]
+
+    def create_role(self, name: str, description: str = "") -> dict:
+        return self.request("PUT", f"org/{_seg(self.org)}/role", {"name": name, "description": description}) or {}
+
+    def resource_roles(self, resource_id: int) -> list[dict]:
+        data = self.request("GET", f"resource/{int(resource_id)}/roles") or {}
+        return data.get("roles", []) if isinstance(data, dict) else (data or [])
+
+    def set_resource_roles(self, resource_id: int, role_ids: list[int]) -> Any:
+        """Roles whose members may open the resource (with Pangolin authentication; admins always may)."""
+        return self.request("POST", f"resource/{int(resource_id)}/roles", {"roleIds": sorted({int(x) for x in role_ids})})
+
     def set_idp_org_policy(self, idp_id: int, role_mapping: str = "'Member'") -> Any:
         """Users provisioned through the IdP join this organization with the given role (JMESPath literal)."""
         return self._idp_request("PUT", f"idp/{int(idp_id)}/org/{_seg(self.org)}",
@@ -384,3 +401,20 @@ def backup_address(backup, primary_base: str, sub: str, backup_domains: dict[str
     base = backup_domains[domain_id]
     return {"domain_id": domain_id, "base": base, "subdomain": subdomain,
             "full": f"{subdomain}.{base}" if subdomain else base, "mapped": mapped}
+
+
+def _jq(value: str) -> str:
+    """JMESPath raw string literal."""
+    return "'" + str(value).replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def role_mapping_expression(rules: list[dict], default: str = "Member") -> str:
+    """JMESPath for the IdP organization policy: authentik group -> Pangolin role, in this order, the default
+    role last. Pangolin without a license takes only the first role of the list."""
+    parts = [f"contains(groups || `[]`, {_jq(r['group'])}) && [{_jq(r['role'])}] || `[]`"
+             for r in rules if r.get("group") and r.get("role")]
+    if not parts:
+        return _jq(default or "Member")
+    if default:
+        parts.append(f"[{_jq(default)}]")
+    return "[" + ", ".join(parts) + "][]"
