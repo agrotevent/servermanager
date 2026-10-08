@@ -2,6 +2,19 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.27.2 – 08.10.2026
+
+### Behoben
+
+- **Updates: Pakete, die apt zurückstufen würde (Nachtrag zu 1.25.1):** Unter Debian 13 (apt 3) zeigte
+  der Probelauf die Rückstufung nicht an. Deshalb blieb die Liste der zurückzuhaltenden Pakete leer, und
+  der Lauf brach weiter mit „Packages were downgraded …“ ab.
+  - Die Pakete kommen jetzt direkt aus der abgelehnten apt-Ausgabe („The following packages will be
+    DOWNGRADED“). Die Versionen liefern `dpkg` und `apt-cache policy`.
+  - Lässt sich trotzdem nichts bestimmen, steht der Probelauf zur Fehlersuche im Protokoll.
+- **Paketquellen:** Ein Fehler, den apt selbst durch einen erneuten Versuch behebt, gilt nicht mehr als
+  übersprungene Quelle.
+
 ## 1.27.1 – 08.10.2026
 
 ### Behoben

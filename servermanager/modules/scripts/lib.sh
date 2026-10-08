@@ -51,13 +51,25 @@ apt_update() {
 
 APT_KEY_ERRORS="NO_PUBKEY|Missing key|EXPKEYSIG|KEYEXPIRED|is not live|[Ee]xpired on|signing key .* is bad"
 
-# failing sources of an apt-get update output, one "url suite<TAB>reason" per line
+# failing sources of an apt-get update output, one "url suite<TAB>reason" per line. The last state of each
+# file counts: apt retries, and a later "Hit" or "Get ... [size]" means the file did arrive after all.
 apt_failed_repos() {
     awk '
-        /^Err:[0-9]+ / { if (key != "") print key "\t" reason; key = $2 " " $3; reason = ""; inerr = 1; next }
-        inerr && /^  / { r = $0; sub(/^ +/, "", r); reason = (reason == "" ? r : reason "; " r); next }
-        { inerr = 0 }
-        END { if (key != "") print key "\t" reason }
+        function flush() { if (cur != "") { reason[cur] = r; cur = "" } }
+        /^(Hit|Get|Err|Ign):[0-9]+ / {
+            flush()
+            item = $2 " " $3 " " $4
+            repo[item] = $2 " " $3
+            if ($1 ~ /^Err:/) { state[item] = "err"; cur = item; r = "" }
+            else if ($1 ~ /^Hit:/ || ($1 ~ /^Get:/ && $0 ~ /\]$/)) state[item] = "ok"
+            next
+        }
+        cur != "" && /^  / { line = $0; sub(/^ +/, "", line); r = (r == "" ? line : r "; " line); next }
+        { flush() }
+        END {
+            flush()
+            for (i in state) if (state[i] == "err") print repo[i] "\t" reason[i]
+        }
     ' "$1" | sort -u
 }
 
@@ -280,12 +292,35 @@ apt_downgrade_cause() {
     printf '%s' "${src:-Quelle unbekannt}"
 }
 
+# the same from the output of the refused run itself ("The following packages will be DOWNGRADED:", with
+# apt 3 also "DOWNGRADING:"): installed version from dpkg, offered one from the policy. Does not depend on a
+# dry run, whose plan can differ (apt 3 solver).
+apt_downgrades_from_output() {
+    local p cur new
+    printf '%s\n' "$1" | awk '
+        /^The following packages will be DOWNGRADED:/ || /^DOWNGRADING:/ { inlist = 1; next }
+        inlist && /^ / { for (i = 1; i <= NF; i++) if ($i ~ /^[a-z0-9][a-z0-9+.-]*(:[a-z0-9-]+)?$/) print $i; next }
+        { inlist = 0 }' | sort -u | while read -r p; do
+            cur="$(dpkg-query -W -f='${Version}' "$p" 2>/dev/null)" || continue
+            [ -n "$cur" ] || continue
+            new="$(LC_ALL=C apt-cache policy "$p" 2>/dev/null | awk '$1 == "Candidate:" { print $2; exit }')"
+            if [ -n "$new" ] && [ "$new" != "(none)" ] && dpkg --compare-versions "$new" lt "$cur"; then
+                printf '%s %s %s\n' "$p" "$cur" "$new"
+            fi
+        done
+}
+
 # apt refuses an upgrade because it would downgrade packages (pinning, removed repository):
 # keep exactly those packages for this run, install everything else and say why they stay
 apt_skip_downgrades() {
     local downs pkgs held p cur new rc
-    downs="$(apt_downgrades "$@")"
-    [ -n "$downs" ] || return 1
+    downs="$(apt_downgrades_from_output "$APT_LAST_OUT")"
+    [ -n "$downs" ] || downs="$(apt_downgrades "$@")"
+    if [ -z "$downs" ]; then
+        warn "Die betroffenen Pakete ließen sich nicht bestimmen – Probelauf zur Fehlersuche:"
+        LC_ALL=C apt-get -s "$@" --allow-downgrades 2>&1 | grep -E '^(Inst|Remv|E:|W:)' | head -n 30
+        return 1
+    fi
     held="$(apt-mark showhold 2>/dev/null | tr '\n' ' ')"
     pkgs=""
     while read -r p cur new; do

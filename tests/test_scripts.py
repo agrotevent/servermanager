@@ -231,3 +231,62 @@ def test_apt_update_checks_the_missing_fingerprint_with_gpg(tmp_path):
                          env={**env, "GNUPGHOME": str(tmp_path / "gnupg")})
     assert "enthält 8540A6F18833A80E9C1653A42FD21310B49F6B46 nicht – nicht übernommen" in res.stdout
     assert not nginx_kr.exists() and res.returncode == 0   # skipped like any other broken source
+
+
+def test_apt_run_skips_downgrade_named_only_in_the_refused_run(tmp_path):
+    """Report from Debian 13 (apt 3): the dry run does not show the downgrade, only the refused run names it."""
+    import os
+    b = tmp_path / "bin"
+    b.mkdir()
+    state = tmp_path / "held"
+    (b / "apt-get").write_text(f"""#!/bin/bash
+if [[ " $* " == *" -s "* ]]; then
+  echo "Inst liblzma5 [5.8.1-1] (5.8.1-1+deb13u1 Debian:13.1/stable [amd64])"   # no line for sgml-base
+  exit 0
+fi
+if grep -q sgml-base {state} 2>/dev/null; then echo "4 upgraded, 0 newly installed"; echo "upgraded rest"; exit 0; fi
+cat <<'OUT'
+The following packages will be upgraded:
+  liblzma5 redis-server redis-tools xz-utils
+The following packages will be DOWNGRADED:
+  sgml-base
+4 upgraded, 0 newly installed, 1 downgraded, 0 to remove and 0 not upgraded.
+E: Packages were downgraded and -y was used without --allow-downgrades.
+OUT
+exit 100
+""")
+    (b / "dpkg-query").write_text("#!/bin/bash\n[ \"${@: -1}\" = sgml-base ] && printf '1.31+nmu1' && exit 0\nexit 1\n")
+    (b / "apt-cache").write_text("#!/bin/bash\nprintf 'sgml-base:\\n  Installed: 1.31+nmu1\\n  Candidate: 1.31\\n"
+                                 "  Version table:\\n *** 1.31+nmu1 100\\n        100 /var/lib/dpkg/status\\n"
+                                 "     1.31 1001\\n       1001 http://deb.debian.org/debian bookworm/main amd64 Packages\\n'\n")
+    (b / "apt-mark").write_text(f"""#!/bin/bash
+case "$1" in
+  showhold) cat {state} 2>/dev/null ;;
+  hold) shift; printf '%s\\n' "$@" >> {state} ;;
+  unhold) shift; for p in "$@"; do sed -i "/^$p$/d" {state}; done ;;
+esac
+""")
+    for f in b.iterdir():
+        f.chmod(0o755)
+    env = {**os.environ, "PATH": f"{b}:{os.environ['PATH']}"}
+    lib = ROOT / "servermanager" / "modules" / "scripts" / "lib.sh"
+    res = subprocess.run(["bash", "-c", f"set -o pipefail; source {lib}; apt_run -y --with-new-pkgs upgrade || "
+                                        "apt_fail 'apt-get upgrade fehlgeschlagen'; echo SKIPPED=$APT_SKIPPED"],
+                         capture_output=True, text=True, env=env)
+    out = res.stdout
+    assert res.returncode == 0, out + res.stderr
+    assert "Nicht aktualisiert: sgml-base – apt würde von 1.31+nmu1 auf die ältere Version 1.31 zurückstufen" in out
+    assert "Priorität 1001 aus http://deb.debian.org/debian bookworm/main" in out
+    assert "upgraded rest" in out and "SKIPPED=sgml-base" in out and state.read_text().strip() == ""
+
+
+def test_apt_update_ignores_errors_apt_recovered_from(tmp_path):
+    """apt retries: an Err followed by a successful Get of the same file is not a broken source."""
+    out = tmp_path / "update.txt"
+    out.write_text("Get:3 file:/srv/repo ./ Packages\nErr:3 file:/srv/repo ./ Packages\n  Method gave a blank filename\n"
+                   "Get:3 file:/srv/repo ./ Packages [618 B]\n"
+                   "Get:4 http://nginx.org/packages/mainline/debian trixie InRelease [3294 B]\n"
+                   "Err:4 http://nginx.org/packages/mainline/debian trixie InRelease\n  Missing key ABC\n")
+    lib = ROOT / "servermanager" / "modules" / "scripts" / "lib.sh"
+    res = subprocess.run(["bash", "-c", f"source {lib}; apt_failed_repos {out}"], capture_output=True, text=True)
+    assert res.stdout == "http://nginx.org/packages/mainline/debian trixie\tMissing key ABC\n"

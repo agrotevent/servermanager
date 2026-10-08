@@ -52,7 +52,9 @@ zwei häufige Fälle selbst und versucht es dann noch einmal:
   - apt würde einzelne Pakete auf eine ältere Version zurückstufen. Das passiert meist durch
     APT-Pinning mit Priorität ≥ 1000 oder durch eine Paketquelle, die ältere Versionen anbietet.
   - Der Servermanager stuft nie automatisch herunter. Er hält genau diese Pakete für den Lauf fest,
-    installiert alle übrigen Updates und gibt die Pakete danach wieder frei.
+    installiert alle übrigen Updates und gibt die Pakete danach wieder frei. Welche Pakete betroffen
+    sind, liest er aus der Liste „The following packages will be DOWNGRADED“ der abgelehnten apt-Ausgabe
+    (ab 1.27.2, auch mit apt 3 unter Debian 13).
   - Im Protokoll steht je Paket, von welcher auf welche Version es zurückgestuft würde und warum, etwa
     die Pin-Datei unter `/etc/apt/preferences.d/` oder Priorität und Quelle der älteren Version.
   - Dauerhaft lösen: die Pin-Datei anpassen oder entfernen. Ist die ältere Version gewollt, einmal von
