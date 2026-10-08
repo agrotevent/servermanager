@@ -116,8 +116,10 @@ class IspConfig:
             self.login()
         return self._post(function, {"session_id": self.sid, **params})
 
-    def _all(self, function: str, **params) -> list[dict]:
-        res = self.call(function, primary_id=-1, **params)
+    def _all(self, function: str, id_param: str = "primary_id", **params) -> list[dict]:
+        """All records (id -1). json.php matches arguments by the PHP parameter name, which is not always
+        ``primary_id`` (client_get($session_id, $client_id))."""
+        res = self.call(function, **{id_param: -1}, **params)
         if isinstance(res, dict):
             res = [res] if res else []
         return [r for r in (res or []) if isinstance(r, dict)]
@@ -140,7 +142,7 @@ class IspConfig:
         return [r for r in (res or []) if isinstance(r, dict)]
 
     def clients(self) -> list[dict]:
-        return self._all("client_get")
+        return self._all("client_get", id_param="client_id")
 
     def websites(self) -> list[dict]:
         return [w for w in self._all("sites_web_domain_get") if w.get("type") in (None, "", "vhost")]

@@ -383,7 +383,11 @@ class MockApp:
         tables = {"client_get": "clients", "sites_web_domain_get": "sites", "mail_domain_get": "mail_domains",
                   "mail_user_get": "mail_users", "dns_zone_get": "dns", "sites_database_get": "dbs"}
         if function in tables:
-            return ok(st[tables[function]] if body.get("primary_id") == -1 else [])
+            # like json.php: arguments are matched by the PHP parameter name (client_get($session_id, $client_id))
+            key = "client_id" if function == "client_get" else "primary_id"
+            if not isinstance(body.get(key), (int, list, dict)):
+                return fail("The ID must be either an integer or an array.")
+            return ok(st[tables[function]] if body.get(key) == -1 else [])
         if function == "server_get_app_version":
             return ok({"ispc_app_version": "3.2.12p1", "ispc_app_version_major": "3"})
         if function == "server_get_all":

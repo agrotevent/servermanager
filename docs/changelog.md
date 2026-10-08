@@ -2,6 +2,13 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.19.2 – 08.10.2026
+
+### Behoben
+
+- ISPConfig: Die Abfrage der Kunden schlug mit „client_get: The ID must be either an integer or an
+  array.“ fehl. ISPConfig erwartet bei dieser Funktion den Parameter `client_id` statt `primary_id`.
+
 ## 1.19.1 – 08.10.2026
 
 ### Geändert
