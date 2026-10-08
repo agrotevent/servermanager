@@ -133,6 +133,20 @@ case "${SM_TASK}" in
         occ config:system:set user_oidc soft_auto_provision --type=boolean --value=true >/dev/null
         echo "SM_OK"
         ;;
+    oidc_groups)
+        # groups from authentik at every login: only the groups matching the whitelist are added and removed
+        [ -n "${SM_OIDC_ID:-}" ] || die "OIDC-Anbieter fehlt"
+        if [ "${SM_GROUP_PROVISIONING:-0}" = "1" ]; then
+            [ -n "${SM_GROUP_REGEX:-}" ] || die "Keine Gruppen gewählt"
+            log "Gruppen-Abgleich für Anbieter $SM_OIDC_ID einschalten"
+            occ user_oidc:provider "$SM_OIDC_ID" --mapping-groups=groups --group-provisioning=1 \
+                --group-whitelist-regex="$SM_GROUP_REGEX" >/dev/null || die "Gruppen-Abgleich nicht gesetzt (user_oidc zu alt?)"
+        else
+            log "Gruppen-Abgleich für Anbieter $SM_OIDC_ID ausschalten"
+            occ user_oidc:provider "$SM_OIDC_ID" --group-provisioning=0 >/dev/null || die "Gruppen-Abgleich nicht geändert"
+        fi
+        echo "SM_OK"
+        ;;
     oidc_remove)
         occ user_oidc:provider:delete "$SM_OIDC_ID" --force >/dev/null 2>&1 || \
             occ user_oidc:provider:delete "$SM_OIDC_ID" -f >/dev/null 2>&1 || true

@@ -52,6 +52,15 @@
       </form>
     </div>
 
+    <div class="card" id="modules">
+      <div class="card-head"><h2>Module</h2></div>
+      <form method="post" action="{{ url_for('admin.modules_save') }}" class="card-body">{{ csrf() }}
+        <p><small class="muted">Nicht genutzte Module verschwinden aus der Navigation unter „Infrastruktur“, aus der Hilfe und aus den Rechte-Formularen. Vorhandene Verbindungen, Rechte und Daten bleiben erhalten; eingeblendet ist alles sofort wieder da.</small></p>
+        <div class="flex" style="gap:14px;flex-wrap:wrap">{% for key, (label, _kinds, _help) in modules.items() %}<label class="check"><input type="checkbox" name="modules" value="{{ key }}" {{ 'checked' if key not in hidden_modules }}> {{ label }}</label>{% endfor %}</div>
+        <button class="btn primary mt-1">Speichern</button>
+      </form>
+    </div>
+
     <div class="card" id="checks">
       <div class="card-head"><h2>Prüfungen &amp; Jobs</h2></div>
       <form method="post" action="{{ url_for('admin.settings_save', section='checks') }}" class="card-body">{{ csrf() }}

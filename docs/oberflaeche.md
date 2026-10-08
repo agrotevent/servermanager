@@ -59,6 +59,17 @@ in einem unvollständigen Zustand hinterlassen – danach die Aktion *dpkg/apt r
 Diese Hilfe wird mit dem Programm ausgeliefert und bei jedem Update des Servermanagers aktualisiert.
 Die Änderungen je Version stehen im [Änderungsprotokoll](changelog.md).
 
+## Module ausblenden
+
+Unter *Einstellungen → Module* blenden Administratoren Module aus, die nicht genutzt werden. Sie
+verschwinden dann aus der Navigation unter *Infrastruktur*, aus der Hilfe und aus den Rechte-Formularen
+von Benutzern und Gruppen. Vorhandene Verbindungen, Rechte und Daten bleiben erhalten. Ein Modul, das
+schon Verbindungen hat, bleibt in den Rechte-Formularen, damit seine Rechte weiter einstellbar sind.
+Eingeblendet ist alles sofort wieder da.
+
+**Zabbix ist ab Werk ausgeblendet.** Der Menüpunkt *Tickets* erscheint dann nur, solange es offene
+Tickets gibt.
+
 ## Erscheinungsbild (Corporate Design)
 
 Standardmäßig erscheint die Oberfläche im Setnetz-Corporate-Design:

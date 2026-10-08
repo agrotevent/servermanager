@@ -136,7 +136,8 @@ class State:
         # ---------------- mailcow
         self.mc_domains = [{"domain_name": "example.com", "active": 1, "mboxes_in_domain": 1, "aliases_in_domain": 0}]
         self.mc_mailboxes = [{"username": "info@example.com", "name": "Info", "domain": "example.com",
-                              "local_part": "info", "active": 1, "quota": 1073741824, "quota_used": 1024}]
+                              "local_part": "info", "active": 1, "quota": 1073741824, "quota_used": 1024,
+                              "authsource": "mailcow"}]
         self.mc_aliases: list[dict] = []
         self.mc_idp: dict = {}
         # ---------------- authentik
@@ -1219,7 +1220,7 @@ class MockApp:
             s.mc_mailboxes.append({"username": addr, "name": body.get("name"), "domain": body["domain"],
                                    "local_part": body["local_part"], "active": int(body.get("active", 1)),
                                    "quota": int(body.get("quota", 0)) * 1024 * 1024, "quota_used": 0,
-                                   "_password": body["password"]})
+                                   "authsource": "mailcow", "_password": body["password"]})
             return ok(["mailbox_added", addr])
         if path == "edit/mailbox":
             for m in s.mc_mailboxes:
@@ -1235,6 +1236,10 @@ class MockApp:
                         m["quota"] = int(attr["quota"]) * 1024 * 1024
                     if "name" in attr:
                         m["name"] = attr["name"]
+                    if "authsource" in attr:
+                        if attr["authsource"] not in ("mailcow", "keycloak", "generic-oidc", "ldap"):
+                            return danger(["invalid_authsource", attr["authsource"]])
+                        m["authsource"] = attr["authsource"]
             return ok(["mailbox_modified"])
         if path == "delete/mailbox":
             s.mc_mailboxes = [m for m in s.mc_mailboxes if m["username"] not in body]

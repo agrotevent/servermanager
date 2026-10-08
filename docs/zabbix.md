@@ -1,5 +1,8 @@
 # Zabbix & Tickets
 
+> Das Modul ist ab Werk **ausgeblendet**. Einblenden unter *Einstellungen → Module → Zabbix & Tickets*
+> ([Module ausblenden](oberflaeche.md#module-ausblenden)).
+
 Unter **Infrastruktur → Zabbix** wird ein Zabbix-Server (6.0 LTS bis 7.x) angebunden. Der
 Servermanager richtet auf den verwalteten Systemen den **Zabbix-Agent 2** mit PSK-Verschlüsselung ein,
 legt die Hosts in Zabbix an und macht aus Problemen **Tickets**, die im Servermanager bearbeitet und an

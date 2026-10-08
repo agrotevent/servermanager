@@ -2,6 +2,25 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.25.0 – 08.10.2026
+
+### Neu
+
+- **Konten verknüpfen** (*SSO → Benutzer → Konten verknüpfen*): authentik-Konten, Nextcloud-Konten und
+  Mailcow-Postfächer je Person nebeneinander, gefunden über Benutzername oder E-Mail-Adresse. Per Auswahl
+  legt der Servermanager fehlende authentik-Konten an, gleicht Benutzername und E-Mail an, überträgt
+  die Nextcloud-Gruppen nach authentik und stellt Postfächer auf die Anmeldung über authentik um.
+  Danach landet die Anmeldung über authentik im bestehenden Konto mit den bisherigen Gruppen.
+- **Gruppen-Abgleich für die Nextcloud:** Auf Wunsch übernimmt die Nextcloud bei jeder Anmeldung die
+  gewählten Gruppen aus authentik.
+- **Module ausblenden** unter *Einstellungen → Module*: nicht genutzte Module verschwinden aus
+  Navigation, Hilfe und Rechte-Formularen.
+
+### Geändert
+
+- **Zabbix** ist ab Werk ausgeblendet, weil es nicht eingesetzt wird. Verbindungen und Daten bleiben,
+  einblenden geht unter *Einstellungen → Module*.
+
 ## 1.24.0 – 08.10.2026
 
 ### Neu

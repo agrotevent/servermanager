@@ -45,7 +45,7 @@
       <div class="field"><label>Passwort</label><input type="password" name="password" placeholder="leer = zufällig" autocomplete="new-password"></div>
       <label class="check"><input type="checkbox" name="force_pw_update" value="1"> Passwort bei erster Anmeldung ändern</label>
       <button class="btn primary">Anlegen</button></form>
-    {% if sso %}<small class="muted">Mit SSO melden sich Benutzer über authentik an; für IMAP/SMTP-Programme bleibt das Postfach-Passwort bzw. App-Passwort nötig.</small>{% endif %}
+    {% if sso %}<small class="muted">Mit SSO melden sich Benutzer über authentik an. Postfächer, die auf die Anmeldung über authentik umgestellt sind, brauchen für IMAP/SMTP-Programme ein App-Passwort.</small>{% endif %}
   </div>
   <dialog class="modal" id="mb-edit" aria-labelledby="mb-edit-title">
     <form method="post" action="{{ url_for('mailcow.do', mc_id=m.id) }}">{{ csrf() }}<input type="hidden" name="action" value="mb_edit"><input type="hidden" name="address" value="">
@@ -112,7 +112,7 @@
     {% if pangolin and publish.ip %}<a class="btn" href="{{ url_for('pangolin.publish', pg_id=pangolin.id, **publish) }}"><svg class="icon"><use href="#i-cloud"/></svg>Über {{ pangolin.name }} veröffentlichen</a>{% endif %}
     <p class="mt-1"><small>Ohne Pangolin-Anmeldung veröffentlichen – Mailcow meldet selbst an (bzw. über SSO), ActiveSync/CalDAV-Clients müssen durchkommen.</small></p>
     <h4 class="mt-2">SSO</h4>
-    {% if sso %}<p><span class="badge success">verbunden</span> <a href="{{ url_for('sso.detail', sso_id=sso.sso_id) }}">SSO-Verbindung</a></p>{% else %}<p class="muted">Nicht verbunden – unter <a href="{{ url_for('sso.index') }}">SSO</a> per Klick verbinden.</p>{% endif %}
+    {% if sso %}<p><span class="badge success">verbunden</span> <a href="{{ url_for('sso.detail', sso_id=sso.sso_id) }}">SSO-Verbindung</a> · <a href="{{ url_for('sso.account_link', sso_id=sso.sso_id, mc=m.id) }}">Postfächer mit authentik-Konten verknüpfen …</a></p>{% else %}<p class="muted">Nicht verbunden – unter <a href="{{ url_for('sso.index') }}">SSO</a> per Klick verbinden.</p>{% endif %}
   </div></div>
 </div>
 {% endif %}

@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% set help_page = "apps" %}
+{% from "_macros.html" import csrf, empty with context %}
+{% block title %}Konten verknüpfen · {{ s.name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>Konten verknüpfen</h1>
+  <p>authentik <a href="{{ url_for('sso.detail', sso_id=s.id, tab='users') }}">{{ s.name }}</a> mit den bestehenden Konten in Nextcloud und Mailcow</p></div></div>
+
+<div class="card"><div class="card-body">
+  <form method="get" class="inline-form">
+    <div class="field"><label for="f-nc">Nextcloud</label>
+      <select id="f-nc" name="nc"><option value="">– keine –</option>{% for k, l in nc_sources %}<option value="{{ k }}" {{ 'selected' if k == nc_src }}>{{ l }}</option>{% endfor %}</select></div>
+    <div class="field"><label for="f-mc">Mailcow</label>
+      <select id="f-mc" name="mc"><option value="">– keine –</option>{% for x in mailcows %}<option value="{{ x.id }}" {{ 'selected' if x.id|string == mc_raw }}>{{ x.name }}</option>{% endfor %}</select></div>
+    <button class="btn">Abgleichen</button></form>
+  {% if not nc_sources and not mailcows %}<p class="muted mt-1">Keine Nextcloud und keine Mailcow verfügbar.</p>{% endif %}
+</div></div>
+
+{% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+
+{% if result %}
+<div class="card"><div class="card-head"><h2>Ergebnis</h2></div><div class="card-body">
+  <p>{% for k, n in result.done.items() if n %}{{ fixes[k] }}: {{ n }}{{ ' · ' if not loop.last }}{% else %}Nichts geändert.{% endfor %}{% if result.groups_created %} · neue Gruppen: {{ result.groups_created|join(', ') }}{% endif %}{% if result.skipped %} · {{ result.skipped }} weitere beim nächsten Durchgang{% endif %}</p>
+  {% if result.errors %}<div class="alert warning"><div>{% for e in result.errors %}<div>{{ e }}</div>{% endfor %}</div></div>{% endif %}
+  {% if result.passwords %}
+    <div class="alert warning"><div><strong>Startpasswörter – werden nur jetzt angezeigt.</strong> Bitte sicher weitergeben; in authentik lassen sie sich danach ändern.</div></div>
+    <div class="table-wrap"><table class="table compact"><thead><tr><th>Benutzer</th><th>Passwort</th></tr></thead><tbody>
+      {% for uid, pw in result.passwords %}<tr><td class="mono">{{ uid }}</td><td class="mono">{{ pw }}</td></tr>{% endfor %}</tbody></table></div>
+    <textarea id="link-pw-text" class="hidden" readonly>{% for uid, pw in result.passwords %}{{ uid }}	{{ pw }}
+{% endfor %}</textarea>
+    <button type="button" class="btn mt-1" data-copy="#link-pw-text">Liste kopieren</button>
+  {% endif %}
+</div></div>
+{% endif %}
+
+{% if data %}{% set plan = data.plan %}{% set c = plan.counts %}
+<div class="alert info"><div>
+  <strong>So finden die Anwendungen das bestehende Konto:</strong> Die Nextcloud nimmt den authentik-Benutzernamen als Nextcloud-ID und übernimmt ein vorhandenes Konto mit Dateien, Freigaben und Gruppen. Die Mailcow nimmt die E-Mail-Adresse aus authentik als Postfach – das Postfach muss dafür auf die Anmeldung über authentik umgestellt sein.
+  Gefunden wird je Person über den Benutzernamen, sonst über die E-Mail-Adresse. Es wird nichts gelöscht.
+  {% if data.system and not data.nc_sync %}<br>Die Nextcloud {{ data.nc_label }} ist noch nicht über authentik angebunden – das geht auf der <a href="{{ url_for('sso.detail', sso_id=s.id) }}">SSO-Seite</a>.{% endif %}
+  {% if data.mc and not data.idp %}<br>In der Mailcow {{ data.mc.name }} ist noch kein Identity Provider eingerichtet – auf der <a href="{{ url_for('sso.detail', sso_id=s.id) }}">SSO-Seite</a> verbinden.{% endif %}
+</div></div>
+
+<form method="post" data-confirm="Ausgewählte Konten jetzt verknüpfen?">{{ csrf() }}<input type="hidden" name="nc" value="{{ nc_src }}"><input type="hidden" name="mc" value="{{ mc_raw }}">
+<div class="card"><div class="card-head"><h2>Was soll passieren?</h2><small class="muted">{{ c.ok }} Konto/Konten schon verknüpft</small></div><div class="card-body">
+  <label class="check"><input type="checkbox" name="fixes" value="create" checked> {{ fixes.create }} ({{ c.create }}) <small class="muted">– aus Nextcloud-ID bzw. Postfach-Adresse, mit Zufallspasswort (wird einmal angezeigt)</small></label>
+  {% if user.is_admin %}<label class="check"><input type="checkbox" name="fixes" value="rename"> {{ fixes.rename }} ({{ c.rename }}) <small class="muted">– wenn nur die E-Mail passt; die Anmeldung bei authentik geht danach mit dem neuen Namen</small></label>{% endif %}
+  <label class="check"><input type="checkbox" name="fixes" value="email" checked> {{ fixes.email }} ({{ c.email }}) <small class="muted">– Postfach gefunden über die E-Mail in der Nextcloud</small></label>
+  <label class="check"><input type="checkbox" name="fixes" value="groups" checked> {{ fixes.groups }} ({{ c.groups }}) <small class="muted">– fehlende Gruppen werden angelegt; die Gruppe „admin“ nur durch Administratoren, ohne Sonderrechte in authentik</small></label>
+  {% if data.mc %}{% set mc_full = int_can('mailcow', data.mc.id, 'full') %}
+  <label class="check"><input type="checkbox" name="fixes" value="authsource" {{ 'disabled' if not mc_full or not data.idp }}> {{ fixes.authsource }} ({{ c.authsource }}) <small class="muted">– Anmeldequelle des Postfachs auf {{ data.idp or 'den Identity Provider' }}{% if not mc_full %}; braucht Vollzugriff auf die Mailcow{% endif %}</small></label>
+  <div class="alert warning mt-1"><div><strong>Vor dem Umstellen der Postfächer:</strong> Danach melden sich die Personen an der Mailcow-Oberfläche nur noch über authentik an. Mailprogramme (IMAP/SMTP, Handy) brauchen dann ein <em>App-Passwort</em> aus der Mailcow statt des bisherigen Postfach-Passworts. Am besten zuerst mit einem Postfach ausprobieren.</div></div>
+  {% endif %}
+  <button class="btn primary mt-1">Ausgewählte verknüpfen</button>
+</div></div>
+
+<div class="card"><div class="card-head"><h2>Konten</h2><input type="search" placeholder="Suchen …" data-filter-list="#link-rows tbody tr" style="max-width:220px"></div>
+  <div class="table-wrap"><table class="table compact" id="link-rows"><thead><tr><th><input type="checkbox" data-check-all="input[name=rows]:not(:disabled)" aria-label="alle"></th><th>authentik</th>{% if data.nc_users is not none %}<th>Nextcloud</th>{% endif %}{% if data.mc %}<th>Mailcow</th>{% endif %}<th>Zu tun</th></tr></thead><tbody>
+  {% for r in plan.rows %}{% set ak, nc, mb = r.ak, r.nc, r.mb %}
+    <tr><td><input type="checkbox" name="rows" value="{{ r.key }}" {{ 'checked' if r.fixes }} {{ 'disabled' if not r.fixes }} aria-label="auswählen"></td>
+      <td>{% if ak %}<strong>{{ ak.username }}</strong><span class="sub">{{ ak.name }}{% if ak.email %} · {{ ak.email }}{% endif %}{% if not ak.is_active %} · deaktiviert{% endif %}</span>{% else %}<span class="muted">–</span>{% endif %}</td>
+      {% if data.nc_users is not none %}<td>{% if nc %}<strong>{{ nc.uid }}</strong>{% if r.nc_how == 'email' %} <span class="badge warning">nur E-Mail gleich</span>{% endif %}<span class="sub">{{ nc.groups|join(', ') }}{% if not nc.enabled %} · gesperrt{% endif %}</span>{% else %}<span class="muted">{{ 'wird bei der ersten Anmeldung angelegt' if ak else '–' }}</span>{% endif %}</td>{% endif %}
+      {% if data.mc %}<td>{% if mb %}<strong>{{ mb.username }}</strong>{% set src = mb.authsource or 'mailcow' %}<span class="sub">Anmeldung: {{ 'authentik' if src == data.idp and data.idp else src }}</span>{% else %}<span class="muted">–</span>{% endif %}</td>{% endif %}
+      <td>{% for f in r.fixes %}<div><span class="badge info">{{ fixes[f] }}</span>
+          {% if f == 'groups' %}<small>{{ r.groups_missing|join(', ') }}</small>{% elif f == 'email' %}<small>{{ ak.email or '–' }} → {{ mb.username }}</small>{% elif f == 'rename' %}<small>{{ ak.username }} → {{ nc.uid }}</small>{% elif f == 'authsource' %}<small>{{ r.mb_authsource }} → {{ r.authsource_to }}</small>{% elif f == 'create' %}<small>{{ nc.uid if r.create_from == 'nc' else mb.username }}</small>{% endif %}</div>
+        {% else %}{% if ak and (nc or mb) and not r.notes %}<span class="badge success">verknüpft</span>{% endif %}{% endfor %}
+        {% for n in r.notes %}<div><small class="muted">{{ n }}</small></div>{% endfor %}</td></tr>
+  {% else %}<tr><td colspan="5" class="muted">Keine Konten.</td></tr>{% endfor %}</tbody></table></div>
+</div>
+</form>
+
+{% if data.nc_sync %}{% set ns = data.nc_sync %}
+<div class="card" id="nc-sync"><div class="card-head"><h2>Nextcloud-Gruppen bei der Anmeldung abgleichen</h2>{% if ns.state.on %}<span class="badge success">eingeschaltet</span>{% else %}<span class="badge">aus</span>{% endif %}</div><div class="card-body">
+  <p><small class="muted">Eingeschaltet übernimmt die Nextcloud bei jeder Anmeldung über authentik die Gruppen aus authentik – aber nur die hier gewählten: Wer in authentik in der Gruppe ist, kommt in der Nextcloud hinein, wer nicht drin ist, wird dort entfernt. Andere Gruppen in der Nextcloud bleiben unberührt. Deshalb zuerst die Gruppen oben übernehmen. Zur Wahl stehen Gruppen, die es in authentik unter genau demselben Namen gibt.</small></p>
+  {% if ns.inexact %}<div class="alert warning"><div>Schreibweise in authentik abweichend, daher nicht wählbar: {{ ns.inexact|join(', ') }}</div></div>{% endif %}
+  {% if ns.may %}
+  <form method="post" action="{{ url_for('sso.nc_group_sync', sso_id=s.id) }}" data-confirm="Gruppen-Abgleich in der Nextcloud ändern?">{{ csrf() }}<input type="hidden" name="nc" value="{{ nc_src }}"><input type="hidden" name="mc" value="{{ mc_raw }}">
+    <div class="flex" style="gap:14px;flex-wrap:wrap">{% for gr in ns.groups %}<label class="check"><input type="checkbox" name="groups" value="{{ gr }}" {{ 'checked' if (gr in (ns.state.groups or [])) or (not ns.state and gr != ns.admin_group) }}> {{ gr }}</label>{% else %}<span class="muted">Keine passenden Gruppen – zuerst „{{ fixes.groups }}“ ausführen.</span>{% endfor %}</div>
+    <div class="flex mt-1" style="gap:8px">{% if ns.groups %}<button class="btn primary" name="action" value="on">{{ 'Abgleich speichern' if ns.state.on else 'Abgleich einschalten' }}</button>{% endif %}
+      {% if ns.state.on %}<button class="btn" name="action" value="off">Ausschalten</button>{% endif %}</div>
+  </form>
+  {% else %}<p class="muted">Ändern braucht Vollzugriff auf das System {{ data.system.name }}.</p>{% endif %}
+</div></div>
+{% endif %}
+{% endif %}
+{% endblock %}

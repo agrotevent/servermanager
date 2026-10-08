@@ -29,6 +29,8 @@ DEFAULTS: dict[str, Any] = {
     "brand.logo_light_type": "",
     "brand.font_data": "",
     "brand.font_type": "",
+    # modules left out of the navigation, the help and the rights forms (Einstellungen → Module)
+    "ui.hidden_modules": ["zabbix"],
     # login through the SSO (authentik)
     "login.sso_auto_create": False,      # unknown SSO users are created (role user, no rights)
     "login.sso_group": "",               # only members of this authentik group may log in
@@ -161,3 +163,34 @@ def coerce(key: str, raw: Any) -> Any:
 def base_url(db: Session) -> str:
     from .config import get_config
     return (get(db, "general.base_url") or get_config().base_url).rstrip("/")
+
+
+# modules that can be hidden: key -> (label, integration kinds, help page)
+HIDEABLE_MODULES: dict[str, tuple[str, tuple[str, ...], str]] = {
+    "pve": ("Proxmox", ("pve",), "proxmox"),
+    "router": ("RouterOS", ("router",), "routeros"),
+    "pangolin": ("Pangolin", ("pangolin",), "pangolin"),
+    "nextcloud": ("Nextcloud (Schnittstelle)", ("nextcloud",), ""),
+    "mailcow": ("Mailcow", ("mailcow",), ""),
+    "ispconfig": ("ISPConfig", ("ispconfig",), "ispconfig"),
+    "zammad": ("Zammad", ("zammad",), "zammad"),
+    "zabbix": ("Zabbix & Tickets", ("zabbix",), "zabbix"),
+    "pbx": ("Telefonie (Asterisk/FreePBX)", ("pbx",), "telefonie"),
+    "hetzner": ("Hetzner", ("hetzner", "hetzner_srv", "hcloud", "hcloud_srv"), "hetzner"),
+    "easybell": ("easybell", ("easybell",), "easybell"),
+    "dns": ("DNS & Domains", ("dns",), "dns"),
+    "sso": ("SSO (authentik)", ("sso",), ""),
+}
+
+
+def hidden_modules(db: Session) -> set[str]:
+    raw = get(db, "ui.hidden_modules")
+    return {x for x in (raw if isinstance(raw, list) else []) if x in HIDEABLE_MODULES}
+
+
+def hidden_kinds(db: Session) -> set[str]:
+    return {k for m in hidden_modules(db) for k in HIDEABLE_MODULES[m][1]}
+
+
+def hidden_help_pages(db: Session) -> set[str]:
+    return {HIDEABLE_MODULES[m][2] for m in hidden_modules(db) if HIDEABLE_MODULES[m][2]}

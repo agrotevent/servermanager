@@ -169,7 +169,10 @@
     <small class="muted">In verbundenen Nextclouds entsteht das Konto automatisch beim ersten Login über SSO.</small>
     <h4 class="mt-2">Aus Nextcloud übernehmen</h4>
     <p><small class="muted">Gruppen und vorhandene Benutzer einer Nextcloud in authentik anlegen – mit Vorschau. Danach landen die Benutzer beim Login über authentik in ihrem bestehenden Nextcloud-Konto.</small></p>
-    <a class="btn" href="{{ url_for('sso.nc_import', sso_id=s.id) }}">Nextcloud-Benutzer übernehmen …</a></div>
+    <a class="btn" href="{{ url_for('sso.nc_import', sso_id=s.id) }}">Nextcloud-Benutzer übernehmen …</a>
+    <h4 class="mt-2">Bestehende Konten verknüpfen</h4>
+    <p><small class="muted">authentik-Benutzer, Nextcloud-Konten und Mailcow-Postfächer je Person nebeneinander: fehlende Konten, abweichende Namen oder E-Mail-Adressen, fehlende Gruppen und die Anmeldequelle der Postfächer – mit Vorschau und Auswahl.</small></p>
+    <a class="btn" href="{{ url_for('sso.account_link', sso_id=s.id) }}">Konten verknüpfen …</a></div>
   {% endif %}
 </div>
 {% endif %}

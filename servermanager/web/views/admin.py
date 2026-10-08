@@ -50,7 +50,21 @@ def settings_page():
     brand_v["has_font"] = bool(settings.get(g.db, "brand.font_data"))
     return render_template("admin/settings.html", v=values, sm_pubkey=sshkeys.public_key(), timezones=tzs,
                            mail_ok=notify.mail_configured(g.db), cfg=get_config(), bv=brand_v,
-                           font_labels=branding.FONT_LABELS)
+                           font_labels=branding.FONT_LABELS, modules=settings.HIDEABLE_MODULES,
+                           hidden_modules=settings.hidden_modules(g.db))
+
+
+@bp.post("/settings/modules")
+@admin_required
+def modules_save():
+    """Modules not in use are left out of the navigation (their pages and data stay)."""
+    shown = set(request.form.getlist("modules"))
+    hidden = sorted(k for k in settings.HIDEABLE_MODULES if k not in shown)
+    settings.set(g.db, "ui.hidden_modules", hidden)
+    audit(g.db, g.user, "settings.modules", "ausgeblendet: " + (", ".join(hidden) or "keine"), ip=client_ip())
+    g.db.commit()
+    flash("Module gespeichert.", "success")
+    return redirect(url_for("admin.settings_page") + "#modules")
 
 
 @bp.post("/settings/<section>")

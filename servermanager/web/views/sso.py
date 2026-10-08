@@ -464,3 +464,124 @@ def nc_import(sso_id: int):
     except AuthentikError as exc:
         ctx["error"] = str(exc)
     return render_template("sso/nc_import.html", **ctx)
+
+
+# --------------------------------------------------------------------------
+# link existing accounts: authentik <-> Nextcloud <-> Mailcow
+# --------------------------------------------------------------------------
+def _mc_sources() -> list[MailcowServer]:
+    return [x for x in g.db.execute(select(MailcowServer).order_by(MailcowServer.name)).scalars()
+            if common.can(KIND_MAILCOW, x.id, LEVEL_VIEW)]
+
+
+def _nc_sso_client(s: SsoServer, system) -> SsoClient | None:
+    if system is None:
+        return None
+    return g.db.execute(select(SsoClient).where(SsoClient.sso_id == s.id, SsoClient.target_kind == "nextcloud",
+                                                SsoClient.target_id == system.id)).scalars().first()
+
+
+def _link_data(s: SsoServer, au, nc_src: str, mc_raw: str) -> dict:
+    """Accounts of the chosen sources and the plan (reads only)."""
+    from ... import account_link as al
+    from ... import nc_import as imp
+    out: dict = {"nc_label": "", "nc_users": None, "nc_groups": [], "system": None, "mc": None, "mailcow": None,
+                 "mailboxes": [], "idp": ""}
+    if nc_src:
+        out["nc_label"], out["nc_users"], out["nc_groups"], out["system"] = _nc_source(nc_src)
+    if mc_raw:
+        if not mc_raw.isdigit():
+            abort(400)
+        out["mc"] = common.get_or_403(KIND_MAILCOW, int(mc_raw), LEVEL_VIEW)
+        out["mailcow"] = integrations.mailcow_client(out["mc"])
+        out["mailboxes"] = out["mailcow"].mailboxes()
+        idp = str((out["mailcow"].identity_provider() or {}).get("authsource") or "")
+        out["idp"] = idp if idp in ("generic-oidc", "keycloak") else ""
+    ak_groups = au.groups()
+    out["plan"] = al.plan(au.users(), ak_groups, out["nc_users"], out["mailboxes"], out["idp"], g.user.is_admin)
+    nc_client = _nc_sso_client(s, out["system"])
+    out["nc_sync"] = None
+    if nc_client is not None:
+        state = settings.get(g.db, f"sso.nc_groups.{nc_client.id}") or {}
+        out["nc_sync"] = {"client": nc_client, "state": state,
+                          "may": can(out["system"].id, LEVEL_FULL),
+                          "groups": al.syncable_groups(out["nc_groups"], ak_groups, include_admin=g.user.is_admin),
+                          "inexact": sorted({x for x in out["nc_groups"]
+                                             if x not in {str(y.get("name")) for y in ak_groups}
+                                             and x.lower() in {str(y.get("name") or "").lower() for y in ak_groups}}),
+                          "admin_group": imp.ADMIN_GROUP}
+    return out
+
+
+@bp.route("/<int:sso_id>/link", methods=["GET", "POST"])
+@login_required
+def account_link(sso_id: int):
+    from ... import account_link as al
+    s = _get(sso_id, LEVEL_FULL)
+    nc_src, mc_raw = request.values.get("nc", ""), request.values.get("mc", "")
+    ctx: dict = {"s": s, "nc_src": nc_src, "mc_raw": mc_raw, "nc_sources": nc_sources(), "mailcows": _mc_sources(),
+                 "fixes": al.FIXES, "data": None, "result": None, "error": None}
+    if not nc_src and not mc_raw:
+        return render_template("sso/link.html", **ctx)
+    try:
+        au = _client(s)
+        data = _link_data(s, au, nc_src, mc_raw)
+        if request.method == "POST":
+            kinds = set(request.form.getlist("fixes")) & set(al.FIXES)
+            if "authsource" in kinds and not (data["mc"] and common.can(KIND_MAILCOW, data["mc"].id, LEVEL_FULL)):
+                raise AuthentikError("Postfächer umstellen braucht Vollzugriff auf die Mailcow")
+            keys = set(request.form.getlist("rows"))
+            result = al.apply(au, data["mailcow"], data["plan"]["rows"], keys, kinds)
+            done = ", ".join(f"{al.FIXES[k]}: {n}" for k, n in result["done"].items() if n) or "nichts"
+            audit(g.db, g.user, "sso.account_link", s.name,
+                  f"{data['nc_label'] or '-'} / {data['mc'].name if data['mc'] else '-'}: {done}", ip=client_ip())
+            g.db.commit()
+            ctx["result"] = result
+            data = _link_data(s, au, nc_src, mc_raw)
+        ctx["data"] = data
+    except (AuthentikError, MailcowError, ValueError) as exc:
+        ctx["error"] = str(exc)
+    return render_template("sso/link.html", **ctx)
+
+
+@bp.post("/<int:sso_id>/link/nc-groups")
+@login_required
+def nc_group_sync(sso_id: int):
+    """Nextcloud takes the groups from authentik at every login (user_oidc group provisioning)."""
+    from ... import account_link as al
+    from ... import inventory
+    from ...modules.nextcloud import occ_task
+    from ...ssh import SSHError
+    s = _get(sso_id, LEVEL_FULL)
+    nc_src, mc_raw = request.form.get("nc", ""), request.form.get("mc", "")
+    back = redirect(url_for("sso.account_link", sso_id=sso_id, nc=nc_src, mc=mc_raw or None) + "#nc-sync")
+    try:
+        au = _client(s)
+        _label, _users, nc_groups, system = _nc_source(nc_src)
+        client_row = _nc_sso_client(s, system)
+        if client_row is None:
+            raise AuthentikError("Diese Nextcloud ist nicht über diese SSO-Verbindung angebunden")
+        if not can(system.id, LEVEL_FULL):
+            abort(403)
+        on = request.form.get("action") == "on"
+        groups = []
+        if on:
+            allowed = set(al.syncable_groups(nc_groups, au.groups(), include_admin=g.user.is_admin))
+            groups = sorted(set(request.form.getlist("groups")) & allowed, key=str.lower)
+            if not groups:
+                raise AuthentikError("Mindestens eine Gruppe wählen")
+        env = {"SM_OIDC_ID": sso_lib.provider_id(s), "SM_GROUP_PROVISIONING": "1" if on else "0",
+               "SM_GROUP_REGEX": al.group_whitelist_regex(groups)}
+        with inventory.connect(system) as conn:
+            out = occ_task(conn, system, "oidc_groups", env, timeout=120)
+        if "SM_OK" not in out:
+            raise AuthentikError((out.strip().splitlines() or ["Nextcloud meldet keinen Erfolg"])[-1][:300])
+        settings.set(g.db, f"sso.nc_groups.{client_row.id}", {"on": on, "groups": groups})
+        audit(g.db, g.user, "sso.nc_group_sync", s.name, f"{system.name}: {'an' if on else 'aus'} {groups}"[:500],
+              ip=client_ip())
+        g.db.commit()
+        flash(f"Gruppen-Abgleich eingeschaltet ({len(groups)} Gruppe(n)). Er wirkt bei der nächsten Anmeldung."
+              if on else "Gruppen-Abgleich ausgeschaltet. Die Gruppen in der Nextcloud bleiben, wie sie sind.", "success")
+    except (AuthentikError, SSHError, OSError) as exc:
+        flash(f"Fehlgeschlagen: {exc}", "danger")
+    return back

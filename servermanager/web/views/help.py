@@ -8,7 +8,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import markdown
-from flask import Blueprint, abort, render_template, request, url_for
+from flask import Blueprint, abort, g, render_template, request, url_for
 from markupsafe import Markup
 
 from ..auth import login_required
@@ -81,9 +81,16 @@ def _last_change(slug: str, mtime: float) -> str:
     return datetime.fromtimestamp(mtime).strftime("%d.%m.%Y")
 
 
+def _pages() -> list[tuple[str, str, str]]:
+    """Pages without those of hidden modules (still reachable through links)."""
+    from ... import settings
+    hidden = settings.hidden_help_pages(g.db) if g.get("db") is not None else set()
+    return [p for p in PAGES if p[0] not in hidden]
+
+
 def _nav() -> list[tuple[str, list[tuple[str, str]]]]:
     sections: dict[str, list[tuple[str, str]]] = {}
-    for slug, title, section in PAGES:
+    for slug, title, section in _pages():
         sections.setdefault(section, []).append((slug, title))
     return list(sections.items())
 
@@ -97,9 +104,11 @@ def page(slug: str = "index"):
         abort(404)
     mtime = path.stat().st_mtime
     body, toc = _render(slug, mtime)
-    idx = [s for s, _, _ in PAGES].index(slug)
-    prev_page = PAGES[idx - 1] if idx > 0 else None
-    next_page = PAGES[idx + 1] if idx + 1 < len(PAGES) else None
+    pages = _pages()
+    slugs = [s for s, _, _ in pages]
+    idx = slugs.index(slug) if slug in slugs else -1
+    prev_page = pages[idx - 1] if idx > 0 else None
+    next_page = pages[idx + 1] if 0 <= idx < len(pages) - 1 else None
     return render_template("help/page.html", slug=slug, title=TITLES[slug], body=Markup(body), toc=Markup(toc),
                            nav=_nav(), updated=_last_change(slug, mtime), prev_page=prev_page, next_page=next_page)
 
@@ -111,7 +120,7 @@ def search():
     results = []
     if len(q) >= 2:
         needle = q.lower()
-        for slug, title, _ in PAGES:
+        for slug, title, _ in _pages():
             path = DOCS_DIR / f"{slug}.md"
             if not path.exists():
                 continue

@@ -47,7 +47,8 @@
     {% if sso_servers and int_can('nextcloud', n.id, 'view') %}
       <h4 class="mt-1">Benutzer und Gruppen nach authentik übernehmen</h4>
       <p><small class="muted">Legt die Nextcloud-Gruppen und fehlende Benutzer in authentik an und überträgt die Mitgliedschaften – mit Vorschau.</small></p>
-      <div class="flex" style="gap:8px;flex-wrap:wrap">{% for s in sso_servers %}<a class="btn{{ ' primary' if loop.first }}" href="{{ url_for('sso.nc_import', sso_id=s.id, source='api:' ~ n.id) }}">Nach {{ s.name }} übernehmen …</a>{% endfor %}</div>
+      <div class="flex" style="gap:8px;flex-wrap:wrap">{% for s in sso_servers %}<a class="btn{{ ' primary' if loop.first }}" href="{{ url_for('sso.nc_import', sso_id=s.id, source='api:' ~ n.id) }}">Nach {{ s.name }} übernehmen …</a>
+        <a class="btn" href="{{ url_for('sso.account_link', sso_id=s.id, nc='api:' ~ n.id) }}">Mit {{ s.name }} verknüpfen …</a>{% endfor %}</div>
     {% endif %}
   </div></div>
 </div>

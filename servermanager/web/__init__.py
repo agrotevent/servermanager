@@ -115,7 +115,9 @@ def create_app(testing: bool = False) -> Flask:
     def _nav_integrations() -> set:
         if "nav_int" not in g:
             from .. import access
-            g.nav_int = access.any_integration_access(g.db, g.user) if g.get("user") else set()
+            from .. import settings as settings_mod
+            g.nav_int = (access.any_integration_access(g.db, g.user) - settings_mod.hidden_kinds(g.db)
+                         if g.get("user") else set())
         return g.nav_int
 
     def _tz():

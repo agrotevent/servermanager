@@ -226,13 +226,65 @@ Die Übernahme braucht Vollzugriff auf die SSO-Verbindung und Leserecht auf die 
 Nextcloud-Administratoren und die Gruppe `admin` übernehmen nur Administratoren des Servermanagers:
 Ein authentik-Konto mit gleichem Namen öffnet über SSO das Administratorkonto der Nextcloud.
 
+### Bestehende Konten verknüpfen
+
+Für Personen, die schon Konten in authentik, in der Nextcloud und/oder in der Mailcow haben, prüft der
+Servermanager, ob die Anmeldung über authentik im **bestehenden** Konto mit den bisherigen Rechten
+landet, und behebt, was fehlt. Aufruf über *SSO → Benutzer → Konten verknüpfen*, auf der Seite einer
+Nextcloud-Verbindung oder auf der Seite einer Mailcow (Reiter *Mail-IP & Veröffentlichung*).
+
+1. **Nextcloud und/oder Mailcow wählen.** Die Nextcloud geht über die Schnittstelle oder per SSH.
+2. **Abgleich ansehen:** eine Zeile je Person mit dem authentik-Konto, dem Nextcloud-Konto und dem
+   Postfach. Gefunden wird so:
+   - **Nextcloud:** authentik-Benutzername = Nextcloud-ID (ohne Groß- und Kleinschreibung). Passt nur
+     die E-Mail-Adresse, steht das dabei.
+   - **Mailcow:** E-Mail-Adresse des authentik-Kontos = Postfach, sonst die E-Mail-Adresse des
+     Nextcloud-Kontos.
+3. **Auswählen und verknüpfen.** Vorausgewählt sind alle Zeilen mit Handlungsbedarf. Welche Arten von
+   Änderungen ausgeführt werden, legst du oben fest:
+
+| Änderung | Wann | Was passiert |
+|---|---|---|
+| authentik-Benutzer anlegen | Nextcloud-Konto oder Postfach ohne authentik-Konto | Benutzername = Nextcloud-ID bzw. Postfach-Adresse, E-Mail = Postfach, Zufallspasswort (nur einmal angezeigt) |
+| authentik-Benutzername = Nextcloud-ID | nur die E-Mail passt | Der authentik-Benutzer wird umbenannt. Sonst entstünde bei der ersten Anmeldung ein zweites, leeres Nextcloud-Konto. Nur für Administratoren des Servermanagers, nicht vorausgewählt. |
+| E-Mail in authentik = Postfach | Postfach über die Nextcloud-Adresse gefunden | Die E-Mail-Adresse des authentik-Kontos wird die Postfach-Adresse, denn darüber findet die Mailcow das Postfach. |
+| Nextcloud-Gruppen in authentik | Nextcloud-Gruppen fehlen in authentik | Fehlende Gruppen werden angelegt (ohne Sonderrechte), die Person wird Mitglied. Die Gruppe `admin` nur durch Administratoren. |
+| Postfach auf authentik umstellen | Postfach meldet noch über die Mailcow an | Anmeldequelle des Postfachs auf den Identity Provider der Mailcow (`generic-oidc`). Braucht Vollzugriff auf die Mailcow, nicht vorausgewählt. |
+
+**Wichtig beim Umstellen der Postfächer:** Die Mailcow lässt die Anmeldung über authentik nur für
+Postfächer zu, deren Anmeldequelle der Identity Provider ist. Danach melden sich die Personen an der
+Mailcow-Oberfläche über authentik an. **Mailprogramme (IMAP/SMTP, Handy) brauchen dann ein
+App-Passwort** aus der Mailcow statt des bisherigen Postfach-Passworts. Am besten zuerst mit einem
+Postfach ausprobieren.
+
+Es wird nichts gelöscht. Konten von Administratoren (authentik-Superuser, Nextcloud-Gruppe `admin`)
+verknüpfen nur Administratoren des Servermanagers. Der Servermanager berechnet bei jedem Durchgang neu,
+was zu tun ist. Der Browser wählt nur Zeilen und Arten aus. Je Durchgang werden höchstens 300 Zeilen
+bearbeitet.
+
+#### Nextcloud-Gruppen bei der Anmeldung abgleichen
+
+Ist die Nextcloud über diese SSO-Verbindung angebunden (per SSH, `occ`), lässt sich unten auf der Seite
+der **Gruppen-Abgleich** einschalten (Vollzugriff auf das System):
+
+- Bei jeder Anmeldung über authentik übernimmt die Nextcloud die gewählten Gruppen aus authentik.
+  Wer in authentik in der Gruppe ist, kommt in der Nextcloud hinein, wer nicht drin ist, wird dort
+  entfernt. Alle anderen Gruppen der Nextcloud bleiben unberührt.
+- Zur Wahl stehen nur Gruppen, die es in authentik unter **genau** demselben Namen gibt. Abweichende
+  Schreibweisen (z. B. `mitarbeiter` gegenüber `Mitarbeiter`) zeigt die Seite an.
+- Deshalb zuerst „Nextcloud-Gruppen in authentik“ ausführen, sonst verlieren Personen beim nächsten
+  Login Gruppen.
+- Technisch: `occ user_oidc:provider <ID> --group-provisioning=1 --mapping-groups=groups
+  --group-whitelist-regex=…`. *Ausschalten* setzt `--group-provisioning=0`, die Gruppen bleiben dann,
+  wie sie sind.
+
 ## Rechte
 
 | Stufe | Mailcow | SSO | Nextcloud (Schnittstelle) | Nextcloud-Benutzer (Recht auf das System) |
 |---|---|---|---|---|
 | Lesen | Postfächer, Aliase, Domains ansehen | Anwendungen und Benutzer ansehen | Übersicht, Benutzer, Gruppen ansehen | Liste ansehen |
 | Bedienen | Postfach aktivieren/deaktivieren | Benutzer aktivieren/deaktivieren (keine Admin-Konten) | Benutzer sperren/entsperren, aktualisieren | sperren/entsperren, Quota |
-| Vollzugriff | Postfächer und Aliase anlegen/löschen, Postfach bearbeiten (Größe, Name), neues Passwort | Benutzer anlegen/löschen, neues Passwort (Admin-Konten nur für Administratoren des Servermanagers), Anwendungen verbinden/trennen (dazu Vollzugriff auf die Anwendung), Nextcloud-Benutzer übernehmen | Benutzer anlegen, bearbeiten, löschen, neues Passwort, Gruppen anlegen (Nextcloud-Admins nur für Administratoren des Servermanagers) | anlegen, löschen, neues Passwort |
+| Vollzugriff | Postfächer und Aliase anlegen/löschen, Postfach bearbeiten (Größe, Name), neues Passwort | Benutzer anlegen/löschen, neues Passwort (Admin-Konten nur für Administratoren des Servermanagers), Anwendungen verbinden/trennen (dazu Vollzugriff auf die Anwendung), Nextcloud-Benutzer übernehmen, Konten verknüpfen (Postfächer umstellen zusätzlich mit Vollzugriff auf die Mailcow) | Benutzer anlegen, bearbeiten, löschen, neues Passwort, Gruppen anlegen (Nextcloud-Admins nur für Administratoren des Servermanagers) | anlegen, löschen, neues Passwort |
 
 Ein neues Passwort ist eine Kontoübernahme (wer es setzt, kann sich als dieser Benutzer anmelden) und
 erfordert deshalb überall Vollzugriff.

@@ -106,8 +106,15 @@ def _save_access(user: User) -> None:
 
 
 def _integration_objects() -> list[tuple[str, str, list]]:
-    return [(kind, INTEGRATION_KINDS[kind], g.db.execute(select(model).order_by(model.name)).scalars().all())
-            for kind, model in INTEGRATION_MODELS.items()]
+    """Kinds with their objects; hidden modules only while they still have objects (rights stay editable)."""
+    from ... import settings
+    hidden = settings.hidden_kinds(g.db)
+    out = []
+    for kind, model in INTEGRATION_MODELS.items():
+        objs = g.db.execute(select(model).order_by(model.name)).scalars().all()
+        if kind not in hidden or objs:
+            out.append((kind, INTEGRATION_KINDS[kind], objs))
+    return out
 
 
 def _integration_levels(user: User) -> dict[str, str]:

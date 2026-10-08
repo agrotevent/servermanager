@@ -170,6 +170,11 @@ class Authentik:
     def update_user(self, pk: int, name: str, email: str) -> None:
         self.request("PATCH", f"core/users/{int(pk)}/", {"name": name, "email": email})
 
+    def rename_user(self, pk: int, username: str) -> None:
+        if not USERNAME_RE.match(username or ""):
+            raise AuthentikError("Ungültiger Benutzername")
+        self.request("PATCH", f"core/users/{int(pk)}/", {"username": username})
+
     def add_to_group(self, group_pk: str, user_pk: int) -> None:
         self.request("POST", f"core/groups/{quote(str(group_pk), safe='')}/add_user/", {"pk": int(user_pk)})
 
