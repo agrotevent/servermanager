@@ -2,6 +2,22 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.27.0 – 08.10.2026
+
+### Neu
+
+- **CloudPanel** unter *Infrastruktur*, gesteuert per SSH mit `clpctl`, da CloudPanel keine API hat:
+  - Sites (PHP, Node.js, Python, statisch, Reverse-Proxy) anlegen und löschen, Let's Encrypt.
+  - Datenbanken anlegen.
+  - Benutzer der Oberfläche anlegen, löschen, neues Passwort, Zwei-Faktor abschalten.
+  - Passwörter werden erzeugt und einmal angezeigt.
+  - Auf der Seite des Systems: *CloudPanel aktualisieren* (`clp-update`) und *Cloudflare-IPs
+    aktualisieren*.
+  - Erkannt wird CloudPanel automatisch.
+- **CloudPanel und authentik:** Die Oberfläche lässt sich per Klick über Pangolin mit authentik-Anmeldung
+  veröffentlichen, mit Zugriff je Pangolin-Rolle. CloudPanel-Konten für authentik-Benutzer legt *Aus
+  authentik anlegen* an.
+
 ## 1.26.0 – 08.10.2026
 
 ### Neu

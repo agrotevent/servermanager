@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% set help_page = "cloudpanel" %}
+{% from "_macros.html" import empty with context %}
+{% block title %}CloudPanel{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>CloudPanel</h1><p>Sites, Datenbanken, Benutzer und Let's-Encrypt-Zertifikate auf CloudPanel-Servern – über SSH mit <code>clpctl</code>.</p></div>
+</div>
+{% if items %}
+<div class="card"><div class="table-wrap"><table class="table">
+  <thead><tr><th>Server</th><th>Adresse</th><th>CloudPanel</th><th>Status</th></tr></thead>
+  <tbody>{% for s in items %}
+    <tr><td><a href="{{ url_for('cloudpanel.detail', system_id=s.id) }}"><strong>{{ s.name }}</strong></a></td><td class="mono">{{ s.host }}</td>
+      <td>{{ s.fact.get('cloudpanel_version') or '–' }}</td><td><span class="badge {{ 'success' if s.status == 'online' else 'danger' if s.status == 'offline' else '' }}">{{ STATUSES.get(s.status, s.status) }}</span></td></tr>
+  {% endfor %}</tbody></table></div></div>
+{% else %}<div class="card"><div class="card-body">{{ empty('Noch kein CloudPanel-Server. Das System unter „Systeme“ mit SSH-Zugang anlegen – der Typ CloudPanel wird bei der Bestandsaufnahme erkannt (clpctl), oder im System unter „Bearbeiten“ setzen.', 'i-globe') }}</div></div>{% endif %}
+{% endblock %}

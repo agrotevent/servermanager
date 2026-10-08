@@ -101,6 +101,9 @@ if command -v asterisk >/dev/null 2>&1; then
     kv asterisk_active "$(pgrep -x asterisk >/dev/null 2>&1 && echo active || echo inactive)"
     command -v fwconsole >/dev/null 2>&1 && kv freepbx yes
 fi
+if command -v clpctl >/dev/null 2>&1; then
+    kv cloudpanel_version "$(dpkg-query -W -f='${Version}' cloudpanel 2>/dev/null || echo unknown)"
+fi
 ispc=/usr/local/ispconfig/server/lib/config.inc.php
 if [ -f "$ispc" ]; then
     kv ispconfig_version "$(grep -oE "ISPC_APP_VERSION', *'[^']+" "$ispc" | sed "s/.*'//")"

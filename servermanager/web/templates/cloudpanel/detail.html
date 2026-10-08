@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% set help_page = "cloudpanel" %}
+{% from "_macros.html" import csrf, empty with context %}
+{% block title %}{{ system.name }} · CloudPanel{% endblock %}
+{% set full = cp_can(system.id, 'full') %}
+{% set operate = cp_can(system.id, 'operate') %}
+{% block content %}
+<div class="page-head">
+  <div class="grow"><h1>{{ system.name }} <span class="badge">CloudPanel {{ d.version or system.fact.get('cloudpanel_version') or '' }}</span></h1>
+    <p><a href="{{ url_for('systems.detail', system_id=system.id) }}">System {{ system.host }}</a> · Weboberfläche <span class="mono">https://{{ system.host }}:8443</span></p></div>
+</div>
+<nav class="tabs">{% for k, v in tabs.items() %}<a href="?tab={{ k }}" class="{{ 'active' if tab == k }}">{{ v }}</a>{% endfor %}</nav>
+{% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+{% if tab != 'access' and not error and not d.full %}<div class="alert warning">Auf dem Server fehlt python3 – angezeigt werden nur die Sites aus der nginx-Konfiguration, ohne Benutzer und Datenbanken.</div>{% endif %}
+
+{% if tab == 'sites' %}
+<div class="card"><div class="card-head"><h2>Sites</h2><span class="badge">{{ d.sites|length }}</span><input type="search" placeholder="Suchen …" data-filter-list="#cp-sites tbody tr" style="max-width:220px"></div>
+  <div class="table-wrap"><table class="table compact" id="cp-sites"><thead><tr><th>Domain</th><th>Typ</th><th>Site-Benutzer</th><th>Zertifikat</th><th></th></tr></thead><tbody>
+  {% for s in d.sites %}
+    <tr><td><a href="https://{{ s.domain }}" target="_blank" rel="noopener"><strong>{{ s.domain }}</strong></a>{% if s.root %}<span class="sub mono">{{ s.root }}</span>{% endif %}</td>
+      <td>{{ site_types.get(s.type, s.type) }}{% if s.php %} {{ s.php }}{% endif %}</td><td class="mono">{{ s.user }}</td>
+      <td>{% if s.cert and s.cert.until %}{% set days = (s.cert.until - now).days %}<span class="badge {{ 'danger' if days < 7 else 'warning' if days < 21 else 'success' }}">bis {{ s.cert.until.strftime('%d.%m.%Y') }}</span><span class="sub">{{ s.cert.issuer }}</span>{% else %}<span class="muted">–</span>{% endif %}</td>
+      <td class="nowrap">{% if operate %}<form method="post" action="{{ url_for('cloudpanel.do', system_id=system.id) }}" class="inline" data-confirm="Let's-Encrypt-Zertifikat für {{ s.domain }} ausstellen? Die Domain muss per DNS auf den Server zeigen.">{{ csrf() }}<input type="hidden" name="op" value="cert"><input type="hidden" name="domain" value="{{ s.domain }}"><button class="btn xs">Let's Encrypt</button></form>{% endif %}
+        {% if full %}<form method="post" action="{{ url_for('cloudpanel.do', system_id=system.id) }}" class="inline" data-confirm="Site {{ s.domain }} mit allen Dateien, Datenbanken und dem Site-Benutzer löschen?">{{ csrf() }}<input type="hidden" name="op" value="site_delete"><input type="hidden" name="domain" value="{{ s.domain }}"><button class="btn xs danger">Löschen</button></form>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="5">{{ empty('Keine Sites.', 'i-globe') }}</td></tr>{% endfor %}</tbody></table></div></div>
+{% if full %}
+<div class="card"><div class="card-head"><h2>Neue Site</h2></div>
+  <form method="post" action="{{ url_for('cloudpanel.do', system_id=system.id) }}" class="card-body">{{ csrf() }}<input type="hidden" name="op" value="site_add">
+    <div class="grid grid-3">
+      <div class="field"><label for="f-type">Typ</label><select id="f-type" name="type">{% for k, l in site_types.items() %}<option value="{{ k }}">{{ l }}</option>{% endfor %}</select></div>
+      <div class="field"><label for="f-domain">Domain</label><input type="text" id="f-domain" name="domain" required placeholder="www.example.com" maxlength="253"></div>
+      <div class="field"><label for="f-suser">Site-Benutzer</label><input type="text" id="f-suser" name="site_user" required pattern="[a-z][a-z0-9-]{2,31}" placeholder="example" maxlength="32"></div>
+      <div class="field"><label for="f-php">PHP-Version <small class="muted">(PHP)</small></label><select id="f-php" name="php">{% for v in php_versions %}<option>{{ v }}</option>{% endfor %}</select></div>
+      <div class="field"><label for="f-vhost">Vhost-Vorlage <small class="muted">(PHP)</small></label><input type="text" id="f-vhost" name="vhost" value="Generic" maxlength="64"></div>
+      <div class="field"><label for="f-runtime">Version <small class="muted">(Node.js/Python)</small></label><select id="f-runtime" name="runtime"><optgroup label="Node.js">{% for v in node_versions %}<option>{{ v }}</option>{% endfor %}</optgroup><optgroup label="Python">{% for v in python_versions %}<option>{{ v }}</option>{% endfor %}</optgroup></select></div>
+      <div class="field"><label for="f-port">App-Port <small class="muted">(Node.js/Python)</small></label><input id="f-port" name="app_port" type="number" min="1024" max="65535" placeholder="3000"></div>
+      <div class="field"><label for="f-proxy">Ziel <small class="muted">(Reverse-Proxy)</small></label><input type="text" id="f-proxy" name="proxy_url" placeholder="http://127.0.0.1:8000" maxlength="200"></div>
+    </div>
+    <p><small class="muted">Das Passwort des Site-Benutzers (SSH/SFTP) erzeugt der Servermanager; es wird einmal angezeigt. Danach ein Let's-Encrypt-Zertifikat ausstellen, sobald der DNS-Eintrag auf den Server zeigt.</small></p>
+    <button class="btn primary">Site anlegen</button></form></div>
+{% endif %}
+
+{% elif tab == 'databases' %}
+<div class="card"><div class="card-head"><h2>Datenbanken</h2><span class="badge">{{ d.databases|length }}</span></div>
+  <div class="table-wrap"><table class="table compact"><thead><tr><th>Datenbank</th><th>Site</th><th>Benutzer</th></tr></thead><tbody>
+  {% for x in d.databases %}<tr><td class="mono">{{ x.name }}</td><td>{{ x.site }}</td><td class="mono"><small>{{ x.users|join(', ') }}</small></td></tr>
+  {% else %}<tr><td colspan="3" class="muted">Keine Datenbanken.</td></tr>{% endfor %}</tbody></table></div></div>
+{% if full and d.sites %}
+<div class="card"><div class="card-head"><h2>Neue Datenbank</h2></div>
+  <form method="post" action="{{ url_for('cloudpanel.do', system_id=system.id) }}" class="card-body">{{ csrf() }}<input type="hidden" name="op" value="db_add">
+    <div class="grid grid-3">
+      <div class="field"><label for="f-dsite">Site</label><select id="f-dsite" name="domain">{% for s in d.sites %}<option>{{ s.domain }}</option>{% endfor %}</select></div>
+      <div class="field"><label for="f-db">Datenbank</label><input type="text" id="f-db" name="db" required pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,63}" maxlength="64"></div>
+      <div class="field"><label for="f-dbu">Datenbank-Benutzer</label><input type="text" id="f-dbu" name="db_user" required pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,63}" maxlength="64"></div>
+    </div>
+    <p><small class="muted">Das Passwort des Datenbank-Benutzers wird erzeugt und einmal angezeigt.</small></p>
+    <button class="btn primary">Datenbank anlegen</button></form></div>
+{% endif %}
+
+{% elif tab == 'users' %}
+<div class="card"><div class="card-head"><h2>Benutzer der CloudPanel-Oberfläche</h2><span class="badge">{{ d.users|length }}</span></div>
+  <div class="table-wrap"><table class="table compact"><thead><tr><th>Benutzer</th><th>E-Mail</th><th>Rolle</th><th></th></tr></thead><tbody>
+  {% for u in d.users %}{% set locked = u.role == 'admin' and not user.is_admin %}
+    <tr class="{{ 'muted' if not u.active }}"><td><strong>{{ u.name }}</strong><span class="sub">{{ u.first }} {{ u.last if u.last != '-' }}{% if not u.active %} · deaktiviert{% endif %}</span></td><td><small>{{ u.email }}</small></td>
+      <td>{{ roles.get(u.role, u.role) }}</td>
+      <td class="nowrap">{% if full and not locked %}
+        <form method="post" action="{{ url_for('cloudpanel.do', system_id=system.id) }}" class="inline" data-confirm="Neues Passwort für {{ u.name }} setzen?">{{ csrf() }}<input type="hidden" name="op" value="user_password"><input type="hidden" name="user" value="{{ u.name }}"><button class="btn xs">Neues Passwort</button></form>
+        <form method="post" action="{{ url_for('cloudpanel.do', system_id=system.id) }}" class="inline" data-confirm="Zwei-Faktor-Anmeldung für {{ u.name }} abschalten?">{{ csrf() }}<input type="hidden" name="op" value="user_mfa_off"><input type="hidden" name="user" value="{{ u.name }}"><button class="btn xs ghost">2FA aus</button></form>
+        <form method="post" action="{{ url_for('cloudpanel.do', system_id=system.id) }}" class="inline" data-confirm="Benutzer {{ u.name }} löschen?">{{ csrf() }}<input type="hidden" name="op" value="user_delete"><input type="hidden" name="user" value="{{ u.name }}"><button class="btn xs danger">Löschen</button></form>
+      {% elif locked %}<small class="muted">Administrator – nur für Administratoren des Servermanagers</small>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="4" class="muted">Keine Benutzer gelesen.</td></tr>{% endfor %}</tbody></table></div></div>
+{% if full %}
+<div class="grid grid-2">
+<div class="card"><div class="card-head"><h2>Neuer Benutzer</h2></div>
+  <form method="post" action="{{ url_for('cloudpanel.do', system_id=system.id) }}" class="card-body">{{ csrf() }}<input type="hidden" name="op" value="user_add">
+    <div class="grid grid-2">
+      <div class="field"><label for="f-uname">Benutzername</label><input type="text" id="f-uname" name="user" required maxlength="64"></div>
+      <div class="field"><label for="f-umail">E-Mail</label><input id="f-umail" name="email" type="email" required maxlength="200"></div>
+      <div class="field"><label for="f-ufirst">Vorname</label><input type="text" id="f-ufirst" name="first" maxlength="64"></div>
+      <div class="field"><label for="f-ulast">Nachname</label><input type="text" id="f-ulast" name="last" maxlength="64"></div>
+    </div>
+    <div class="field"><label for="f-urole">Rolle</label><select id="f-urole" name="role">{% for k, l in roles.items() if k != 'admin' or user.is_admin %}<option value="{{ k }}">{{ l }}</option>{% endfor %}</select></div>
+    <div class="field"><label>Sites <small class="muted">(für die Rolle Benutzer)</small></label><div class="flex" style="gap:12px;flex-wrap:wrap">{% for s in d.sites %}<label class="check"><input type="checkbox" name="sites" value="{{ s.domain }}"> {{ s.domain }}</label>{% endfor %}</div></div>
+    <p><small class="muted">Das Startpasswort wird erzeugt und einmal angezeigt.</small></p>
+    <button class="btn primary">Benutzer anlegen</button></form></div>
+<div class="card"><div class="card-head"><h2>Aus authentik anlegen</h2></div><div class="card-body">
+  <p><small class="muted">CloudPanel-Benutzer für authentik-Benutzer mit gleichem Benutzernamen und gleicher E-Mail-Adresse – mit Auswahl und Startpasswort. CloudPanel selbst kennt keine Anmeldung über authentik; geschützt wird die Oberfläche über Pangolin (Reiter „Zugang &amp; authentik“).</small></p>
+  {% for x in sso_servers %}<a class="btn" href="{{ url_for('cloudpanel.from_authentik', system_id=system.id, sso=x.id) }}">Aus {{ x.name }} …</a> {% else %}<p class="muted">Keine SSO-Verbindung mit Vollzugriff.</p>{% endfor %}
+</div></div>
+</div>
+{% endif %}
+
+{% elif tab == 'access' %}
+<div class="grid grid-2">
+<div class="card"><div class="card-head"><h2>Anmeldung über authentik</h2></div><div class="card-body">
+  <p>CloudPanel bietet keine Anmeldung über OpenID Connect. Der Weg zu authentik führt über <strong>Pangolin</strong>:</p>
+  <ol>
+    <li>Die Oberfläche (Port 8443) über Pangolin <strong>mit Pangolin-Anmeldung</strong> veröffentlichen. Wer sie öffnen will, meldet sich zuerst über authentik an.</li>
+    <li>Auf der Seite des veröffentlichten Dienstes unter <em>Zugriff (Rollen)</em> nur die passende Rolle zulassen, z. B. „Technik“. Die Rolle kommt aus den authentik-Gruppen (Zuordnung auf der Seite der Pangolin-Verbindung).</li>
+    <li>Danach meldet man sich mit dem CloudPanel-Konto an. Konten für authentik-Benutzer legt „Aus authentik anlegen“ im Reiter Benutzer an.</li>
+    <li>Den Port 8443 am Router/Firewall nicht mehr direkt aus dem Internet freigeben.</li>
+  </ol>
+  {% if pangolin %}<a class="btn primary" href="{{ url_for('pangolin.publish', pg_id=pangolin.id, **publish) }}"><svg class="icon"><use href="#i-cloud"/></svg>Über {{ pangolin.name }} veröffentlichen</a>
+  {% else %}<p class="muted">Keine primäre Pangolin-Verbindung mit Vollzugriff.</p>{% endif %}
+</div></div>
+<div class="card"><div class="card-head"><h2>Wartung</h2></div><div class="card-body">
+  <p><small class="muted">„CloudPanel aktualisieren“ (clp-update) und „Cloudflare-IPs aktualisieren“ stehen auf der <a href="{{ url_for('systems.detail', system_id=system.id) }}">Seite des Systems</a> und im Wartungsplaner. Paketupdates des Servers laufen wie bei jedem Debian-System.</small></p>
+</div></div>
+</div>
+{% endif %}
+{% endblock %}

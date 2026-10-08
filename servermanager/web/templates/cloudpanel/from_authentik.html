@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% set help_page = "cloudpanel" %}
+{% from "_macros.html" import csrf with context %}
+{% block title %}authentik → CloudPanel · {{ system.name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>CloudPanel-Benutzer aus authentik</h1>
+  <p><a href="{{ url_for('cloudpanel.detail', system_id=system.id, tab='users') }}">{{ system.name }}</a> · Quelle {{ sso.name }}</p></div></div>
+{% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
+{% if result %}
+<div class="card"><div class="card-head"><h2>Ergebnis</h2></div><div class="card-body">
+  <p>{{ result.created|length }} Benutzer angelegt.</p>
+  {% if result.errors %}<div class="alert warning"><div>{% for e in result.errors %}<div>{{ e }}</div>{% endfor %}</div></div>{% endif %}
+  {% if result.created %}
+    <div class="alert warning"><div><strong>Startpasswörter – werden nur jetzt angezeigt.</strong> Bitte sicher weitergeben; in CloudPanel unter dem eigenen Profil änderbar.</div></div>
+    <div class="table-wrap"><table class="table compact"><thead><tr><th>Benutzer</th><th>Passwort</th></tr></thead><tbody>
+      {% for uid, pw in result.created %}<tr><td class="mono">{{ uid }}</td><td class="mono">{{ pw }}</td></tr>{% endfor %}</tbody></table></div>
+    <textarea id="cp-pw-text" class="hidden" readonly>{% for uid, pw in result.created %}{{ uid }}	{{ pw }}
+{% endfor %}</textarea>
+    <button type="button" class="btn mt-1" data-copy="#cp-pw-text">Liste kopieren</button>
+  {% endif %}
+</div></div>
+{% endif %}
+{% if candidates %}
+<form method="post" data-confirm="Ausgewählte Benutzer in CloudPanel anlegen?">{{ csrf() }}<input type="hidden" name="sso" value="{{ sso.id }}">
+<div class="card"><div class="card-head"><h2>Rolle</h2></div><div class="card-body">
+  <div class="field"><label for="f-role">Rolle der neuen Benutzer</label><select id="f-role" name="role">{% for k, l in roles.items() if k != 'admin' or user.is_admin %}<option value="{{ k }}">{{ l }}</option>{% endfor %}</select></div>
+  <div class="field"><label>Sites <small class="muted">(für die Rolle Benutzer)</small></label><div class="flex" style="gap:12px;flex-wrap:wrap">{% for s in sites %}<label class="check"><input type="checkbox" name="sites" value="{{ s }}"> {{ s }}</label>{% endfor %}</div></div>
+  <button class="btn primary">Anlegen</button>
+</div></div>
+<div class="card"><div class="card-head"><h2>authentik-Benutzer</h2><input type="search" placeholder="Suchen …" data-filter-list="#cp-ak tbody tr" style="max-width:220px"></div>
+  <div class="table-wrap"><table class="table compact" id="cp-ak"><thead><tr><th><input type="checkbox" data-check-all="input[name=users]:not(:disabled)" aria-label="alle"></th><th>Benutzer</th><th>E-Mail</th><th>CloudPanel</th></tr></thead><tbody>
+  {% for c in candidates %}<tr><td><input type="checkbox" name="users" value="{{ c.username }}" {{ 'disabled' if c.exists or not c.valid }} aria-label="auswählen"></td>
+    <td><strong>{{ c.username }}</strong><span class="sub">{{ c.name }}</span></td><td><small>{{ c.email or '–' }}</small></td>
+    <td>{% if c.exists %}<span class="badge success">vorhanden</span>{% elif not c.valid %}<span class="badge warning">{{ 'E-Mail fehlt' if not c.email else 'Name nicht zulässig' }}</span>{% else %}<span class="badge info">kann angelegt werden</span>{% endif %}</td></tr>
+  {% endfor %}</tbody></table></div></div>
+</form>
+{% endif %}
+{% endblock %}

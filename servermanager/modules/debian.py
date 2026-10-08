@@ -69,6 +69,8 @@ def detect_types(facts: dict) -> list[str]:
         types.append("proxmox")
     if facts.get("newt_version"):
         types.append("newt")
+    if facts.get("cloudpanel_version"):
+        types.append("cloudpanel")
     return types
 
 

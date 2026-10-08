@@ -38,6 +38,7 @@ PAGES: list[tuple[str, str, str]] = [
     ("zabbix", "Zabbix & Tickets", "Infrastruktur"),
     ("zammad", "Zammad", "Infrastruktur"),
     ("ispconfig", "ISPConfig", "Infrastruktur"),
+    ("cloudpanel", "CloudPanel", "Infrastruktur"),
     ("backup", "Backup und Restore", "Betrieb"),
     ("servermanager-update", "Update des Servermanagers", "Betrieb"),
     ("installation", "Installation", "Betrieb"),

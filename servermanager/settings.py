@@ -180,6 +180,7 @@ HIDEABLE_MODULES: dict[str, tuple[str, tuple[str, ...], str]] = {
     "easybell": ("easybell", ("easybell",), "easybell"),
     "dns": ("DNS & Domains", ("dns",), "dns"),
     "sso": ("SSO (authentik)", ("sso",), ""),
+    "cloudpanel": ("CloudPanel", (), "cloudpanel"),
 }
 
 

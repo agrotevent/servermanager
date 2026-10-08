@@ -6,6 +6,7 @@
 | **Nextcloud** | Status, Apps aktualisieren, Core-Update (updater.phar + occ upgrade + DB-Reparaturen), Wartungsmodus, DB-Indizes, Reparatur, Dateien neu einlesen, Cron | Core- und App-Updates (`occ update:check`), Wartungsmodus, DB-Upgrade nötig |
 | **Docker** | Container starten/stoppen/neu starten/entfernen, Compose-Projekte aktualisieren (pull + up -d) oder neu starten, alle Projekte aktualisieren, ungenutzte Images entfernen | neue Images für laufende Container (optional, per `docker pull`) |
 | **ISPConfig** | unbeaufsichtigtes Update (stable, mit ISPConfig-Backup, Dienste neu konfigurieren), Mail-Warteschlange abarbeiten | installierte vs. aktuelle Version, Dienste, Mail-Warteschlange, Fehler im cron.log |
+| **CloudPanel** | CloudPanel aktualisieren (`clp-update`), Cloudflare-IPs aktualisieren; Sites, Datenbanken, Benutzer und Let's Encrypt unter *Infrastruktur → CloudPanel* ([CloudPanel](cloudpanel.md)) | installierte Version (`dpkg`), Zertifikatslaufzeiten |
 | **Proxmox VE** | VMs/Container starten, herunterfahren, neu starten, Sicherung (vzdump), Upgrade-Prüfung (pve8to9) | Paketupdates (dist-upgrade), Cluster-Ressourcen, Storage |
 
 Nextcloud in Docker oder als Snap: in den System-Einstellungen einen eigenen occ-Befehl hinterlegen

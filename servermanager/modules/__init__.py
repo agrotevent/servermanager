@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from .asterisk import AsteriskModule
 from .base import Action, Module, Param, ParamError  # noqa: F401
+from .cloudpanel import CloudPanelModule
 from .debian import DebianModule
 from .docker import DockerModule
 from .ispconfig import ISPConfigModule
@@ -12,7 +13,7 @@ from .proxmox import ProxmoxModule
 
 MODULES: dict[str, Module] = {m.key: m for m in (
     DebianModule(), NextcloudModule(), DockerModule(), ISPConfigModule(), ProxmoxModule(), NewtModule(),
-    AsteriskModule())}
+    AsteriskModule(), CloudPanelModule())}
 
 TYPE_LABELS = {k: m.label for k, m in MODULES.items()}
 TYPE_LABELS["debian"] = "Debian"
