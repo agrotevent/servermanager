@@ -55,6 +55,14 @@ Das Einlesen ändert nichts an den Geräten.
   - **Container (LXC):** per `pct exec` über den Proxmox-Host. Dafür muss der Host als System (SSH)
     verknüpft sein. Im Cluster wird der Befehl über die Cluster-SSH-Verbindung auf dem richtigen Node
     ausgeführt.
+    - Ist der Host noch kein System: *Proxmox → Verbindung → Proxmox-Host als System anlegen*.
+      Name, Adresse (aus der API-Adresse) und Typ Proxmox sind vorbelegt. Root-Passwort eintragen und
+      speichern. Der Servermanager installiert seinen SSH-Schlüssel, entfernt das Passwort wieder und
+      verknüpft das System mit der Verbindung.
+    - Ist der Host schon ein System, verknüpft ihn die Übernahme selbst, wenn er eindeutig ist: gleiche
+      Adresse oder gleicher DNS-Name wie die API (auch `hostname -f` aus der Erstprüfung), die
+      aufgelöste Adresse des API-Namens oder ein Proxmox-System mit dem Kurznamen des Nodes. Sonst unter
+      *Bearbeiten → Verknüpfungen* wählen.
   - **VMs:** über den QEMU-Guest-Agent (in der VM installiert und in den VM-Optionen aktiviert).
   - Die **SSH-Hostkeys** werden auf demselben Weg gelesen und fest hinterlegt – schon die erste
     SSH-Verbindung ist geprüft.

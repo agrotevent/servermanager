@@ -391,6 +391,51 @@ def overview(api: PveClient) -> dict:
                         "nodes": cluster.get("nodes")} if cluster else None}
 
 
+def _resolve(name: str) -> set[str]:
+    import socket
+    try:
+        return {str(a[4][0]).lower() for a in socket.getaddrinfo(name, None)}
+    except (OSError, UnicodeError):
+        return set()
+
+
+def _is_ip(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return False
+
+
+def find_host_system(systems: list, server: PveServer, nodes: list[str], resolve=_resolve) -> tuple[Any, str]:
+    """The system that is the Proxmox host behind the API, if exactly one fits: same address or DNS name as
+    the API, then the API name resolved to an address, then the only Proxmox system named like a node
+    (short host name, case-insensitive). Returns (system or None, how it was found)."""
+    from urllib.parse import urlsplit
+    api_host = (urlsplit(server.api_url or "").hostname or "").lower().rstrip(".")
+
+    def names(x) -> set[str]:
+        raw = (x.host, x.hostname, (x.fact or {}).get("hostname"))
+        return {str(n).lower().rstrip(".") for n in raw if n}
+
+    def short(x) -> set[str]:
+        return {n.split(".")[0] for n in names(x) | {(x.name or "").lower()} if n and not _is_ip(n)}
+
+    steps = []
+    if api_host:
+        steps.append(("Adresse der API", lambda x: api_host in names(x)))
+        if not _is_ip(api_host):
+            ips = resolve(api_host)
+            steps.append((f"Adresse von {api_host}", lambda x: bool(ips) and (x.host or "").lower() in ips))
+    wanted = {n.lower() for n in nodes if n}
+    steps.append(("Name des Nodes", lambda x: x.has_type("proxmox") and bool(wanted & short(x))))
+    for how, match in steps:
+        found = [x for x in systems if match(x)]
+        if len(found) == 1:
+            return found[0], how
+    return None, ""
+
+
 def alerts_for(server: PveServer, data: dict, disk_pct: int) -> list[dict]:
     out: list[dict] = []
     for n in data.get("nodes", []):

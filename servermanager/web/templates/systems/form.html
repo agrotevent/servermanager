@@ -9,6 +9,9 @@
 </div>
 <form method="post" autocomplete="off">
   {{ csrf() }}
+  {% if link_pve %}<input type="hidden" name="link_pve" value="{{ link_pve.id }}">
+  <div class="alert info"><strong>Proxmox-Host für {{ link_pve.name }}:</strong> Dieses System wird nach dem Speichern als SSH-Host der Proxmox-Verbindung verknüpft (für Container per <code>pct exec</code>, Token-Einrichtung und Host-Updates).
+    Adresse prüfen (vorbelegt aus der API-Adresse), das <strong>Root-Passwort</strong> eintragen und speichern – der Servermanager installiert dann seinen SSH-Schlüssel und entfernt das Passwort wieder.</div>{% endif %}
   <div class="card">
     <div class="card-head"><h2>Allgemein</h2></div>
     <div class="card-body form-grid">
@@ -89,8 +92,8 @@
   {% if is_new %}
   <div class="card"><div class="card-body">
     {{ checkbox('Nach dem Speichern Verbindung prüfen und Komponenten erkennen', 'check', True) }}
-    {{ checkbox('SSH-Schlüssel des Servermanagers automatisch installieren (per Passwort-Anmeldung)', 'deploy_key', False, 'Danach meldet sich der Servermanager per Schlüssel an.') }}
-    {{ checkbox('Passwort danach entfernen', 'remove_password', False) }}
+    {{ checkbox('SSH-Schlüssel des Servermanagers automatisch installieren (per Passwort-Anmeldung)', 'deploy_key', link_pve is defined and link_pve, 'Danach meldet sich der Servermanager per Schlüssel an.') }}
+    {{ checkbox('Passwort danach entfernen', 'remove_password', link_pve is defined and link_pve) }}
   </div></div>
   {% endif %}
   <div class="actions"><button class="btn primary">Speichern</button>

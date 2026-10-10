@@ -1,4 +1,6 @@
 """Existing infrastructure: management access, guest import, optimisation proposals, redundant Pangolin paths."""
+import re
+
 import pytest
 
 from servermanager import mgmt, optimize, security
@@ -342,4 +344,81 @@ def test_import_container_links_proxmox_host(db, mocks, infra, monkeypatch):
         srv = db.get(type(srv), srv.id)
         srv.system_id = None
         db.query(System).filter_by(name="pve1-host").delete()
+        db.commit()
+
+
+def test_find_host_system():
+    """The Proxmox host behind the API is found by address, by DNS name (also host name -f from the facts), by the
+    resolved address of the API name or by the node name - only if exactly one system fits."""
+    from servermanager.models import PveServer, System
+    from servermanager.pve import find_host_system
+    srv = PveServer(name="PVE.Master.Setnetz.de", api_url="https://pve.master.setnetz.de:8006")
+    other = System(name="web01", host="203.0.113.20", types=["debian"])
+    by_fact = System(name="Proxmox", host="203.0.113.10", types=["debian", "proxmox"],
+                     facts={"hostname": "pve.master.setnetz.de"})
+    resolve = {"pve.master.setnetz.de": {"203.0.113.10"}}.get
+    assert find_host_system([other, by_fact], srv, ["pve"], lambda n: set()) == (by_fact, "Adresse der API")
+    # only the address: found through the resolved API name
+    by_ip = System(name="host-a", host="203.0.113.10", types=["debian"])
+    assert find_host_system([other, by_ip], srv, ["pve"], lambda n: resolve(n) or set())[0] is by_ip
+    # node name against the short name of a Proxmox system (not against parts of an IP address)
+    by_node = System(name="PVE.example.net", host="10.0.0.5", types=["debian", "proxmox"])
+    assert find_host_system([other, by_node], srv, ["pve"], lambda n: set()) == (by_node, "Name des Nodes")
+    assert find_host_system([by_node], srv, ["10"], lambda n: set())[0] is None
+    not_pve = System(name="pve", host="10.0.0.6", types=["debian"])
+    assert find_host_system([not_pve], srv, ["pve"], lambda n: set())[0] is None
+    # ambiguous: two Proxmox systems named like the node
+    twin = System(name="pve", host="10.0.0.7", types=["debian", "proxmox"], hostname="pve.lan")
+    assert find_host_system([by_node, twin], srv, ["pve"], lambda n: set())[0] is None
+
+
+def test_create_proxmox_host_system(app, db, infra):
+    """„Proxmox-Host als System anlegen“: form prefilled from the API address, the new system is linked as SSH host of
+    the connection; only administrators link."""
+    from servermanager.models import Job, PveServer, System
+    from tests.test_web import login, make_user
+    srv = infra["srv"]
+    make_user(db, "b-admin", "admin")
+    c = login(app, "b-admin")
+    page = c.get(f"/proxmox/{srv.id}?live=0").text
+    assert "Kein Proxmox-Host als System (SSH) verknüpft" in page and f"/systems/new?link_pve={srv.id}" in page
+    form = c.get(f"/systems/new?link_pve={srv.id}").text
+    assert 'name="link_pve" value="%d"' % srv.id in form and 'value="127.0.0.1"' in form
+    assert re.search(r'name="types" value="proxmox" checked', form)
+    assert re.search(r'name="deploy_key" value="1" checked', form) and 'value="password" selected' in form
+    try:
+        r = c.post("/systems/new", data={
+            "csrf_token": c.csrf, "name": "pve-b-host", "host": "127.0.0.1", "port": "22", "username": "root",
+            "auth_method": "password", "password": "Root-Passwort-1", "sudo_mode": "none", "connection": "direct",
+            "backup_paths": "/etc", "types": "proxmox", "deploy_key": "1", "remove_password": "1",
+            "link_pve": str(srv.id)})
+        assert r.status_code == 302
+        host = db.query(System).filter_by(name="pve-b-host").one()
+        db.expire_all()
+        assert db.get(PveServer, srv.id).system_id == host.id and host.has_type("proxmox")
+        assert host.password_enc and "Root-Passwort-1" not in host.password_enc   # stored encrypted only
+        assert db.query(Job).filter_by(kind="deploy_key", system_id=host.id).count() == 1
+        assert "Kein Proxmox-Host als System" not in c.get(f"/proxmox/{srv.id}?live=0").text
+        # a manager may create systems but does not link them to the Proxmox connection
+        db.get(PveServer, srv.id).system_id = None
+        db.commit()
+        make_user(db, "b-mgr", "manager")
+        mgr = login(app, "b-mgr")
+        assert "link_pve" not in mgr.get(f"/systems/new?link_pve={srv.id}").text
+        r = mgr.post("/systems/new", data={
+            "csrf_token": mgr.csrf, "name": "pve-b-fake", "host": "192.0.2.77", "port": "22", "username": "root",
+            "auth_method": "password", "password": "Ziel-Passwort-1", "sudo_mode": "none", "connection": "direct",
+            "backup_paths": "/etc", "link_pve": str(srv.id)})
+        assert r.status_code == 302
+        db.expire_all()
+        assert db.get(PveServer, srv.id).system_id is None
+    finally:
+        srv = db.get(PveServer, srv.id)
+        srv.system_id = None
+        db.query(Job).filter(Job.system_id.in_(
+            [s.id for s in db.query(System).filter(System.name.in_(["pve-b-host", "pve-b-fake"]))])).delete()
+        from servermanager.models import SystemAccess
+        for s in db.query(System).filter(System.name.in_(["pve-b-host", "pve-b-fake"])):
+            db.query(SystemAccess).filter_by(system_id=s.id).delete()
+            db.delete(s)
         db.commit()

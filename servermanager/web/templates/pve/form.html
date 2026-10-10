@@ -27,10 +27,10 @@ pveum user token add servermanager@pve sm --privsep 0</pre>
       <span class="help">Hetzner: Hosts sind über einen vSwitch (VLAN) verbunden; lokal: gemeinsames Netz.</span></div>
     {{ field('vSwitch-VLAN (Hetzner)', 'vswitch_vlan', s.vswitch_vlan or '', type='number', placeholder='4000', help='VLAN-ID des vSwitch (4000–4091); MTU im vSwitch: 1400', attrs='min="4000" max="4091"') }}
   </div></div></div>
-  <div class="card"><div class="card-head"><h2>Verknüpfungen</h2></div><div class="card-body"><div class="form-grid">
+  <div class="card" id="links"><div class="card-head"><h2>Verknüpfungen</h2></div><div class="card-body"><div class="form-grid">
     <div class="field full"><label>Proxmox-Host als System (SSH)</label>
       <select name="system_id"><option value="">– keins –</option>{% for x in pve_systems %}<option value="{{ x.id }}" {% if s.system_id == x.id %}selected{% endif %}>{{ x.name }} ({{ x.host }}){% if x.has_type('proxmox') %} · Proxmox{% endif %}</option>{% endfor %}</select>
-      <span class="help">Für die automatische Token-Einrichtung und Updates des Hosts per SSH.</span></div>
+      <span class="help">Für Container (<code>pct exec</code>), die automatische Token-Einrichtung und Updates des Hosts per SSH.{% if not is_new and not s.system_id %} Host noch kein System? <a href="{{ url_for('systems.new', link_pve=s.id) }}">Proxmox-Host als System anlegen</a>{% endif %}</span></div>
     <div class="field"><label>RouterOS (DHCP im Container-Netz)</label>
       <select name="router_id"><option value="">– keiner –</option>{% for x in routers %}<option value="{{ x.id }}" {% if s.router_id == x.id %}selected{% endif %}>{{ x.name }}</option>{% endfor %}</select>
       <span class="help">Neue Container: DHCP-Lease automatisch statisch machen.</span></div>

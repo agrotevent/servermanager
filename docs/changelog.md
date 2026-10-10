@@ -2,6 +2,20 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.29.1 – 10.10.2026
+
+### Behoben
+
+- **Proxmox: Container übernehmen** brach mit „Für Container braucht der Servermanager SSH zum
+  Proxmox-Host“ ab, wenn der Host noch kein System war oder nicht erkannt wurde.
+  - **Neu: Proxmox-Host als System anlegen** auf der Seite der Proxmox-Verbindung, unter *Bearbeiten*
+    und bei *Bestand übernehmen*. Das Formular ist vorbelegt (Name, Adresse aus der API-Adresse, Typ
+    Proxmox, Schlüssel installieren, Passwort danach entfernen). Nach dem Speichern ist das System als
+    SSH-Host der Verbindung verknüpft.
+  - Die Verbindungsseite weist darauf hin, solange kein Host verknüpft ist.
+  - Die automatische Verknüpfung erkennt den Host jetzt auch über den DNS-Namen der API (auch
+    `hostname -f` des Systems), die aufgelöste Adresse und den Kurznamen des Nodes.
+
 ## 1.29.0 – 10.10.2026
 
 ### Neu

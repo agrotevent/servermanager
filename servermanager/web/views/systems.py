@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from typing import Optional
 
 from flask import (Blueprint, abort, flash, g, redirect, render_template, request, send_file, url_for)
 from sqlalchemy import select
@@ -180,7 +181,8 @@ def new():
         if errors:
             for e in errors:
                 flash(e, "danger")
-            return render_template("systems/form.html", system=system, is_new=True, **_form_ctx())
+            return render_template("systems/form.html", system=system, is_new=True,
+                                   link_pve=_link_pve(request.form.get("link_pve", "")), **_form_ctx())
         system.created_by = g.user.id
         g.db.add(system)
         g.db.flush()
@@ -188,6 +190,11 @@ def new():
             access.grant(g.db, g.user.id, system.id, LEVEL_FULL)
         audit(g.db, g.user, "system.create", system.name, f"{system.username}@{system.host}:{system.port}",
               ip=client_ip())
+        link = _link_pve(request.form.get("link_pve", ""))
+        if link is not None:
+            # "Proxmox-Host als System anlegen" on a Proxmox connection: the new system is its SSH host
+            link.system_id = system.id
+            audit(g.db, g.user, "pve.link_host", link.name, system.name, ip=client_ip())
         job = None
         if request.form.get("deploy_key") and system.password_enc:
             job = enqueue(g.db, kind="deploy_key", title=f"SSH-Schlüssel installieren: {system.name}",
@@ -205,7 +212,22 @@ def new():
     system.host = request.args.get("host", "")[:255]
     if g.user.is_admin and request.args.get("pve", "").isdigit() and request.args.get("vmid", "").isdigit():
         system.pve_server_id, system.pve_vmid = int(request.args["pve"]), int(request.args["vmid"])
-    return render_template("systems/form.html", system=system, is_new=True, **_form_ctx())
+    link = _link_pve(request.args.get("link_pve", ""))
+    if link is not None:
+        # Proxmox host for pct exec: address of the API, root, password once and then the servermanager key
+        from urllib.parse import urlsplit
+        system.name = system.name or link.name[:128]
+        system.host = system.host or (urlsplit(link.api_url or "").hostname or "")
+        system.types = ["debian", "proxmox"]
+        system.auth_method = AUTH_PASSWORD
+    return render_template("systems/form.html", system=system, is_new=True, link_pve=link, **_form_ctx())
+
+
+def _link_pve(raw: str) -> Optional[PveServer]:
+    """Proxmox connection the new system becomes the SSH host of (administrators only)."""
+    if not g.user.is_admin or not raw.isdigit():
+        return None
+    return g.db.get(PveServer, int(raw))
 
 
 def _form_ctx() -> dict:

@@ -1008,25 +1008,18 @@ chmod 700 "$HOME/.ssh"; chmod 600 "$HOME/.ssh/authorized_keys"
     # ------------------------------------------------------------------ import of existing guests
     def _link_pve_host(self, ctx, server: PveServer, node: str, user_id: Optional[int]) -> None:
         """Containers are reached with ``pct exec`` on the Proxmox host, i.e. over SSH. Without a linked host
-        system take the one that is unambiguous: same address as the API, else the only Proxmox system named
-        like the node - if whoever started the job may act as root on it (administrator or full access)."""
-        from urllib.parse import urlsplit
-        api_host = (urlsplit(server.api_url or "").hostname or "").lower()
+        system take the one that is unambiguous (pve.find_host_system) - if whoever started the job may act as
+        root on it (administrator or full access)."""
+        nodes = [node] + [n.get("node") for n in (server.data or {}).get("nodes") or [] if n.get("node") != node]
         with session_scope() as db:
-            systems = db.execute(select(System)).scalars().all()
-            found = [x for x in systems if api_host and (x.host or "").lower() == api_host]
-            how = "Adresse der API"
-            if len(found) != 1:
-                found = [x for x in systems if x.has_type("proxmox") and node
-                         and node.lower() in {(x.hostname or "").lower(), (x.name or "").lower()}]
-                how = f"Name des Nodes {node}"
-            if len(found) != 1:
+            host_sys, how = pve.find_host_system(db.execute(select(System)).scalars().all(), server, nodes)
+            if host_sys is None:
                 raise JobFailed(
-                    "Für Container braucht der Servermanager SSH zum Proxmox-Host (pct exec). Unter Infrastruktur → "
-                    f"Proxmox → {server.name} → Bearbeiten → Verknüpfungen „Proxmox-Host als System (SSH)“ wählen. "
-                    "Ist der Host noch kein System, ihn zuerst unter Systeme mit SSH-Zugang (root) anlegen. "
+                    "Für Container braucht der Servermanager SSH zum Proxmox-Host (pct exec), es ist aber kein "
+                    f"System dafür verknüpft. Unter Infrastruktur → Proxmox → {server.name} „Proxmox-Host als "
+                    "System anlegen“ klicken (Root-Passwort einmalig, danach meldet sich der Servermanager per "
+                    "Schlüssel an) oder unter Bearbeiten → Verknüpfungen ein vorhandenes System wählen. "
                     "VMs brauchen das nicht (Guest-Agent).")
-            host_sys = found[0]
             user = db.get(User, user_id) if user_id else None
             if user is not None and not user.is_admin and not access.has_level(db, user, host_sys.id, LEVEL_FULL):
                 raise JobFailed(f"Für Container braucht der Servermanager SSH zum Proxmox-Host „{host_sys.name}“, "

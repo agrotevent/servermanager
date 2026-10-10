@@ -16,6 +16,11 @@
 </div>
 {% if s.status_message %}<div class="alert danger">{{ s.status_message }}</div>{% endif %}
 {{ alerts_box(s) }}
+{% if not s.system_id and user.is_admin %}
+<div class="alert warning"><strong>Kein Proxmox-Host als System (SSH) verknüpft.</strong> Container übernehmen und verwalten geht nur per <code>pct exec</code> auf dem Host, also über SSH (VMs laufen über den Guest-Agent).
+  <div class="mt-1"><a class="btn sm primary" href="{{ url_for('systems.new', link_pve=s.id) }}">Proxmox-Host als System anlegen</a>
+  <a class="btn sm" href="{{ url_for('pve.edit', pve_id=s.id) }}#links">Vorhandenes System wählen</a></div></div>
+{% endif %}
 
 {% set lxc = (data.guests or [])|selectattr('type', 'equalto', 'lxc')|list %}
 {% set vms = (data.guests or [])|selectattr('type', 'equalto', 'qemu')|list %}

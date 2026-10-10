@@ -8,7 +8,7 @@
 {% if error %}<div class="alert danger">{{ error }}</div>{% endif %}
 <div class="alert info">
   <strong>So funktioniert es:</strong> Der SSH-Schlüssel des Servermanagers wird über einen vertrauenswürdigen Weg hinterlegt –
-  bei Containern per <code>pct exec</code> über den Proxmox-Host{% if not s.system_id %} (<strong>dafür den Host in der Verbindung als System verknüpfen</strong>){% endif %},
+  bei Containern per <code>pct exec</code> über den Proxmox-Host{% if not s.system_id %} (<strong>dafür den Host als System verknüpfen</strong>{% if user.is_admin %} – <a href="{{ url_for('systems.new', link_pve=s.id) }}">Proxmox-Host als System anlegen</a>{% endif %}){% endif %},
   bei VMs über den QEMU-Guest-Agent. Die SSH-Hostkeys werden auf demselben Weg gelesen und fest hinterlegt. Danach wird das System aufgenommen und seine Komponenten erkannt.
 </div>
 <form method="post">{{ csrf() }}
