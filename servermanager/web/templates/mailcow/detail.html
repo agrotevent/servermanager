@@ -94,8 +94,19 @@
   {% else %}<tr><td colspan="4" class="muted">Keine Domains.</td></tr>{% endfor %}</tbody></table></div></div>
 
 {% elif tab == 'dns' and not error %}
-<div class="card"><div class="card-head"><h2>DNS-Einträge für Mail</h2></div>
-  <div class="card-body"><small class="muted">Erwartete Einträge für jede aktive Mailcow-Domain, verglichen mit den Zonen der angebundenen DNS-Anbieter: MX auf {{ m.mail_hostname or 'den Mail-Hostnamen' }}, SPF, DKIM (Schlüssel aus Mailcow), DMARC sowie Autodiscover/Autoconfig für Mail-Programme.{% if m.mail_public_ip %} Der Mail-Hostname muss auf die eigene Mail-IP {{ m.mail_public_ip }} zeigen.{% endif %} Fehlende Einträge legt „Anlegen“ an (Recht Bedienen auf die DNS-Verbindung), abweichende ersetzt „Ersetzen“ (Vollzugriff).</small></div>
+{% if san %}
+<div class="card"><div class="card-body flex" style="gap:12px;align-items:center;flex-wrap:wrap">
+  <span class="grow"><strong>Zertifikat für {{ m.mail_hostname }}:</strong>
+  {% if san.ok %}<span class="badge success">ADDITIONAL_SAN enthält {{ san.need }}</span>
+  {% elif san.known %}<span class="badge warning">ADDITIONAL_SAN fehlt {{ san.need }}</span> <small class="muted">bisher: {{ san.have or 'leer' }} – sonst passt das Zertifikat nicht zu post.&lt;domain&gt;</small>
+  {% else %}<small class="muted">In der mailcow.conf muss <code>ADDITIONAL_SAN={{ san.need }}</code> stehen, damit mailcow für jede Domain ein Zertifikat holt.{% if not san.host %} Mit verknüpftem System (SSH) prüft und ergänzt der Servermanager das selbst.{% endif %}</small>{% endif %}</span>
+  {% if san.known and not san.ok and can(san.host.id, 'full') %}<form method="post" action="{{ url_for('systems.action', system_id=san.host.id) }}" class="inline" data-confirm="{{ san.need }} in ADDITIONAL_SAN ergänzen und die betroffenen Container neu erstellen? Mail ist dabei kurz unterbrochen.">{{ csrf() }}
+    <input type="hidden" name="module" value="mailcow"><input type="hidden" name="action" value="san_add"><input type="hidden" name="san" value="{{ san.need }}">
+    <button class="btn primary">{{ san.need }} ergänzen</button></form>{% endif %}
+</div></div>
+{% endif %}
+<div class="card"><div class="card-head"><h2>DNS-Einträge für Mail</h2>{% if rows_total %}<span class="badge {{ 'success' if not dns_rows and not show_all else '' }}">{{ rows_ok }} von {{ rows_total }} in Ordnung</span>{% endif %}</div>
+  <div class="card-body"><small class="muted">Erwartete Einträge für jede aktive Mailcow-Domain, verglichen mit den Zonen der angebundenen DNS-Anbieter: MX auf {{ m.mail_hostname or 'den Mail-Hostnamen' }}{% if '[domain]' in (m.mail_hostname or '') %} (je Domain eigener Name){% endif %}, SPF, DKIM (Schlüssel aus Mailcow), DMARC sowie Autodiscover/Autoconfig für Mail-Programme.{% if m.mail_public_ip %} Der Mail-Hostname muss auf die eigene Mail-IP {{ m.mail_public_ip }} zeigen.{% endif %} Fehlende Einträge legt „Anlegen“ an (Recht Bedienen auf die DNS-Verbindung), abweichende ersetzt „Ersetzen“ (Vollzugriff). Angezeigt werden nur Abweichungen – was behoben ist, verschwindet aus der Liste.</small></div>
   {% if not dns_accounts %}<div class="card-body"><div class="alert info"><div>Noch kein DNS-Anbieter angebunden (Infrastruktur → DNS & Domains) – oder kein Recht darauf.</div></div></div>
   {% else %}
   <div class="table-wrap"><table class="table compact"><thead><tr><th>Name</th><th>Typ</th><th>Erwartet</th><th>Vorhanden</th><th>Status</th><th></th></tr></thead><tbody>
@@ -106,7 +117,8 @@
       <td>{% set cls = {'ok': 'success', 'missing': 'warning', 'wrong': 'danger', 'unmanaged': ''}.get(r.state, 'info') %}<span class="badge {{ cls }}">{{ r.state_label }}</span>{% if r.note %}<span class="sub">{{ r.note }}</span>{% endif %}{% if r.account %}<span class="sub">{{ r.account }}</span>{% endif %}</td>
       <td class="text-right">{% if r.state in ('missing', 'wrong') and r.account_id and int_can('dns', r.account_id, 'operate' if r.state == 'missing' else 'full') %}
         <form method="post" action="{{ url_for('mailcow.dns_fix', mc_id=m.id) }}" class="inline" {% if r.state == 'wrong' %}data-confirm="Vorhandenen Eintrag für {{ r.host }} ersetzen?"{% endif %}>{{ csrf() }}<input type="hidden" name="key" value="{{ r.key }}"><button class="btn xs {{ 'primary' if r.state == 'missing' else '' }}">{{ 'Anlegen' if r.state == 'missing' else 'Ersetzen' }}</button></form>{% endif %}</td></tr>
-  {% else %}<tr><td colspan="6" class="muted">Keine aktiven Domains in Mailcow.</td></tr>{% endfor %}</tbody></table></div>
+  {% else %}<tr><td colspan="6" class="muted">{% if rows_total %}<span class="badge success">Alles in Ordnung</span> Alle {{ rows_total }} Einträge stimmen.{% else %}Keine aktiven Domains in Mailcow.{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+  {% if rows_ok %}<div class="card-body"><small class="muted">{% if show_all %}Alle Einträge angezeigt · <a href="?tab=dns">nur Abweichungen</a>{% else %}{{ rows_ok }} {{ "Eintrag" if rows_ok == 1 else "Einträge" }} in Ordnung ausgeblendet · <a href="?tab=dns&amp;all=1">alle anzeigen</a>{% endif %}</small></div>{% endif %}
   {% endif %}
 </div>
 

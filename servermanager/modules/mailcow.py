@@ -38,6 +38,13 @@ class MailcowModule(Module):
                                "Mal, übernimmt der Servermanager das.",
                    confirm="Mailcow jetzt aktualisieren? Die Container werden neu gestartet – Mail und Webmail "
                            "sind dabei einige Minuten nicht erreichbar."),
+            Action("san_add", "Zertifikatsnamen ergänzen (ADDITIONAL_SAN)", t, env={"SM_TASK": "san_add"},
+                   group="Wartung", level=LEVEL_FULL, timeout=1800,
+                   params=[Param("san", "Name", pattern=r"^[a-z0-9*][a-z0-9.*-]{0,200}$",
+                                 help="z. B. post.* für post.<domain> aller Mail-Domains")],
+                   description="Ergänzt den Namen in ADDITIONAL_SAN der mailcow.conf (Sicherung der Datei vorher) und "
+                               "erstellt die betroffenen Container neu; acme-mailcow holt dann das Zertifikat.",
+                   confirm="ADDITIONAL_SAN ergänzen und Container neu erstellen? Mail ist dabei kurz unterbrochen."),
             Action("backup", "Sicherung erstellen", t, env={"SM_TASK": "backup"}, group="Wartung",
                    level=LEVEL_FULL, detached=True, timeout=6 * 3600, params=[backup_dir],
                    description="helper-scripts/backup_and_restore.sh backup all (Mails, Datenbank, Konfiguration)"),

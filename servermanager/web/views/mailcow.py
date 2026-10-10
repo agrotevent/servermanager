@@ -65,8 +65,9 @@ def _save(mc: MailcowServer) -> list[str]:
         errors.append("Öffentliche Adresse als https://webmail.example.com angeben.")
     mc.public_url = pub
     host = (f.get("mail_hostname") or "").strip().lower()
-    if host and not re.match(r"^(?=.{1,253}$)[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63})+$", host):
-        errors.append("Ungültiger Mail-Hostname")
+    from ...mailcow import HOST_TEMPLATE_RE
+    if host and not (re.match(r"^(?=.{1,253}$)[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63})+$", host) or HOST_TEMPLATE_RE.match(host)):
+        errors.append("Ungültiger Mail-Hostname – fester Name (mail.example.com) oder je Domain (post.[domain])")
     mc.mail_hostname = host
     mc.mail_public_ip = _ip(f.get("mail_public_ip"), "Mail-IP", errors)
     internal = f.get("mail_internal_ip") or (urlsplit(mc.api_url).hostname if mc.api_url else "")
@@ -79,7 +80,8 @@ def _save(mc: MailcowServer) -> list[str]:
     # one name for both only breaks mail once the web interface really runs through Pangolin: its DNS
     # record then points to Pangolin instead of the mail IP
     web_host = urlsplit(mc.public_url).hostname if mc.public_url else ""
-    if web_host and mc.mail_hostname and web_host == mc.mail_hostname:
+    from ...mailcow import is_mail_host
+    if web_host and is_mail_host(mc.mail_hostname, web_host):
         via = integrations.published_via_pangolin(g.db, web_host)
         if via:
             errors.append(f"{web_host} ist über Pangolin ({via}) veröffentlicht und zeigt damit auf Pangolin – der "
@@ -180,7 +182,8 @@ def detail(mc_id: int):
         elif tab == "aliases":
             ctx["aliases"] = sorted(client.aliases(), key=lambda a: a.get("address", ""))
         elif tab == "dns":
-            ctx["dns_rows"], ctx["dns_accounts"] = _mail_dns(mc, client, ctx["domains"])
+            rows, ctx["dns_accounts"] = _mail_dns(mc, client, ctx["domains"])
+            ctx.update(only_problems(rows, request.args.get("all") == "1", "dns_rows"))
     except (MailcowError, DnsError) as exc:
         ctx["error"] = str(exc)
     ctx["sso"] = g.db.execute(select(SsoClient).where(SsoClient.target_kind == "mailcow",
@@ -190,7 +193,28 @@ def detail(mc_id: int):
     ctx["pangolin"] = primary_pangolin()
     host = g.db.get(System, mc.system_id) if mc.system_id else None
     ctx["host"] = host if host is not None and access.system_level(g.db, g.user, host.id) else None
+    ctx["san"] = _san_state(mc, ctx["host"])
     return render_template("mailcow/detail.html", **ctx)
+
+
+def only_problems(rows: list[dict], show_all: bool, key: str = "rows") -> dict:
+    """DNS overviews show only what differs; records that are fine are counted (and listed on request)."""
+    fine = [r for r in rows if r.get("state") in ("ok", "wildcard")]
+    return {key: rows if show_all else [r for r in rows if r not in fine], "rows_ok": len(fine),
+            "rows_total": len(rows), "show_all": show_all}
+
+
+def _san_state(mc: MailcowServer, host) -> dict:
+    """With one mail host name per domain (post.[domain]) mailcow needs it in ADDITIONAL_SAN for the certificate."""
+    from ...mailcow import san_entry
+    need = san_entry(mc.mail_hostname or "")
+    if not need:
+        return {}
+    out: dict = {"need": need, "known": False, "ok": False, "host": host}
+    if host is not None and host.has_type("mailcow"):
+        have = [x.strip() for x in str(host.fact.get("mailcow_san") or "").split(",") if x.strip()]
+        out.update(known=True, ok=need in have, have=", ".join(have))
+    return out
 
 
 def _dns_accounts(level: str = LEVEL_VIEW) -> list:

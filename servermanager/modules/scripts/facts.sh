@@ -107,6 +107,8 @@ for mc in /opt/mailcow-dockerized /root/mailcow-dockerized /srv/mailcow-dockeriz
     v="$(sed -n 's/.*MAILCOW_GIT_VERSION="\([^"]*\)".*/\1/p' "$mc/data/web/inc/app_info.inc.php" 2>/dev/null | head -n 1)"
     [ -n "$v" ] || v="$(git -c safe.directory="$mc" -C "$mc" describe --tags --abbrev=0 2>/dev/null)"
     kv mailcow_version "${v:-unbekannt}"
+    kv mailcow_hostname "$(sed -n 's/^MAILCOW_HOSTNAME=//p' "$mc/mailcow.conf" | tail -n 1)"
+    kv mailcow_san "$(sed -n 's/^ADDITIONAL_SAN=//p' "$mc/mailcow.conf" | tail -n 1)"
     break
 done
 if command -v clpctl >/dev/null 2>&1; then

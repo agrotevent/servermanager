@@ -78,8 +78,10 @@ So arbeitet der Servermanager damit:
 
 ## Mail-Einträge (Mailcow)
 
-Auf der Seite einer Mailcow zeigt der Reiter **DNS** für jede aktive Mail-Domain die erwarteten
-Einträge im Vergleich mit der Zone:
+Auf der Seite einer Mailcow vergleicht der Reiter **DNS** für jede aktive Mail-Domain die erwarteten
+Einträge mit der Zone. Angezeigt werden **nur Abweichungen**. Was behoben ist, verschwindet aus der
+Liste, ebenso im Reiter *Prüfung* einer DNS-Verbindung. *Alle anzeigen* blendet die richtigen Einträge
+wieder ein. Ist der Mail-Hostname `post.[domain]`, gilt er je Domain (`post.example.com`, …):
 
 | Eintrag | erwartet |
 |---|---|

@@ -59,6 +59,26 @@ case "${SM_TASK:-}" in
         mc_backup
         echo "SM_OK"
         ;;
+    san_add)
+        # one more name in ADDITIONAL_SAN (e.g. "post.*": a certificate name for post.<domain> of every mail
+        # domain), then recreate the containers whose configuration changed (acme-mailcow requests the certificate)
+        [[ "${SM_SAN:-}" =~ ^[a-z0-9*]([a-z0-9.*-]{0,200})$ ]] || die "Ungültiger Name für ADDITIONAL_SAN"
+        cur="$(sed -n 's/^ADDITIONAL_SAN=//p' mailcow.conf | tail -n 1)"
+        case ",$cur," in
+            *",$SM_SAN,"*) log "ADDITIONAL_SAN enthält $SM_SAN bereits ($cur)"; echo "SM_OK"; exit 0 ;;
+        esac
+        cp -p mailcow.conf "mailcow.conf.bak-servermanager-$(date +%Y%m%d%H%M%S)"
+        new="${cur:+$cur,}$SM_SAN"
+        if grep -q '^ADDITIONAL_SAN=' mailcow.conf; then
+            sed -i "s|^ADDITIONAL_SAN=.*|ADDITIONAL_SAN=$new|" mailcow.conf
+        else
+            printf 'ADDITIONAL_SAN=%s\n' "$new" >> mailcow.conf
+        fi
+        log "ADDITIONAL_SAN=$new – Container mit geänderter Konfiguration neu erstellen"
+        mc_compose up -d || die "docker compose up -d fehlgeschlagen"
+        log "acme-mailcow holt das Zertifikat jetzt neu (Protokoll: docker compose logs acme-mailcow)"
+        echo "SM_OK"
+        ;;
     update)
         log "mailcow $(mc_version) unter $MC"
         [ "${SM_BACKUP:-0}" = "1" ] && mc_backup

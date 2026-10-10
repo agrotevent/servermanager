@@ -2,6 +2,20 @@
 
 Alle wesentlichen Änderungen am Servermanager. Neue Einträge stehen oben.
 
+## 1.29.0 – 10.10.2026
+
+### Neu
+
+- **Mailcow: Mail-Hostname je Domain.** Im Feld *Mail-Hostname* geht jetzt `post.[domain]`.
+  - Jede Mail-Domain bekommt ihren eigenen Namen, z. B. `post.example.com` und `post.example.org`.
+  - Die DNS-Prüfung erwartet A, MX, Autodiscover/Autoconfig und SRV je Domain und legt sie per Klick an.
+  - Für die Zertifikate prüft der Servermanager `ADDITIONAL_SAN` in der `mailcow.conf` und ergänzt
+    `post.*` per Klick. Dazu sichert er die Datei vorher und erstellt die Container neu.
+  - Neue Aktion im Mailcow-Modul: *Zertifikatsnamen ergänzen*.
+- **DNS-Übersichten zeigen nur Abweichungen:** Reiter DNS der Mailcow und Reiter Prüfung der
+  DNS-Verbindung. Behobene Einträge verschwinden, *alle anzeigen* blendet sie wieder ein, und ein Zähler
+  zeigt „x von y in Ordnung“.
+
 ## 1.28.1 – 08.10.2026
 
 ### Behoben

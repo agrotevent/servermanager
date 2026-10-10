@@ -14,7 +14,7 @@
   </div></div></div>
   <div class="card"><div class="card-head"><h2>Erreichbarkeit</h2></div><div class="card-body"><div class="form-grid">
     {{ field('Weboberfläche (über Pangolin)', 'public_url', m.public_url, placeholder='https://webmail.example.com', help='Für Webmail/SOGo, Verwaltung und SSO-Anmeldung', cls='full') }}
-    {{ field('Mail-Hostname (MX/IMAP/SMTP)', 'mail_hostname', m.mail_hostname, placeholder='mail.example.com', help='zeigt auf die eigene Mail-IP – anderer Name als die Weboberfläche') }}
+    {{ field('Mail-Hostname (MX/IMAP/SMTP)', 'mail_hostname', m.mail_hostname, placeholder='post.[domain]', help='zeigt auf die eigene Mail-IP – anderer Name als die Weboberfläche. Mit [domain] bekommt jede Mail-Domain ihren eigenen Namen, z. B. post.[domain] → post.example.com, post.example.org; fester Name: mail.example.com') }}
     {{ field('Eigene Public-IP für Mail', 'mail_public_ip', m.mail_public_ip, placeholder='5.9.10.11') }}
     {{ field('Interne Mailcow-Adresse', 'mail_internal_ip', m.mail_internal_ip, placeholder='aus der API-Adresse') }}
     {{ field('Mail-Ports', 'mail_ports', m.mail_ports or default_ports, help='80 wird für das Let’s-Encrypt-Zertifikat des Mail-Hostnamens benötigt') }}

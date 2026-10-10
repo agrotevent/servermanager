@@ -173,8 +173,9 @@ def detail(did: int):
     domains = []
     for d in a.data.get("domains") or []:
         domains.append({**d, "days": days_left(d.get("expires") or ""), "managed": d["name"] in (a.data.get("zones") or [])})
-    return render_template("dns/detail.html", a=a, tab=tab, tabs=TABS, domains=domains, rows=rows, error=error,
-                           providers=PROVIDERS)
+    from .mailcow import only_problems
+    return render_template("dns/detail.html", a=a, tab=tab, tabs=TABS, domains=domains, error=error,
+                           providers=PROVIDERS, **only_problems(rows, request.args.get("all") == "1"))
 
 
 @bp.get("/<int:did>/zone/<zone>")

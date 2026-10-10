@@ -36,7 +36,7 @@
   {% else %}<tr><td colspan="2" class="muted">Keine Zonen.</td></tr>{% endfor %}</tbody></table></div></div>
 
 {% elif tab == 'check' and not error %}
-<div class="card"><div class="card-head"><h2>Über Pangolin veröffentlichte Namen</h2></div>
+<div class="card"><div class="card-head"><h2>Über Pangolin veröffentlichte Namen</h2>{% if rows_total %}<span class="badge {{ 'success' if not rows and not show_all else '' }}">{{ rows_ok }} von {{ rows_total }} in Ordnung</span>{% endif %}</div>
   <div class="card-body"><small class="muted">Jeder über Pangolin veröffentlichte Name in einer Zone dieser Verbindung braucht einen Eintrag, der auf Pangolin zeigt (CNAME auf das DNS-Ziel der Pangolin-Verbindung bzw. A/AAAA auf dessen IP) – oder einen passenden Platzhalter (*.zone).{% if a.auto_pangolin %} Neue Veröffentlichungen bekommen den Eintrag automatisch.{% endif %}</small></div>
   <div class="table-wrap"><table class="table compact"><thead><tr><th>Name</th><th>Pangolin</th><th>Erwartet</th><th>Vorhanden</th><th>Status</th><th></th></tr></thead><tbody>
   {% for r in rows %}
@@ -45,7 +45,9 @@
       <td>{% set cls = {'ok': 'success', 'wildcard': 'success', 'missing': 'warning', 'wrong': 'danger'}.get(r.state, '') %}<span class="badge {{ cls }}">{{ r.state_label }}</span>{% if r.note %}<span class="sub">{{ r.note }}</span>{% endif %}</td>
       <td class="text-right">{% if r.state in ('missing', 'wrong') and int_can('dns', a.id, 'operate' if r.state == 'missing' else 'full') %}
         <form method="post" action="{{ url_for('dns.fix', did=a.id) }}" class="inline" {% if r.state == 'wrong' %}data-confirm="Vorhandene Einträge für {{ r.host }} ersetzen?"{% endif %}>{{ csrf() }}<input type="hidden" name="key" value="{{ r.key }}"><button class="btn xs {{ 'primary' if r.state == 'missing' else '' }}">{{ 'Anlegen' if r.state == 'missing' else 'Ersetzen' }}</button></form>{% endif %}</td></tr>
-  {% else %}<tr><td colspan="6" class="muted">Keine über Pangolin veröffentlichten Namen in diesen Zonen.</td></tr>{% endfor %}</tbody></table></div></div>
+  {% else %}<tr><td colspan="6" class="muted">{% if rows_total %}<span class="badge success">Alles in Ordnung</span> Alle {{ rows_total }} Namen haben den richtigen Eintrag.{% else %}Keine über Pangolin veröffentlichten Namen in diesen Zonen.{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+  {% if rows_ok %}<div class="card-body"><small class="muted">{% if show_all %}Alle Namen angezeigt · <a href="?tab=check">nur Abweichungen</a>{% else %}{{ rows_ok }} {{ "Name" if rows_ok == 1 else "Namen" }} in Ordnung ausgeblendet · <a href="?tab=check&amp;all=1">alle anzeigen</a>{% endif %}</small></div>{% endif %}
+</div>
 <p><small class="muted">Die Mail-Einträge (MX, SPF, DKIM, DMARC, Autodiscover) prüfst du auf der Seite der jeweiligen Mailcow im Reiter „DNS“.</small></p>
 {% endif %}
 {% endblock %}

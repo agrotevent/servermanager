@@ -72,6 +72,15 @@ Auf der System-Seite im Reiter *Nextcloud* → **Benutzer verwalten** (per SSH m
 - **Mail über eigene Public-IP:** Mail-Hostname (MX, IMAP, SMTP), Public-IP, interne Adresse, Ports
   (Standard `25,465,587,143,993,110,995,4190,80` – Port 80 für das Let's-Encrypt-Zertifikat des
   Mail-Hostnamens) und der zuständige RouterOS.
+- **Mail-Hostname je Domain:** Statt eines festen Namens (`mail.example.com`) geht `post.[domain]`.
+  - Jede Mail-Domain bekommt damit ihren eigenen Namen, z. B. `post.example.com` und
+    `post.example.org`.
+  - Die DNS-Prüfung erwartet und legt dann je Domain A, MX, Autodiscover/Autoconfig und SRV auf diesen
+    Namen an.
+  - Für die Zertifikate muss in der `mailcow.conf` `ADDITIONAL_SAN=post.*` stehen. Mit verknüpftem System
+    (SSH) zeigt der Reiter DNS das an und ergänzt es per Klick.
+  - Der PTR der Mail-IP bleibt *ein* Name, der `MAILCOW_HOSTNAME`. Das ist in Ordnung: Der MX darf
+    anders heißen.
 - Solange die Weboberfläche **nicht** über Pangolin läuft, dürfen Weboberfläche und Mailserver
   denselben Namen haben, z. B. beide `mail.example.com` auf der eigenen IP.
 - Sobald die Weboberfläche über Pangolin läuft, braucht sie einen **eigenen Namen** (z. B.

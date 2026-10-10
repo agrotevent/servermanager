@@ -191,10 +191,14 @@ def test_pangolin_records(app, db, mock, accounts):
         make_user(db, "dns-admin", "admin")
         c = login(app, "dns-admin")
         page = c.get(f"/dns/{a.id}?tab=check").text
-        assert "cloud.example.com" in page and "über Platzhalter" in page and "abweichend" in page   # www -> example.com
+        # only deviations: missing cloud, wrong www (-> example.com); the wildcard name that is fine is hidden
+        assert "cloud.example.com" in page and "abweichend" in page and "über Platzhalter" not in page
+        assert "in Ordnung ausgeblendet" in page
+        assert "über Platzhalter" in c.get(f"/dns/{a.id}?tab=check&all=1").text
         r = c.post(f"/dns/{a.id}/fix", data={"key": f"pg:{pg.id}:cloud.example.com", "csrf_token": c.csrf},
                    follow_redirects=True)
         assert "CNAME cloud.example.com → pangolin.example.com angelegt" in r.text
+        assert "<td class=\"mono\">cloud.example.com</td>" not in c.get(f"/dns/{a.id}?tab=check").text   # fixed: gone
         r = c.post(f"/dns/{a.id}/fix", data={"key": f"pg:{pg.id}:www.example.com", "csrf_token": c.csrf},
                    follow_redirects=True)
         assert "ersetzt" in r.text
@@ -258,3 +262,56 @@ def test_unknown_host_message():
     c = HostingDe("https://secure.fresh-internet.invalid", m.HD_KEY, timeout=5)
     with pytest.raises(DnsError, match="gibt es im DNS nicht.*secure.fresh-internet.net"):
         c.zones()
+
+
+def test_mail_host_per_domain(app, db, mock, accounts):
+    """Mail host name 'post.[domain]': every mail domain gets its own MX/A/autodiscover target, and mailcow needs
+    'post.*' in ADDITIONAL_SAN for the certificate."""
+    from servermanager.mailcow import is_mail_host, mail_host_for, san_entry
+    from servermanager.models import MailcowServer, System
+    a, _b = accounts
+    st = mock.state
+    assert mail_host_for("post.[domain]", "example.com") == "post.example.com" and san_entry("post.[domain]") == "post.*"
+    assert is_mail_host("post.[domain]", "post.example.org") and not is_mail_host("post.[domain]", "webmail.example.org")
+    host = System(name="mail-sys", host="10.20.0.30", types=["debian", "mailcow"],
+                  facts={"mailcow_san": "smtp.*", "mailcow_hostname": "post.example.com"})
+    db.add(host)
+    db.flush()
+    mc = MailcowServer(name="mc-tpl", api_url=mock.url, api_key_enc=security.encrypt(m.MC_KEY), fingerprint=mock.fingerprint,
+                       public_url="https://webmail.example.com", mail_hostname="post.[domain]",
+                       mail_public_ip="198.51.100.25", system_id=host.id)
+    db.add(mc)
+    db.commit()
+    try:
+        zones = dnscheck.Zones(db, [a])
+        rows = {r["key"].split(":", 2)[-1]: r for r in dnscheck.mail_rows(zones, mc, ["example.com"], {})}
+        zones.close()
+        assert rows["example.com:host"]["host"] == "post.example.com" and rows["example.com:host"]["expected"] == "198.51.100.25"
+        assert rows["example.com:mx"]["expected"] == "10 post.example.com"
+        assert rows["example.com:autodiscover"]["expected"] == "post.example.com"
+        assert rows["example.com:srv"]["expected"] == "0 1 443 post.example.com"
+        make_user(db, "dns-admin", "admin")
+        c = login(app, "dns-admin")
+        page = c.get(f"/mailcow/{mc.id}?tab=dns").text
+        assert "ADDITIONAL_SAN fehlt post.*" in page and "post.* ergänzen" in page
+        assert "<small>post.example.com</small></td><td><small>A</small>" in page   # missing A record is listed
+        r = c.post(f"/mailcow/{mc.id}/dns-fix", data={"key": rows["example.com:host"]["key"], "csrf_token": c.csrf},
+                   follow_redirects=True)
+        assert "A post.example.com → 198.51.100.25 angelegt" in r.text
+        assert any(x["name"] == "post.example.com" and x["content"] == "198.51.100.25"
+                   for x in st.hd_zones["example.com"]["records"])
+        # fixed: the row is gone from the overview of deviations
+        assert "<small>post.example.com</small></td><td><small>A</small>" not in c.get(f"/mailcow/{mc.id}?tab=dns").text
+        host.facts = {"mailcow_san": "smtp.*,post.*"}
+        db.commit()
+        assert "ADDITIONAL_SAN enthält post.*" in c.get(f"/mailcow/{mc.id}?tab=dns").text
+        # form: template accepted, nonsense not
+        r = c.post(f"/mailcow/{mc.id}/edit", data={"name": "mc-tpl", "api_url": mock.url, "mail_hostname": "post.[domain].x",
+                                                   "csrf_token": c.csrf}, follow_redirects=True)
+        assert "Ungültiger Mail-Hostname" in r.text
+    finally:
+        st.hd_zones["example.com"]["records"] = [x for x in st.hd_zones["example.com"]["records"]
+                                                 if x["name"] != "post.example.com"]
+        db.delete(mc)
+        db.delete(host)
+        db.commit()

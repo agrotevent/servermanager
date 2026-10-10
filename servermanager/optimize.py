@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import discovery, integrations, pve, routeros, settings
+from .mailcow import is_host_template, is_mail_host
 from .models import (IspServer, MailcowServer, PangolinServer, PbxServer, PveServer, RouterDevice, SsoClient,
                      SsoServer, System)
 from .pveapi import PveError
@@ -467,7 +468,7 @@ def scan_apps(db: Session, pangolins: list[PangolinServer], services: dict) -> l
         host, _p, _s = _host_port(public)
         if host in published:
             continue
-        if kind == "mailcow" and obj.mail_hostname and host == obj.mail_hostname.lower():
+        if kind == "mailcow" and is_mail_host(obj.mail_hostname, host):
             # publishing it would point the mail hostname to Pangolin and cut off SMTP/IMAP
             out.append(proposal(f"app:{kind}:{obj.id}:publish", "goal", _obj(kind, obj),
                                 f"{label}: Weboberfläche erst unter eigenem Namen über Pangolin veröffentlichen",
@@ -544,11 +545,15 @@ def scan_mail(db: Session, mc: MailcowServer) -> list[dict]:
                             + "; ".join(routeros.op_to_cli(x) for x in ops),
                             action="router_direct_ops",
                             params={"router_id": router.id, "ops": ops}))
+    if is_host_template(mc.mail_hostname):
+        names = (f"PTR (Reverse-DNS) von {ip} → MAILCOW_HOSTNAME der Mailcow (beim Provider, z. B. Hetzner Robot), "
+                 f"je Domain MX und A-Record von {mc.mail_hostname} → {ip}")
+    else:
+        names = (f"PTR (Reverse-DNS) von {ip} → {mc.mail_hostname or 'Mail-Hostname'} (beim Provider, z. B. "
+                 f"Hetzner Robot), MX und A-Record von {mc.mail_hostname or 'mail.…'} → {ip}")
     out.append(proposal(f"mail:{mc.id}:dns", "router", o, f"{mc.name}: DNS für den Mailversand prüfen",
-                        f"PTR (Reverse-DNS) von {ip} → {mc.mail_hostname or 'Mail-Hostname'} (beim Provider, z. B. "
-                        f"Hetzner Robot), MX und A-Record von {mc.mail_hostname or 'mail.…'} → {ip}, SPF mit "
-                        f"ip4:{ip}, DKIM und DMARC. Die Weboberfläche läuft unter einem eigenen Namen über "
-                        "Pangolin.", severity="info"))
+                        f"{names}, SPF mit ip4:{ip}, DKIM und DMARC (Reiter DNS der Mailcow). Die Weboberfläche läuft "
+                        "unter einem eigenen Namen über Pangolin.", severity="info"))
     return out
 
 

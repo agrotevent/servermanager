@@ -13,6 +13,41 @@ LOCAL_RE = re.compile(r"^[a-z0-9][a-z0-9._+-]{0,63}$")
 DOMAIN_RE = re.compile(r"^(?=.{1,253}$)[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63})+$")
 
 
+# mail host name per mail domain: "post.[domain]" -> post.example.com, post.example.org, ...
+DOMAIN_PLACEHOLDER = "[domain]"
+HOST_TEMPLATE_RE = re.compile(r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.){1,5}\[domain\]$")
+
+
+def is_host_template(value: str) -> bool:
+    return DOMAIN_PLACEHOLDER in (value or "")
+
+
+def mail_host_for(template: str, domain: str) -> str:
+    """The mail host name (MX/IMAP/SMTP) of a mail domain; a fixed name is the same for every domain."""
+    t = (template or "").strip().lower().rstrip(".")
+    if not is_host_template(t):
+        return t
+    d = (domain or "").strip().lower().rstrip(".")
+    return t.replace(DOMAIN_PLACEHOLDER, d) if d else ""
+
+
+def is_mail_host(template: str, host: str) -> bool:
+    """True if ``host`` is the mail host name of some mail domain (or the fixed name)."""
+    t, h = (template or "").strip().lower().rstrip("."), (host or "").strip().lower().rstrip(".")
+    if not t or not h:
+        return False
+    if not is_host_template(t):
+        return h == t
+    prefix = t[:-len(DOMAIN_PLACEHOLDER)]
+    rest = h[len(prefix):]
+    return h.startswith(prefix) and "." in rest and bool(DOMAIN_RE.match(rest))
+
+
+def san_entry(template: str) -> str:
+    """mailcow's ADDITIONAL_SAN entry that covers the host names of all mail domains ("post.*")."""
+    return template.strip().lower().replace(DOMAIN_PLACEHOLDER, "*") if is_host_template(template) else ""
+
+
 class MailcowError(Exception):
     def __init__(self, message: str, status: int = 0):
         super().__init__(message)

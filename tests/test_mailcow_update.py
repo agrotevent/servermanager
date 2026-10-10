@@ -137,3 +137,18 @@ def test_update_action_refreshes_the_update_state(db, monkeypatch):
     finally:
         db.delete(db.get(System, s.id))
         db.commit()
+
+
+def test_additional_san(tmp_path):
+    mc, _runs, env = _install(tmp_path)
+    (mc / "mailcow.conf").write_text("MAILCOW_HOSTNAME=post.example.com\nADDITIONAL_SAN=smtp.*\n")
+    res = _run(env, "san_add", SM_SAN="post.*")
+    assert res.returncode == 0 and "SM_OK" in res.stdout, res.stdout + res.stderr
+    assert "ADDITIONAL_SAN=smtp.*,post.*" in (mc / "mailcow.conf").read_text()
+    assert list(mc.glob("mailcow.conf.bak-servermanager-*"))          # backup of the file first
+    res = _run(env, "san_add", SM_SAN="post.*")
+    assert "enthält post.* bereits" in res.stdout and (mc / "mailcow.conf").read_text().count("post.*") == 1
+    (mc / "mailcow.conf").write_text("MAILCOW_HOSTNAME=post.example.com\n")
+    _run(env, "san_add", SM_SAN="post.*")
+    assert "ADDITIONAL_SAN=post.*" in (mc / "mailcow.conf").read_text()
+    assert _run(env, "san_add", SM_SAN="post.*;reboot").returncode == 1

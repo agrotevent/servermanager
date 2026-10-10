@@ -171,25 +171,42 @@ def spf_expected(ip: str) -> str:
     return f"v=spf1 mx ip4:{ip} -all" if ip and is_ip(ip) and ":" not in ip else "v=spf1 mx -all"
 
 
+def _host_row(zones: Zones, key: str, host: str, ip: str) -> Optional[dict]:
+    zone = zones.zone(host)
+    if not zone or not ip:
+        return None
+    found = zones.at(host, "A", "AAAA", "CNAME")
+    state = "ok" if any(r["type"] == "A" and r["content"] == ip for r in found) else ("wrong" if found else "missing")
+    return _row(key, host, "A", ip, [f"{r['type']} {r['content']}" for r in found], state, zone, zones.by_zone[zone],
+                "Mail-Hostname → eigene Mail-IP")
+
+
 def mail_rows(zones: Zones, mc: MailcowServer, domains: list[str], dkim: dict[str, dict]) -> list[dict]:
+    """Expected records of every mail domain. The mail host name is fixed (mail.example.com) or follows the
+    domain ("post.[domain]" -> post.<domain> for each domain, with its own A record)."""
+    from .mailcow import is_host_template, mail_host_for
     rows: list[dict] = []
-    mx_host = fqdn(mc.mail_hostname or "")
+    template = mc.mail_hostname or ""
+    per_domain = is_host_template(template)
     ip = (mc.mail_public_ip or "").strip()
-    if not mx_host:
+    if not template:
         return [_row(f"mc:{mc.id}:host", "", "MX", "", [], "info", None, None,
                      "Kein Mail-Hostname in der Mailcow-Verbindung eingetragen")]
-    zone = zones.zone(mx_host)
-    if zone and ip:
-        found = zones.at(mx_host, "A", "AAAA", "CNAME")
-        state = "ok" if any(r["type"] == "A" and r["content"] == ip for r in found) else ("wrong" if found else "missing")
-        rows.append(_row(f"mc:{mc.id}:host", mx_host, "A", ip, [f"{r['type']} {r['content']}" for r in found], state,
-                         zone, zones.by_zone[zone], "Mail-Hostname → eigene Mail-IP"))
+    if not per_domain:
+        row = _host_row(zones, f"mc:{mc.id}:host", fqdn(template), ip)
+        if row:
+            rows.append(row)
     for d in sorted({fqdn(x) for x in domains if x}):
+        mx_host = fqdn(mail_host_for(template, d))
         dz = zones.zone(d)
         if dz is None:
             rows.append(_row(f"mc:{mc.id}:{d}:zone", d, "", "", [], "unmanaged", None, None))
             continue
         acc = zones.by_zone[dz]
+        if per_domain:
+            row = _host_row(zones, f"mc:{mc.id}:{d}:host", mx_host, ip)
+            if row:
+                rows.append(row)
         # MX
         mx = zones.at(d, "MX")
         st = "ok" if any(r["content"] == mx_host for r in mx) else ("wrong" if mx else "missing")
